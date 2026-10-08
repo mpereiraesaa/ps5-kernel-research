@@ -338,3 +338,36 @@ Zero-console-risk analysis of the existing 134 MiB alias dump
 
 Implication for the (parked) GPA sweep: any physical probing must be
 band-aware and derived from in-band anchors — never blind from 0.
+
+## 2026-10-08 (night) — phys_avail lead closed: RAM totals triangulated host-side
+
+Follow-up hunt (`payloads/gpa_map/phys_avail_hunt2.py`, three mutually
+validating discriminators). Console stayed off throughout.
+
+1. **Classic `phys_avail` is absent** — no zero-terminated pair array
+   exists anywhere in the 134 MiB dump. Consistent with Sony's boot
+   passing regions via its own structures (the band table of the
+   previous entry) rather than the FreeBSD loader convention.
+2. **`vm_page_array`-class records FOUND** — two identical records at
+   kdata+0x2e9f200 and +0x2ea0500, each shaped
+   `{small counts, total_pages, array_ptr, self-referential linkage}`:
+   - `total_pages = 0x425a67 / 0x425675` = **16.5883 / 16.5844 GiB**
+   - array pointers `0xffff89a101836000 / 0xffff89a101837000` (kernel
+     heap, 64 KiB apart)
+3. **Global-total scalar cluster**: 84 occurrences of 0x4261xx-class
+   values (16.5950–16.5953 GiB) in ~21 records at a fixed 0x258-byte
+   stride (kdata+0x2d79358..0x2d7d138) — a record family each carrying
+   the ≈-total figure (identity of the family open: candidates are
+   Sony per-region objects or per-domain accounting mirrors).
+4. **Synthesis [verified-on-dump]**: total RAM ≈ **0x42613f pages =
+   16.5950 GiB**; pages under vm_page management ≈ 0x425a67 =
+   16.5883 GiB; **Δ ≈ 1496 pages (~5.8 MiB) carved between global
+   total and managed set** — the first quantitative carve-out
+   measurement, host-side.
+5. **Open reconciliation**: 16.595 GiB exceeds the nominal 16 GiB
+   GDDR6 figure (gfx1013 SKU per lab notes) by ~0.6 GiB — either the
+   console carries extra memory or page accounting spans aliased
+   windows. Flagged, not resolved.
+6. Multi-window consistency: raw page numbers (e.g. g_gt at 17.2 GiB)
+   exceed the page total without contradiction because windows are
+   non-contiguous — index space ≠ raw address space.
