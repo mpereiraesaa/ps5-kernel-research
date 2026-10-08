@@ -65,3 +65,56 @@ kdata_probe OK
 
 Probe is read-only; no kernel memory written; no restore needed;
 console untouched.
+
+## 2026-10-08 — kdata_dump sequential read: KERNEL PANIC (negative result)
+
+- **Payload**: `engineering/payloads/kdata_dump/kdata_dump.elf`
+  (sha256 `91e4a0756aea89fc8f83924f257e8ec8d51c1963f77f890203a185577ed5b7f6`,
+  file-mode build), sent via elfldr 9021, FW 12.02.
+- **Expected**: sequential `kernel_copyout` of 134 MiB from `kdata_base`
+  in 4 KiB pages, with unmapped pages failing gracefully and being
+  counted as zero-filled holes.
+- **Actual**: dump progressed normally (holes=0 for the first ~28+ MiB
+  observed; 1 MiB writes to `/data/homebrew/kdata_dump.bin` healthy),
+  then the console suffered a **kernel panic and powered off** mid-run.
+  No title was running; the payload never wrote kernel memory; the
+  partial `/data` file is harmless (next run opens `O_TRUNC`).
+  Recovery: normal boot; the whole kstuff chain reloads at boot.
+- **Finding** [verified-on-console, negative]: the kstuff loader-pipe
+  `kernel_copyout` primitive is **not fault-tolerant on unmapped kernel
+  addresses** — reading past the mapped extent of the data segment
+  page-faults the kernel in the corrupted-pipe read path and panics,
+  instead of returning an error. "Hole-tolerant" sequential dumping
+  across unknown-mappedness memory is unsafe with this primitive.
+- **Root cause of the attempt**: the design assumed graceful failure
+  from prior field evidence — but that evidence (kdata_probe, Lapy,
+  porting_tool) only ever exercised *mapped* pages. This experiment was
+  exactly the crash-risk class `AGENTS.md` requires explicit owner
+  approval and a recovery plan for; the recovery plan existed (reboot,
+  nothing at risk) but the crash-risk itself was under-assessed.
+- **Fix**: panic-safe dumping must gate every page through a guest
+  page-table walk first (PML4 of the kernel pmap, PTEs read through the
+  direct map — itself mapped memory) and only `kernel_copyout` pages
+  whose PTE is present; everything else is a recorded hole. This also
+  yields the exact mapped extent of the data segment.
+- Also observed the same session: outbound `connect()` from the elfldr
+  payload context is dead across the board (router, console-local,
+  PC targets all ETIMEDOUT; `payloads/port_probe/`), while inbound
+  listeners keep working — hence the /data + FTP-pull transport
+  (`kdata_fetch.py`). Root cause of the outbound breakage still unknown;
+  ps5log-based payload runs connected fine earlier the same morning.
+
+## 2026-10-08 — port_probe: outbound connects dead from payload context
+
+- **Payload**: `engineering/payloads/port_probe/port_probe.elf`,
+  read-only, FW 12.02, elfldr 9021.
+- **Observed** [verified-on-console]: blocking `sceNetConnect` from the
+  elfldr payload context to **every** target timed out (errno 60): PC
+  9300 (ps5logd, listening, had accepted console connections the same
+  morning), PC 9301, router 53/80, console-local 3232. PC-originated
+  connections to the console (elfldr 9021, ftpsrv 2121) work fine.
+- ufw on the PC is **inactive** (Status: inactive, 2026-10-08) —
+  exonerated. PC Wi-Fi (wlp0s20f3) active; PC↔console ICMP works.
+- **Status**: unresolved; suspected console-side sceNet/outbound state
+  degradation after the morning game session. The /data + FTP transport
+  bypasses it (inbound only).
