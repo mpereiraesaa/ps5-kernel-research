@@ -62,12 +62,39 @@ Two primitives build on it:
     writes" aliasing a target's physical pages into the server's
     address space for DRAM-bandwidth reads, with a guard-miss fallback
     to the slow path.
+- **FW 12.02 measured facts** [verified-on-console, 2026-10-08]:
+  - The `{pm_pml4, cr3}` pair sits at **`vmspace+0x308`**, discovered by
+    the ps5debug-NG `ptw_discover` scan (vmspace window
+    `[0x100, 0x400)`), arithmetic validation + a round-trip through a
+    payload-owned known global.
+  - **`dmap = 0xffffa39900000000` on our console — not the FreeBSD 11
+    constant `0xffff900000000000`**; derived at runtime, never assume
+    the constant.
+  - The static kernel image is mapped by `pmap_bootstrap` and has **no
+    vm_map entries** — vm_map walks do not describe it; page-table
+    walks do.
 - **Ceiling**: guest PTEs control VA→GPA only. The NPT (GPA→SPA) is
   HV-owned. PTE edits grant arbitrary guest-visible remapping of
   anything the NPT already permits, and cannot grant anything the NPT
   denies. Active cat-and-mouse surface: the HV validates guest mappings
   to varying degrees per FW, hence the "guarded"/"validated" design
   discipline in every shipped implementation.
+
+## Loader-pipe read/write boundary [verified-on-console, 2026-10-08]
+
+- Unmapped kernel-address reads through the pipe primitive
+  (`kernel_copyout` / ps5debug-NG `kernel_copyout_fast` — same
+  mechanism, see `debugger/source/kern_rw_fast.c`) **panic the kernel**
+  rather than returning an error (first kernel-down event).
+- A second kernel-down event occurred reading somewhere in
+  **(64, 134] MiB** above `kdata_base` **despite** leaf-PTE gating to
+  present+cacheable pages — some present, cacheable-looking page is
+  still fatal to a corrupted-pipe kernel read (candidates: GPU/GARLIC
+  memory mapped in kernel KVA; an NPT-restricted region whose guest
+  fault is fatal). Mechanism unidentified; probing costs one reboot per
+  attempt (see `07-evidence.md`).
+- **Practical bound**: the 64 MiB image window from `kdata_base` is
+  proven safe end-to-end and covers every SDK 12.x symbol we use.
 
 ## Kernel-mode execution without text writes
 
