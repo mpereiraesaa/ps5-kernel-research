@@ -45,6 +45,8 @@ scene sources.
   routes.
 - [`docs/06-sources.md`](docs/06-sources.md) — public sources and
   reference repos.
+- [`docs/07-evidence.md`](docs/07-evidence.md) — console evidence log
+  (dated experiment records: identity, expected, observed, recovery).
 
 ## Epistemic labels used throughout
 
@@ -52,6 +54,8 @@ Every kernel-behavior claim in these docs carries one of:
 
 - **[verified-in-tree]** — directly evidenced by source in our local
   repos (file paths cited).
+- **[verified-on-console]** — directly observed on the owned FW 12.02
+  console; full record in `docs/07-evidence.md`.
 - **[public-consensus]** — documented by the PS5 Developer wiki or
   multiple independent scene projects; not independently reproduced by
   us.
