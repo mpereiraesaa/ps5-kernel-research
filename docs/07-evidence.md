@@ -305,3 +305,36 @@ console untouched.
   as a 0x17000 symbol shift, diagnosed from the cross-boot offset
   mismatch); read the round-trip global BEFORE walking it (untouched
   .data pages have no PTE).
+
+## 2026-10-08 (late) — host-side dump mining: SoC physical band table + aperture table
+
+Zero-console-risk analysis of the existing 134 MiB alias dump
+(`payloads/gpa_map/phys_avail_hunt.py` + direct decoding). Findings
+[verified-on-dump, host-side]:
+
+1. **SoC physical band table @ kdata+0x36c410** (boot .data): 15
+   boundary constants decoding as consecutive bands covering the whole
+   0..1.56 TiB physical address space — 0 | 4G | 16G | 36G | 64G |
+   100G | 144G | 196G | 256G | 400G | 484G | 576G | 784G | 1T |
+   1.25T | 1.56T boundaries. Known anchors land in-band: this boot's
+   `cr3 0xd2e0000` in 0..4G; the payload `.data` phys (`g_gt`,
+   0x43c22c000 = 17.2 GiB) in the 16..36G band — resolving the earlier
+   ">16 GiB?!" observation: **RAM spans multiple bands; guest physical
+   space is multi-window, not a flat 16 GiB.**
+2. **4-GiB-strided aperture table @ kdata+0xc880f0**: monotonic
+   0x1b0/0x2b0/0x3b0/.../0xa00 × 0x100000000 — GPUVM-aperture-class
+   layout constants (~4 GiB each).
+3. **Propagated 16 GiB descriptors** (0..4G + 4..16G pair) at five
+   independent dump locations — a widely-copied machine-layout
+   structure.
+4. **False-positive lesson**: an adjacent u32-pair table decodes as a
+   smooth geometric curve (~0.866 ratio/step, 31 entries) — a
+   power-management-class LUT, not memory accounting. Structure alone
+   can mislead; arithmetic validation (sums, ratios) is mandatory.
+5. True `phys_avail` (RAM availability with carve-outs) not yet
+   definitively identified; the 12.3-GiB-coverage candidate family
+   near kdata+0xbff178 is the next discriminator target, as is
+   locating `vm_page_array`.
+
+Implication for the (parked) GPA sweep: any physical probing must be
+band-aware and derived from in-band anchors — never blind from 0.
