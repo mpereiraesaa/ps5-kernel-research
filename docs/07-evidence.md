@@ -651,3 +651,41 @@ hid the unmasked-descent bug until applied). HV policies pluggable
   end-to-end, 3/3 assertions PASS.
 Five harness-side bugs were caught during bring-up — the lab absorbing
 our bug class exactly as designed, pre-console.
+
+## 2026-10-10 (night) — HV emulator (Tier-3): 7 chains × 5 policies = 35 combinations, all gates green
+
+`engineering/ps5-sim-lab/hvemu/` — the HV model as an executable
+hypothesis. Every mechanism tagged [measured]/[public]/[modeled]:
+
+- **NPT**: NPTE with xotext bit 58, MTYPE, large pages, present-but-
+  denied HV regions; effective-perm check is the enforcement point.
+- **VMCB** per CPU (16): NESTED_CTRL@+0x90, NP_ENABLE, GMET.
+- **MSRPM**: known intercepted MSR set (APICBASE, EFER, FS/GS bases);
+  partial-escape policy model.
+- **Hypercall dispatch**: 6 modeled calls with per-policy validation.
+- **5 policies**: strict / qa_reading / validation_gap / shared_table /
+  msrpm_partial — each an executable hypothesis about the real 12.02 HV.
+- **Reinit**: QA flags survive, NPT rebuilt (the Byepervisor asymmetry).
+
+**7 chains × 5 policies = 35 combinations**, first matrix run:
+
+| chain | strict | qa_reading | validation_gap | shared_table | msrpm_partial |
+|---|---|---|---|---|---|
+| A1 qa-flags | fail | **WIN** | **WIN** | **WIN** | **WIN** |
+| A2 flag-survey | fail | **WIN**(bit7) | **WIN** | **WIN** | **WIN** |
+| B1 vmcb-write | fail | fail | fail | fail | fail |
+| B2 jump-table | fail | fail | fail | fail | fail |
+| B3 unmap-gap | fail | fail | **WIN** | **WIN** | **WIN** |
+| B4 apicbase | fail | fail | fail | fail | fail |
+| C1 read-npt | fail | fail | fail | fail | fail |
+
+Reality gates pass: B1 correctly fails everywhere (VMCB is
+present-but-denied on 12.02 [measured]); A1 wins only under
+QA-reading-class policies (inheritance propagates the hypothesis);
+B2 needs an explicit compromise toggle (the 1.xx shared-table
+condition, not present in any default policy).
+
+Next maturation: chain count toward the 1k target by expanding
+(chains × policies × arguments × orderings); port the real payload
+C into this framework; each console session adds or corrects a
+mechanism and the matrix re-runs.
