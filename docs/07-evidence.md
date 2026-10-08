@@ -223,6 +223,33 @@ console untouched.
   chain (proven after the first panic event). The 64 MiB dump + derived
   offsets are already safe on the PC (previous entry).
 
+## 2026-10-08 — gpa_map blind sweep: console WEDGED (third down event — experiment design flaw)
+
+- **Payload**: `engineering/payloads/gpa_map/gpa_map.elf` (v2, slots
+  0..504), FW 12.02, elfldr 9021. Phase B experiment #1.
+- **Design**: alias-probe the first page of every 2 MiB region from GPA 0
+  upward, classifying readable / `SEGV_ACCERR` / `SEGV_MAPERR`.
+- **Observed**: `ptw discover OK`, arena setup OK, then the payload went
+  silent and the console became fully unreachable (ping 100% loss, no
+  listeners) — no fault, no crash: a **wedge**, consistent with a hung
+  uncached load on a device-MMIO region (bus stall), not a kernel panic.
+- **Root cause — my error** [inference, strong]: raw guest-physical space
+  includes **MMIO holes** (device registers). The alias reader makes
+  NPT-denied pages fault recoverably, but a read of actual device MMIO
+  can **stall the CPU/bus indefinitely** — the "all faults recoverable"
+  model from kernel-VA probing does not transfer to blind GPA sweeps.
+  Classic mistake: probing physical space bottom-up walks straight into
+  low MMIO.
+- **Recovery**: hard power cycle. No data at risk; nothing else running.
+- **v2 design (zero-console-risk first)**: before probing anything, mine
+  the kernel's own RAM map (`phys_avail`/boot-provided region list) from
+  our **existing** kdata dump — the HV/PSP carve-outs appear as *gaps in
+  the kernel's RAM list*, answering the "where are the hidden regions"
+  question host-side with no console run at all. Only boundary pages of
+  those gaps (RAM-adjacent, provably not MMIO) would ever be probed, and
+  only if the host-side map leaves questions open. Lesson recorded:
+  **never blind-probe GPA space; derive the RAM map first.**
+
 ## 2026-10-08 — kalias_sweep: alias engine shipped; (64, 134] MiB mystery RESOLVED; rootvnode CLOSED
 
 - **Payload**: `engineering/payloads/kalias_sweep/kalias_sweep.elf`
