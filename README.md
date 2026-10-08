@@ -1,0 +1,59 @@
+# PS5 kernel research — FW 12.02
+
+Private research notes on the PlayStation 5 kernel-privilege stack as it
+exists on firmware 12.02: what our primitives can do, what the hypervisor
+makes impossible, how that differs from the pre-8.00 world, and the route
+we keep moving on.
+
+Findings only. No Sony proprietary code, no kernel dumps, no Ghidra
+databases — links and knowledge, never payload material (see
+`AGENTS.md`).
+
+Started 2026-10-08 from a consolidation session over the local lab
+(`homebrew_ps5`, `ps5debug-NG`, `prospero-win`, `payloads/`) and public
+scene sources.
+
+## Quick facts
+
+| Item | Value |
+|---|---|
+| Console firmware | 12.02 (kernel `kern.sdk_version` = `0x12020000`) |
+| CPU | AMD Zen 2 (Oberon APU) |
+| Kernel | FreeBSD 11.0 fork ("Prospero") |
+| Second-level translation | **NPT** (AMD nested paging — not EPT; EPT is Intel's term) |
+| Kernel text protection | XOM via NPT PTE bit 58; blocks read *and* write |
+| Privilege stack | ring 3 userland / ring 0 guest kernel / HV host (SVM) |
+| Exploit chain | kstuff-lite `1.11-opt` + ps5-payload-sdk |
+| What we never reach | HV host memory, kernel `.text` read/write, MSR/CR freedom |
+
+## Document index
+
+- [`docs/01-primitives.md`](docs/01-primitives.md) — the kernel-primitive
+  inventory: kread/kwrite mechanics, page-table access, gadget execution,
+  UELF/KELF, multi-FW dispatch.
+- [`docs/02-xom-npt.md`](docs/02-xom-npt.md) — the XOM/NPT boundary: the
+  two-level translation model, why text is unpatchable even with
+  page-table control, evidence chain.
+- [`docs/03-evolution-pre761.md`](docs/03-evolution-pre761.md) — the
+  ps5-linux-loader comparison: how FW 3.x–7.61 defeated the NPT layer, why
+  those routes are dead on 12.02, and where decrypted kernel images live
+  offline.
+- [`docs/04-route-1202.md`](docs/04-route-1202.md) — the forward plan:
+  hard boundaries, owned foundation, ordered steps, backlog.
+- [`docs/05-toolchain-and-observability.md`](docs/05-toolchain-and-observability.md)
+  — payload toolchain, deploy via elfldr, and the three TCP logging
+  routes.
+- [`docs/06-sources.md`](docs/06-sources.md) — public sources and
+  reference repos.
+
+## Epistemic labels used throughout
+
+Every kernel-behavior claim in these docs carries one of:
+
+- **[verified-in-tree]** — directly evidenced by source in our local
+  repos (file paths cited).
+- **[public-consensus]** — documented by the PS5 Developer wiki or
+  multiple independent scene projects; not independently reproduced by
+  us.
+- **[inference]** — our conclusion from absence/architecture; labeled
+  with the specific reasoning and what would falsify it.
