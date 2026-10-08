@@ -59,6 +59,10 @@ scene sources.
   reference repos.
 - [`docs/07-evidence.md`](docs/07-evidence.md) — console evidence log
   (dated experiment records: identity, expected, observed, recovery).
+- [`docs/08-phaseb-inventory.md`](docs/08-phaseb-inventory.md) — Phase B
+  capability inventory + mechanism notes (hypercall calling, PA-0
+  writes, wrmsr interception anatomy, GPUVM PTE format and the
+  text-read experiment design, modern-AMD context).
 
 ## Epistemic labels used throughout
 
