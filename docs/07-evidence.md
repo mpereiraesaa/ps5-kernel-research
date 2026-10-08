@@ -457,3 +457,37 @@ existing dump [verified-on-dump]:
   objects page-by-page, each page validated by the object graph before
   reading). Slower, strictly oracle-driven, no unexplained memory ever
   touched.
+
+## 2026-10-09 — anchor_read v3a: SUCCESS (oracle-driven targeted reads)
+
+- **Payload**: `payloads/anchor_read/anchor_read.elf` — the post-wedge
+  design: no sweeping; every page read is justified by a live kernel
+  pointer re-derived at runtime (boot-relative anchors: kdata-relative
+  offsets are cross-boot stable, physical placements are not).
+- **Run** [verified-on-console]: fresh boot (dmap=0xffffe06100000000,
+  cr3=0xf936000), **emitted=146 pages, skipped=0, faults=0, console
+  healthy** — the first multi-page acquisition since the wedge rule
+  with zero safety events. Fetch: 146 records
+  ({PML4 1, SINGLETON_ARRAY 1, SINGLETON_OBJ 10, VMREC 2,
+  POOL_ARRAY 128, BUDGET_REC 1, BUDGET_OBJ 2, ROOTVNODE 1}).
+- **Content highlights** [verified-on-dump]:
+  - Singleton cipher objects are linked structures (dmap peer
+    pointers, a common sub-object at phys 0x193a7c0) and contain a
+    **kernel text pointer** (`0xffffffff8b9d1988` ≈ text+0x37c1988 —
+    a vtable/function anchor: more free text-anchor harvest from
+    object pages). Three singletons at 0x19e4880/4980/4a00 share
+    identical content (adjacent array of equal cipher contexts).
+    Live 0xdeb7 poison slots present again this boot (slots 13, 20).
+  - Budget back-object lives at **phys ~1.216 GiB** (0x4d3226d0 —
+    high, far above the kernel's low-RAM cluster); leading 0x60
+    bytes zero — fields of interest lie deeper (extend read range).
+  - Rootvnode vnode page shows the classic FreeBSD vnode shape
+    (mount 0x1a99048, v_data 0x1b09020, v_op 0x1b09040, list
+    self-links) — the v3b namecache walk starts here
+    (v_cache links → namecache → the root-name strings).
+  - Pool arrays (2×64 pages @ phys 0x1834200/0x1834400) captured.
+- **Bugs fixed en route** (recorded): poison-mask must restore top16
+  from dmap only when the 0xdeb7 marker is present (unconditional
+  masking destroyed every live pointer); VM record field order is
+  count@+0/ptr@+8; C struct tail padding (4120 vs 4116) broke the
+  first parser stride.
