@@ -1,9 +1,21 @@
 # PS5 kernel research — FW 12.02
 
-Private research notes on the PlayStation 5 kernel-privilege stack as it
-exists on firmware 12.02: what our primitives can do, what the hypervisor
-makes impossible, how that differs from the pre-8.00 world, and the route
-we keep moving on.
+**Research goal** (owner-set 2026-10-08): *full understanding of this one
+machine* — a locally decompiled, semantically mapped 12.02 kernel and,
+eventually, the hypervisor, through our own capabilities on our own
+console:
+
+- **Phase A — semantic kernel map** (FW 12.02-native, no offline dumps):
+  anchor every kernel text address we can identify (syscall table, ops
+  tables, kstuff's public gadget/function tables, runtime derivations)
+  and correlate against FreeBSD 11 source. Honest limit: Sony's
+  *modifications* remain unknown until a text-read route opens.
+- **Phase B — text-read research program**: find a route to read
+  `.text` bytes (and, beyond it, HV memory). Known-closed on 12.x:
+  IOMMU write, `hv_unmap_pt_tmr` abuse, APICBASE-MSR hijack. Open
+  surface: GPU/GPUVM translation (do GPU accesses traverse the NPT?),
+  MSRPM coverage, hypercall validation, HV intercept handlers,
+  speculative channels. Three closed routes ≠ closed problem.
 
 Findings only. No Sony proprietary code, no kernel dumps, no Ghidra
 databases — links and knowledge, never payload material (see
