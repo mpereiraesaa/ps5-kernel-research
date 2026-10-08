@@ -371,3 +371,34 @@ validating discriminators). Console stayed off throughout.
 6. Multi-window consistency: raw page numbers (e.g. g_gt at 17.2 GiB)
    exceed the page total without contradiction because windows are
    non-contiguous — index space ≠ raw address space.
+
+## 2026-10-08 (night 2) — record family decoded; 0.6 GiB reconciled (hypothesis)
+
+FreeBSD stable/11 source cloned (sparse, /tmp) for correlation; all
+analysis host-side.
+
+1. **Record family decoded** — true stride is **0x158** (the earlier
+   0x258 lapped 1.5 records), ~21+ records from kdata+0x2d79358.
+   Shape: `{shared heap back-ptr, id pair (0x038a5800,0x28), TOTAL,
+   TOTAL (identical twins), system-pool pages, small stat pairs, ...}`.
+   `vm_domain` ruled out (no named queues — Sony strips/renames the
+   FreeBSD queue strings; shape mismatch). Interpretation: per-pool /
+   memory-budget record class, each mirroring machine totals with a
+   shared back-pointer object (0xffff89a103a759e0).
+2. **The split measured** [verified-on-dump]: TOTAL = 16.5950 GiB;
+   second field 0x12fc84 = **4.7466 GiB**; TOTAL−field =
+   **11.8484 GiB** — landing on the classic PS5 system-vs-shared
+   memory division (≈4.75 GiB system / ≈11.85 GiB game pool). This
+   also reinterprets the earlier `vm_page`-class records ({counts,
+   0x425a67, 256KiB-array ptr…}) as the same budget-record class —
+   the 256 KiB arrays are not 4.3M-entry page arrays.
+3. **0.6 GiB excess reconciled (hypothesis, consistent)**: excess over
+   nominal 16 GiB = exactly 0.5950 GiB; `g_gt` raw phys (16.94 GiB)
+   sits in the 16–36G band → ~16 GiB main GDDR in [0,16G) plus a
+   ~0.6 GiB auxiliary pool mapped high, together 16.595 GiB managed.
+   Verification path: the region list proper (band-table companion,
+   likely heap-resident) or the band-aware GPA sweep.
+4. **vm_phys_seg hunt negative** in the readable window (no
+   {start,end,first_page→array} signatures); FreeBSD queue-name
+   strings absent — Sony's boot diverges from stock loader
+   conventions, consistent with the missing phys_avail.
