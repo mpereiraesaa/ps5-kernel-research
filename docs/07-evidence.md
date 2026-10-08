@@ -118,3 +118,89 @@ console untouched.
 - **Status**: unresolved; suspected console-side sceNet/outbound state
   degradation after the morning game session. The /data + FTP transport
   bypasses it (inbound only).
+
+## 2026-10-08 — vm_map gating: static image has no vm_map entries (negative result, safe abort)
+
+- **Payload**: `kdata_dump.elf` (vm_map-gated build, sha256
+  `5592fda04b5d7163693ed9241ae85d2ae5d96c08d89c7a96522c826d54480a9c`),
+  read-only, FW 12.02, elfldr 9021.
+- **Design**: walk proc 0's vm_map RB-tree (ps5-payload-sdk
+  `kernel_get_vmem_entry` layout) and dump only the contiguous mapped run
+  from `kdata_base`.
+- **Observed** [verified-on-console]: `vm_map intervals=0` — no vm_map
+  entry intersects the window; clean abort, no panic (the gate worked).
+- **Finding** [inference + FreeBSD semantics]: the static kernel image
+  (text/rodata/data/bss) is mapped by `pmap_bootstrap` before any vm_map
+  exists — vm_map entries only describe dynamic kmem allocations, so
+  vm_map gating is the wrong oracle for the image. (Corroborated by
+  `vmspace+0x1d0` on 12.x reading as the vm_map RB root — a
+  ps5-linux-loader-style pmap-pointer assumption at that slot returns a
+  user VA at `+0x20`, failing validation safely.)
+- Follow-up: gate on the page tables instead (see next entry).
+
+## 2026-10-08 — PTE-gated 64 MiB kernel-data dump: SUCCESS + derivations
+
+- **Payload**: `engineering/payloads/kdata_dump/kdata_dump.elf` (PTE-gated
+  build, sha256
+  `613cbdad48379ac739d5ed06e0f79ec73dbc5f333317fd9bc863bd07a44253ef` at
+  134 MiB cap; the successful 64 MiB run used the same source with
+  `KDATA_DUMP_SIZE` capped), read-only, FW 12.02, elfldr 9021.
+- **pmap discovery** [verified-on-console] — port of ps5debug-NG
+  `proc_ptwalk.c` `ptw_discover` into the payload: scan
+  `vmspace[0x100..0x400)` for a `{pm_pml4, cr3}` pair, arithmetic
+  validation, then a round-trip through the payload's own known global
+  (`g_gt`) before any use. Found at **`vmspace+0x308`** on FW 12.02.
+- **Finding** [verified-on-console]: the direct-map base on this console
+  is **`dmap = 0xffffa39900000000`** — NOT the FreeBSD 11 constant
+  `0xffff900000000000` (a constant-based v3 build failed validation
+  safely on exactly this). The pair's `cr3` differs per elfldr payload
+  run (each payload is a fresh process with its own pmap).
+- **Dump** [verified-on-console]: 64 MiB window from `kdata_base`, zero
+  holes, every page PTE-present (the full image data segment through
+  `rootvnode+0x30D7510` with margin). File fetched over ftpsrv 2121
+  (`kdata_fetch.py`), manifest:
+  `sha256 197d0e04d1e9cab0c22358ecbb688fdde9170071ac7c89f2cc63b522fe3a1c41`,
+  67,108,864 bytes, 3.7 s transfer.
+- **Derivations** [verified-on-console] — sleirsgoevy porting_tool
+  method, run by `kdata_derive.py` over the dump (all offsets
+  kdata-relative, FW 12.02):
+  - `idt = 0x2e88300` (independent derivation)
+  - `gdt_array = 0x2e895e0` (independent derivation)
+  - `tss_array = 0x2e8afe0` (first TSS VA `0xffffffffd9ebafe0`)
+  - `kernel_pmap_store = 0x2e1cfb8` (independent derivation)
+  - `allproc` SDK value `0x2885e00` semantically plausible (nonzero
+    kernel heap pointer at the offset)
+  - `security_flags+0x24` (ps5debug-NG FW 12.x kpatch target) byte[1] =
+    `0x03` — bits 0b11, jailbreak applied state, read from the dump
+- **Open**: `rootvnode` independent cross-derivation FAILED — the method
+  needs kernel-heap namecache strings ('mini-syscore.elf', 'system', ...)
+  that live beyond the 64 MiB image window. The SDK value `0x30D7510`
+  remains `[verified-in-tree]` only.
+
+## 2026-10-08 — 134 MiB gated run: console down again mid-dump (second boundary event)
+
+- **Payload**: same PTE-gated build at the 134 MiB cap (sha256
+  `613cbdad48379ac739d5ed06e0f79ec73dbc5f333317fd9bc863bd07a44253ef`),
+  FW 12.02, elfldr 9021.
+- **Observed**: `ptw discover OK` printed, then the elfldr echo went
+  silent and the console became unreachable (no ping, no listeners). No
+  FAIL line — the payload died mid-dump. Console on-screen state was not
+  observed (panic vs rest mode unconfirmed at record time).
+- **Boundary refinement** [inference, strong]: the 64 MiB window is
+  proven safe end-to-end, so the fatal page lies in **(64, 134] MiB** of
+  the window (progress-filter analysis narrows to (64, 100] MiB). The
+  PTE gate was active and reads were filtered to present AND
+  cacheable (PCD/PWT clear) pages — so the fatality is NOT the unmapped
+  read class from the first panic. Candidate mechanisms: GPU/GARLIC
+  memory mapped into kernel KVA (present+cacheable-looking PTE, but
+  a corrupted-pipe kernel read of it faults), or an NPT-restricted
+  region whose guest read fault is fatal rather than graceful.
+- **Constraint for future dumps** [inference]: any read primitive in our
+  stack (SDK `kernel_copyout`, ps5debug-NG `kernel_copyout_fast` — same
+  loader-pipe mechanism) presumably hits the same fatal page. Probing
+  the (64, 134] MiB region costs one console reboot per attempt;
+  requires a deliberate session. The 64 MiB cap covers every SDK 12.x
+  symbol we currently use.
+- **Recovery state**: console off/unreachable; normal boot restores the
+  chain (proven after the first panic event). The 64 MiB dump + derived
+  offsets are already safe on the PC (previous entry).
