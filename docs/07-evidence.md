@@ -636,3 +636,18 @@ Given the NPT maps HV-own physical memory (present-but-denied class):
 - Our alias fault-classification (`si_code`) sweep remains the
   cheapest empirical test of present-but-denied vs holes — but must
   wait for band-aware anchors (two wedge lessons).
+
+## 2026-10-10 (late) — Tier-2 Unicorn lab: real payload code, 3/3 green
+
+`engineering/ps5-sim-lab/tier2_harness.py` + `tier2_payload.c`:
+the REAL compiled payload binary executes under Unicorn against REAL
+radix page tables built in emulated RAM — with the measured PS5
+entry-flag shapes (high 0x00f0 bits on table pointers; their absence
+hid the unmasked-descent bug until applied). HV policies pluggable
+(strict / qa_reading). Results:
+- Buggy build reproduces the console walker failure bit-for-bit.
+- Fixed build runs discovery → walk → poison → xotext fault →
+  chain A1 (QA-flags → reinit → text readable → xotext restored)
+  end-to-end, 3/3 assertions PASS.
+Five harness-side bugs were caught during bring-up — the lab absorbing
+our bug class exactly as designed, pre-console.
