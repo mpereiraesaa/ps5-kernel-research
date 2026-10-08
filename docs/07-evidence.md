@@ -222,3 +222,59 @@ console untouched.
 - **Recovery state**: console off/unreachable; normal boot restores the
   chain (proven after the first panic event). The 64 MiB dump + derived
   offsets are already safe on the PC (previous entry).
+
+## 2026-10-08 — kalias_sweep: alias engine shipped; (64, 134] MiB mystery RESOLVED; rootvnode CLOSED
+
+- **Payload**: `engineering/payloads/kalias_sweep/kalias_sweep.elf`
+  (sha256 `1ff357b00f248d16762a669e01d042327d2a2233542328cc93d39c827fd9769a`),
+  read-only, FW 12.02, elfldr 9021. Route step 2.
+- **Technique** [verified-on-console]: PTE-aliasing reader ported from
+  ps5debug-NG `scan_alias.c` — mmap an untouched arena; per 2 MiB span
+  touch only page 511 (allocates the PT, slots 0..510 stay not-present
+  and TLB-clean); resolve target phys via page-table walks (pipe reads
+  of PT RAM only); pipe-write `phys|P|RW|USER` into not-present slots;
+  read as normal userland memory with SIGSEGV/SIGBUS caught per page;
+  restore the original PT page. Self-verify before sweeping: alias read
+  of `kdata+0` == pipe read.
+- **Result** [verified-on-console]: full 134 MiB window swept flat —
+  `read_ok=21366, absent=12938, ucskipped=0, faulted=0` (mapped extent
+  ≈ 83 MiB this boot; manifest sha256
+  `222bed173183ac5981557840816ca2efa4c7d8b95fde780a475533b18928cdee`).
+  **Zero faults, zero uncacheable leaves**: every page in the (64, 134]
+  MiB region that is fatal to the corrupted-pipe kernel read reads fine
+  as userland memory through the alias.
+- **Resolution of the second boundary finding** [inference, strong]:
+  the pipe fatality is **kernel-context-specific, not a property of the
+  pages** (present, cacheable PTEs, readable in user context). Combined
+  with `ucskipped=0`, the earlier GPU/NPT-page theories are weakened;
+  the mechanism lives in the corrupted-pipe read path itself. The
+  alias reader is the correct tool for dynamic/unknown kernel memory.
+- **Cross-boot offset reproduction** [verified-on-console]: IDT
+  `0x2e88300`, GDT `0x2e895e0`, TSS `0x2e8afe0`,
+  kernel_pmap_store `0x2e1cfb8` — identical kdata-relative values on
+  two different KASLR boots (earlier PTE-gated dump vs this alias
+  sweep), and the SDK-table checks (allproc nonzero pointer,
+  security_flags byte[1]=0x03) pass on both. kdata-relative offsets are
+  boot-stable on this FW.
+- **rootvnode CLOSED** [verified-on-console]: the alias dump's qword at
+  SDK offset `0x30D7510` is `0xffff89a103356760`, and a live
+  `kernel_get_root_vnode()` read on the same boot returns exactly
+  `0xffff89a103356760` — independent-path agreement. The porting_tool
+  namecache-string derivation does not apply on 12.02 (the root-name
+  strings are not within the swept window; the kernel heap holding them
+  lives elsewhere in KVA — future work: kernel-half page-table
+  enumeration).
+- **New per-boot facts** [verified-on-console]: pmap pair again at
+  `vmspace+0x308`; `dmap=0xffff89a100000000` this boot vs
+  `0xffffa39900000000` on the previous boot — **dmap is randomized per
+  boot**; the kernel KASLR slide range is wide (kdata seen at
+  `0xffffffffd84a0000`, `0xffffffffd7030000`, `0xffffffff89210000`
+  across three boots).
+- **Bugs found and fixed en route** (lessons): the ported walkers must
+  mask `table = entry & PHYS_MASK` (a raw PTE value trips the
+  phys-bound check); a span maps at most 511 target pages (slot 511 is
+  the touch page), so the target cursor must advance by pages dumped,
+  not by SPAN — otherwise the flat file drifts 4 KiB per span (observed
+  as a 0x17000 symbol shift, diagnosed from the cross-boot offset
+  mismatch); read the round-trip global BEFORE walking it (untouched
+  .data pages have no PTE).
