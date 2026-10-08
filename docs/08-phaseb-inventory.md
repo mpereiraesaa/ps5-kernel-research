@@ -141,3 +141,33 @@ more reachable validation code — and we can invoke hypercalls, so each
 service is reachable from our position. "Grew + must be correct
 everywhere" vs "we need one gap": favorable research odds; same
 statistical premise as Phase B itself.
+
+### NPT hardware-walked (mechanism note)
+
+SVM nested paging: the MMU walks guest tables (VA→GPA) then NPT
+(GPA→SPA) automatically on TLB miss; no HV code runs per access. NPT
+denials raise VM exits the HV handles. Guest-kernel autonomy over its
+own tables is real but policy-irrelevant (guest PTEs change VA→GPA,
+never GPA→SPA). The memory-path attack surface is therefore NPT
+contents, VMCB/NCR3 setup, or silicon — not handler code — which is
+why Phase B targets non-memory paths (hypercalls, intercepts) or
+alternate translation engines (GPUVM).
+
+### NPT covering HV-own memory (premise: present-but-denied, not holes)
+
+[public-consensus from wiki/loader era; unverified on 12.02]
+Implications:
+
+1. Hiding is permission-based — a single NPT-entry corruption exposes
+   HV memory (holes cannot be "un-hidden"; present-but-denied can).
+2. The NPT is a complete SPA map including HV/PSP regions — reading it
+   ever = full physical layout of the machine; writing it = total win.
+   NPT pages are HV memory (chicken-and-egg), but this defines the
+   target hierarchy: NPT read = map, NPT write = endgame.
+3. **GPA liveness sweep upgrade — `si_code` classification**: the HV
+   synthesizes the guest-visible fault for NPT denials; if it forwards
+   the protection/not-present distinction, the alias fault handler can
+   record `SEGV_ACCERR` (entry exists → mapped-and-guarded) vs
+   `SEGV_MAPERR` (hole) per GPA — classifying not just *where* hidden
+   regions are but *how* they are hidden. Either result is a recorded
+   12.02 fact.
