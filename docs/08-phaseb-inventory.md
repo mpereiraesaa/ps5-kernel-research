@@ -209,3 +209,18 @@ Each combination = (mechanism class × trigger primitive × validation
 gate × recovery plan). The 1k enumeration will expand these five
 classes against our capability inventory; priority ordering by
 (falsification cost, skills match, recovery safety) puts A1 first.
+
+## Simulation lab (2026-10-10): ps5-sim-lab Tier-1 built and green
+
+`engineering/ps5-sim-lab/` — synthetic guest state + payload logic in
+testable form. **8/8 replay tests PASS**: every historical console-
+killing bug class (unmasked walker descent, 511/512 span drift,
+unconditional poison-mask, roundtrip read-before-walk) reproduces in
+simulation as a failing case, and chain A1 (QA-flags → rest/reinit →
+text probe) rehearses end-to-end against the modeled QA-reading HV
+policy — including the restore path (SL cleared → xotext returns).
+Boundary stated in-repo: simulation validates our logic and rehearses
+chains against MODELED policies; it cannot predict the real 12.02 HV.
+Console sessions become falsification-only, with pre-survived payloads.
+Tier-2 (QEMU AMD-SVM mini-HV with pluggable policies) is the designated
+engine for the 1k-combination narrowing.
