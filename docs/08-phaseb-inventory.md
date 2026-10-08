@@ -86,3 +86,58 @@ mechanics in `03-evolution-pre761.md`) targeted the same object: the
 A fourth route needs a new ladder to either the VMCB, an equivalent
 HV-owned structure, or a translation path that bypasses NPT entirely
 (the GPUVM question).
+
+## Q&A addendum (2026-10-08, owner questions)
+
+### Where is the HV's data?
+
+Historically [public-consensus, loader constants]: on 6.50–7.x the HV
+code+data sat at physical ~0x62800000+ (`HV_REENTER_HYPERCORE
+0x62806380`, `HV_STACK_TABLE 0x6282E120`, `HV_PML4 0x6282E1A0`,
+`HV_CODE_CAVE_PA 0x62806F00`). On 12.02: unknown to us.
+**Experiment — GPA liveness map**: the alias engine writes arbitrary
+GPAs into our own PTEs; NPT-unmapped GPAs fault *recoverably* in
+userland (SIGSEGV, counted, skipped). A full guest-physical-space
+sweep therefore maps exactly which regions the guest can see and which
+are hidden/denied — the holes are the HV/PSP carve-outs. Safe
+(zero kernel-context reads of unknown memory), one payload, host-side
+analysis.
+
+### HV interception scope (autonomy)
+
+The HV intercepts only sensitive/state-changing operations (CR writes,
+MSRs per MSRPM, CPUID, VMMCALL, I/O, interrupts). Everything else runs
+at bare-metal speed because **NPT is hardware-walked**: the CPU, not
+the HV, enforces second-level policy on every access. Kernel autonomy
+is an illusion bounded by NPT.
+
+### PSP MMIO and mailbox reachability
+
+The PSP (ARM core, root of trust — boot chain, keys, secure services)
+is programmed via mailbox registers + shared buffers in physical memory
+("MMIO"). The kernel side is `sceSblServiceMailbox` (in kstuff's
+12_02 table; the ~15 `_lr_` call sites map the protocol's flows).
+With kernel r/w the shared buffers are readable/writable in our dumps
+and the doorbell is kernel-mapped MMIO — **kstuff's whole fPKG
+mechanism already lives on this surface** (pointer-poisoning the
+`crypt_singleton_array` at `kdata+0x2d61e30` — present in our dump).
+The boundary is PSP-side message validation, not reachability.
+**Experiment — mailbox snooping**: dump the singleton/shared-buffer
+regions during a game mount to learn the live protocol; forge only
+after understanding it.
+
+### Unprotected HV jump tables
+
+Cannot be enumerated without reading HV memory (Phase B chicken-and-egg).
+Approachable via: the GPA liveness map (find guest-visible-but-guarded
+HV structures — the historically fatal class was a **guest-HV shared
+bookkeeping array**, `hv_unmap_pt_tmr`'s `hvm_shm`); black-box
+hypercall probing; older-FW structural continuity from the wiki.
+
+### HV growth ⇒ attack surface growth
+
+Post-FW7 HV growth (IOMMU takeover, more services, more handlers) means
+more reachable validation code — and we can invoke hypercalls, so each
+service is reachable from our position. "Grew + must be correct
+everywhere" vs "we need one gap": favorable research odds; same
+statistical premise as Phase B itself.
