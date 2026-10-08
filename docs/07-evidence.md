@@ -491,3 +491,34 @@ existing dump [verified-on-dump]:
   masking destroyed every live pointer); VM record field order is
   count@+0/ptr@+8; C struct tail padding (4120 vs 4116) broke the
   first parser stride.
+
+## 2026-10-09 (late) — anchor_walk v3b run: namecache graph live; mount table found
+
+- **Payload**: `payloads/anchor_walk/anchor_walk.elf`
+  (`5cdc0f9699fcf31277b748b48e7a0520da9d51f116abe7402334378e7fbee564`),
+  oracle-driven BFS from live rootvnode, depth 2, 160-candidate cap.
+  Run clean: **159 pages emitted, 0 faults, console healthy**.
+- **Found** [verified-on-dump]:
+  - The namecache/FS graph is fully reachable from rootvnode: real
+    names flowed immediately — `libSceSysmodule.sprx` with a
+    `/common/lib/...` path, sandbox mounts
+    (`/mnt/sandbox/NPXS40087_000/...`), saved-data files
+    (`20261008_204811_00340925.dat`, `.webm` captures).
+  - **Mount table located**: pages at phys ~0x4da7–0x4da9xxxx (the
+    ~1.24 GiB high arena, same neighborhood as the budget object)
+    contain `{fstype, path}` mount records — `nullfs` mounts with
+    full ASCII paths: `/system_data/priv/{message,bgdc,voice_a,
+    hid_con,console}`, `/user/bgft`, `/system_data/nobackup/
+    {sys,systembackup}`, sandbox `system_ex`, `update`, … The high
+    arena is the kernel's FS/system-state data region.
+  - The six classic root names (`mini-syscore.elf` etc.) were NOT in
+    the first 160 candidates: the BFS followed vnode→mount edges into
+    the mount table rather than `v_cache_dst` specifically —
+    pointer-following cannot distinguish edge types without struct
+    knowledge.
+- **v3c design (precision finisher)**: from the rootvnode page, walk
+  ONLY the dst-list head (single pointer; validated by exact-name
+  match at depth 1 + a back-pointer to rootvnode's phys), then the
+  nc_dst chain. ~10 pages. That closes the porting_tool derivation.
+- Parser cosmetic bug (anchor_walk tag dict inherited anchor_read
+  labels) — data unaffected; fix noted for the fetch script.
