@@ -115,9 +115,27 @@ console untouched.
   connections to the console (elfldr 9021, ftpsrv 2121) work fine.
 - ufw on the PC is **inactive** (Status: inactive, 2026-10-08) —
   exonerated. PC Wi-Fi (wlp0s20f3) active; PC↔console ICMP works.
-- **Status**: unresolved; suspected console-side sceNet/outbound state
-  degradation after the morning game session. The /data + FTP transport
-  bypasses it (inbound only).
+- **RESOLVED — measurement bug, not an outage** [verified-on-console,
+  same day]: every probe (BSD and sceNet variants) filled `sin_addr`
+  with `(a<<24)|(b<<16)|(c<<8)|d` — which packs the octets into the u32
+  **big-endian**, reversing the address in the little-endian `s_addr`
+  field (192.168.0.187 was dialed as 187.168.0.192). The field-proven
+  `hello_log` payload (byte-wise fill, `ps5log__fill_ipv4`) connected
+  fine all along; a bisect payload (`payloads/port_probe/hello_probe.c`)
+  that ran a verbatim copy of `ps5log__open_channel` next to the
+  hand-written connect made the differing sockaddr bytes visible.
+  With byte-wise `sin_addr` filling, all four targets connect: PC
+  ps5logd 9300, router 53, console-local klog 3232, PC kdata receiver
+  9301 — **payload-context outbound networking over POSIX sockets works
+  normally**. sceNet* from the payload context was never actually tested
+  with a correct address (all sceNet attempts had the same bug);
+  `ps5log.h` uses POSIX defaults for payloads by design regardless.
+- **Lessons recorded**: (1) fill `sockaddr_in.sin_addr` byte-wise
+  (network order in memory), never by packing octots into a u32;
+  (2) before concluding a console-side outage, validate the measurement
+  path against a field-proven instrument (`hello_log` did this and the
+  initial interpretation still took hours — the alternation of verbatim
+  vs hand-written code in one process was the decisive instrument).
 
 ## 2026-10-08 — vm_map gating: static image has no vm_map entries (negative result, safe abort)
 
