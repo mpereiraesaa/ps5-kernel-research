@@ -552,3 +552,87 @@ existing dump [verified-on-dump]:
 No further time on the name derivation — the SDK `rootvnode` offset is
 accepted as triple-verified (derivation == kstuff table == live value).
 The three "next options" recorded above are moot. Do not reopen.
+
+## 2026-10-10 — host-side research day: cross-FW deltas, 0xffffff80 region, Byepervisor lead
+
+### Cross-FW delta arithmetic (kstuff public headers, 12.00→13.00) [verified-on-public-source]
+
+71 common symbols diffed. Text layout:
+- **12.00 ≡ 12.02** except `sceSblServiceMailbox +0x10` — Sony inserted
+  16 bytes into the SBL mailbox dispatcher in exactly our firmware
+  (a validation tweak; the fPKG-era arms race visible in one delta).
+- **12.02 → 12.20**: uniform −0x180 shift of the whole scheduler/copy
+  cluster (cpu_switch, mov_rax_cr0, rdmsr, doreti, justreturn, copyin/
+  copyout move together) = one net 0x180-byte insertion upstream of
+  that cluster; the cluster is contiguously linked.
+- **12.20 ≡ 12.40**; 12.70 grows malloc's predecessor by +0x60.
+- **13.00 = full relink** (+0x45FA0 text, data +0x7DB0).
+- Data layout (sysents/idt/allproc/kernel_pmap_store) FROZEN
+  12.00→12.70 — kdata-relative offsets are stable across point
+  releases, only shifting at major relinks.
+
+### 0xffffff80… region [verified-on-dump]
+
+Phys 0x12d3a000 (reached via a kernel-VA pointer found in the pool
+arrays): 29 records × **0x90 stride**, each
+`{lock-init (0,−1), dmap-ptr→0x17d6xxx object, shared TEXT handler
+0xffffffff8b9c15b6, constant 0x1030000, …, 4}`. A subsystem object
+array in a THIRD kernel VA window (not dmap, not text — a kmem arena
+mapped in our own PTEs; resolvable by our page-table walk). Identity
+open; same text-handler family as singletons/pool arrays.
+
+### Byepervisor research find — TWO historical HV chains, one live lead [public-consensus]
+
+PS5Dev/Byepervisor (≤2.xx, hardwear.io 2024):
+1. **Jump-table exploit**: HV hypercall jump tables were mapped into
+   guest-visible memory — hijacking `VMMCALL_HV_SET_CPUID_PS4`'s entry
+   = ring −1 execution. (Historical confirmation of the shared-
+   structure fatal class; presumably fixed by 3.xx.)
+2. **QA-flags exploit (primary)**: **QA flags are shared HV/kernel
+   memory. The HV's NPT-construction code reads the System-Level (SL)
+   debugging QA flag; when set, NPT PTEs for kernel .text are built
+   WITHOUT xotext AND WITH write.** The secure loader does not
+   reinitialize the flags on resume-from-sleep while the HV IS
+   reinitialized → set SL flag → sleep → resume → text becomes RW.
+
+**Why this matters on 12.02**: we KNOW the QA flags location on our
+FW (`KERNEL_ADDRESS_QA_FLAGS`, kdata+0xd83088 family — printed by our
+own kdata_probe) and the SDK even ships
+`kernel_get_qaflags`/`kernel_set_qaflags`. If any part of the
+NPT-construction-reads-QA behavior survives into 12.02 (boot or
+resume), the chain is: set the SL bit (a data write — our proven
+class) → rest-mode cycle (owner-operated) → alias-probe a .text page
+(our recoverable-fault probe) → if readable, **text dump unlocked on
+12.02 without any new primitive**. Unknowns: whether Sony reinitial-
+izes/validates the flags on modern FW, and whether the resume-reinit
+asymmetry still exists. Falsifiable in one owner-approved session;
+recovery = reboot (worst case: flags left set — also writable back).
+
+### GPUVM text-read viability assessment [inference from public-consensus + our data]
+
+The wiki's "Sony moved the IOMMU to the hypervisor" line implies GPU
+DMA is gated by an HV-managed IOMMU **in addition to** any GPUVM
+translation. The experiment's real question: does the IOMMU's device
+table / IOPTE permission model independently deny device reads of
+xotext-marked physical pages (likely), or does it pass GPUVM-resolved
+addresses straight to memory (then GPUVM PTE injection wins)? What we
+have going: GPUVM page tables are kernel memory (writable by our
+primitives), the aperture constants are in our dump, and this lab has
+production AGC command-submission experience (gears/xash3d). Viability
+verdict: **medium-low odds, cheap to falsify given our toolchain, and
+the strongest-skills match in our queue.** The IOMMU DTE for the GPU
+is itself an HV-managed structure worth enumerating first (host-side:
+find GPU DTE candidates in existing dumps).
+
+### NPT-covers-HV premise (owner-stated fact for 12.02) — synthesis
+
+Given the NPT maps HV-own physical memory (present-but-denied class):
+- The NPT is a complete SPA map (read it = full layout; write it =
+  endgame) — target hierarchy unchanged.
+- Every historical chain (jump-table, QA-flags, TMR-unmap, IOMMU,
+  APICBASE) was ultimately a way to make the HV rebuild or stop
+  enforcing that map. The QA-flags path makes the HV itself rebuild
+  the map benignly — the only known class that needs NO HV write.
+- Our alias fault-classification (`si_code`) sweep remains the
+  cheapest empirical test of present-but-denied vs holes — but must
+  wait for band-aware anchors (two wedge lessons).
