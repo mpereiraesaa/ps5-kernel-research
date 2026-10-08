@@ -546,3 +546,9 @@ existing dump [verified-on-dump]:
   (2) FreeBSD-source-driven `v_cache_dst`/`nc_hash` walk with runtime
   struct-offset derivation (bigger build); (3) accept the SDK
   rootvnode offset as triple-verified without the name derivation.
+
+### Root-name derivation: CLOSED (owner decision, 2026-10-09)
+
+No further time on the name derivation — the SDK `rootvnode` offset is
+accepted as triple-verified (derivation == kstuff table == live value).
+The three "next options" recorded above are moot. Do not reopen.
