@@ -522,3 +522,27 @@ existing dump [verified-on-dump]:
   nc_dst chain. ~10 pages. That closes the porting_tool derivation.
 - Parser cosmetic bug (anchor_walk tag dict inherited anchor_read
   labels) — data unaffected; fix noted for the fetch script.
+
+## 2026-10-09 (final) — v3c targeted root-child walk: 0 validated; root-name closure remains open
+
+- **Payload**: `anchor_walk.elf` v3c (`b92d9968…`) — targeted walk:
+  every dmap pointer on the live rootvnode page tried as a namecache
+  candidate, validated by (a) EXACT standalone name equal to one of
+  the six classic root names (ASCII/UTF-16BE, null-terminated) AND
+  (b) a back-pointer to rootvnode's dmap VA on the candidate page.
+- **Result** [verified-on-console]: run clean (113 candidates, budget
+  80, **0 validated, 0 faults, console healthy**). Two en-route
+  payload bugs fixed (stage replacement dropped the rootvnode page
+  read; a keepalive shim NULL-deref'd into an unguarded fault).
+- **Interpretation** [inference]: on 12.02 the root vnode's children
+  are not present as standalone namecache entries at idle — either
+  the fake-root's children are not namecache-cached (kstuff-era
+  root_names lived in kdata on OLD firmwares, absent from our 12.02
+  kdata window), or the dst-list head points through an intermediate
+  LIST_HEAD struct not among the 113 direct pointers. The namecache
+  graph itself remains live and rich (v3b: mount table, real paths).
+- **Next options for the root-name closure**: (1) re-run the walk
+  during/after a game launch (namecache populates on lookups);
+  (2) FreeBSD-source-driven `v_cache_dst`/`nc_hash` walk with runtime
+  struct-offset derivation (bigger build); (3) accept the SDK
+  rootvnode offset as triple-verified without the name derivation.
