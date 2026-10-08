@@ -426,3 +426,34 @@ existing dump [verified-on-dump]:
    class. Targets: the singleton objects (with poisoned slots), the
    region list, namecache (rootvnode names), budget back-object,
    pool arrays — all known to live under 512 MiB phys.
+
+## 2026-10-09 — dmap_sweep run: console WEDGED in phys [16, 18.8 MiB] (fourth down event)
+
+- **Payload**: `payloads/dmap_sweep/dmap_sweep.elf` (sha256
+  `c20ec4be03c0466a366717979eb25bb2139a6082fd715ad9f36ed663fd744d55`),
+  FW 12.02 fresh boot, elfldr 9021. 2 GiB dmap sweep, PTE-gated,
+  PCD-filtered, fault-guarded, self-verify passed.
+- **Observed**: clean progress through 16,744,448 bytes (8 spans,
+  ~508 ok / 3 arena-absent / 16 uc-skipped per span), then the console
+  went fully unreachable mid-span-9 — wedge class, not panic.
+- **Narrowed killer**: target cursor after 8 spans = 8×511×4096 =
+  0xFF8000; span 9 covers **phys [0xFF8000, 0x11F7000] (~16–18.8 MiB)**.
+- **Root cause — model error** [inference, strong]: "dmap-present ⇒ RAM"
+  is FALSE. Sony maps vendor/protected early-physical regions into the
+  dmap; those reads stall the bus regardless of PTE presence and
+  without UC marking (the PCD filter cannot catch them). Plausible
+  identity of the region: PSP/SBL early boot structures (low physical
+  memory; the singleton objects at 26–30 MiB passed safely just after).
+- **Second wedge from linear memory sweeping. Refined rule**: only
+  pages validated by an independent oracle (kernel-referenced objects,
+  vm_page-backed pages) are provably safe to alias-read. Linear
+  coverage of any physical or dmap range is unsafe on this machine.
+- **Recovery**: power cycle.
+- **v3 design — anchor-targeted reads**: no more linear sweeps. Read
+  explicit small ranges around validated object phys: the singleton
+  cipher objects (0x19–0x1c3 MiB), pool arrays (0x1836000), rootvnode
+  target (0x3356760), budget back-object (0x3a759e0), cr3 PT chain,
+  the namecache via rootvnode's vnode links (walking validated kernel
+  objects page-by-page, each page validated by the object graph before
+  reading). Slower, strictly oracle-driven, no unexplained memory ever
+  touched.
