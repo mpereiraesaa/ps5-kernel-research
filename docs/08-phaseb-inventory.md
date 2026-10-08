@@ -171,3 +171,41 @@ Implications:
    `SEGV_MAPERR` (hole) per GPA — classifying not just *where* hidden
    regions are but *how* they are hidden. Either result is a recorded
    12.02 fact.
+
+## Combination-space framework (seeded 2026-10-10; 1k-target pending)
+
+Target: make kernel .text readable (Phase B win condition). Every
+known chain reduces to one of five mechanism classes against the
+NPT-covers-HV premise:
+
+**A. Make the HV rebuild the map benignly** (no HV write needed)
+- A1: QA-flags SL bit + reinit trigger (Byepervisor class) — **PRIMARY
+  LEAD; falsifiable now** (flags addr known; setters shipped; rest
+  cycle owner-operated; text probe recoverable)
+- A2: other NPT-construction inputs the HV reads from guest-shared
+  memory (survey: every field the builder consumes — flags, memory
+  maps, TMR state)
+- A3: any code path that constructs an NPT without xotext (debug/
+  updater/SP modes)
+
+**B. Stop enforcement entirely** (NP_ENABLE=0 — the historical routes)
+- B1: via VMCB write (needs HV-memory write: jump-table class)
+- B2: via HV code execution (ROP/pivot: APICBASE class, needs entry)
+- B3: via GMET/NPT control fields through a validation gap
+
+**C. Alternate translation engine** (bypass NPT)
+- C1: GPUVM PTE injection + GPU read (IOMMU-gated? — falsify DTE first)
+- C2: other bus masters with DMA the IOMMU trusts (SP/DMA engines)
+- C3: speculative/cache side channels (Zen 2 class issues)
+
+**D. Read the NPT itself** (map without changing enforcement)
+- D1: NPT pages via present-but-denied classification sweep
+- D2: NPT-derived metadata leakage (TLB behavior, timing)
+
+**E. Data-only kernel mastery** (no text needed — the fallback that
+  already works: our current position)
+
+Each combination = (mechanism class × trigger primitive × validation
+gate × recovery plan). The 1k enumeration will expand these five
+classes against our capability inventory; priority ordering by
+(falsification cost, skills match, recovery safety) puts A1 first.
