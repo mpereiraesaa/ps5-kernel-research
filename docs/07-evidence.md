@@ -689,3 +689,23 @@ Next maturation: chain count toward the 1k target by expanding
 (chains × policies × arguments × orderings); port the real payload
 C into this framework; each console session adds or corrects a
 mechanism and the matrix re-runs.
+
+## 2026-10-09 — qa_probe run: console CRASHED — pipe primitive on .text (fifth down event)
+
+- **Payload**: `payloads/qa_probe/qa_probe.elf` (sha256
+  `df0e319f67cb5e0ac6d226cccaabb5aef1f8503de3e35c29b18bef9b52df1331`).
+- **What happened**: the payload read the QA flags successfully
+  (`00 03 01 00 ...` — SL bit was NOT set), then attempted
+  `kernel_copyout(ktext, ...)` to probe .text readability —
+  **the pipe primitive on NPT-denied memory → kernel panic**.
+  Console showed orange blinking (rest-mode attempt) then crashed.
+- **Root cause — my error**: I violated the evidence log's own rule
+  ("pipe-primitive reads of unknown-mappedness memory panics; the
+  alias reader is the safe instrument"). The baseline text probe
+  should have used the alias engine's guarded read, not the raw pipe.
+- **QA flags state**: the SET operation never executed (crash came
+  before it). The flags are untouched. No persistence needed.
+- **Recovery**: hard power cycle (hold power / unplug).
+- **Fix**: rebuild qa_probe with the alias-engine text probe
+  (walk the .text leaf, alias it, guarded read — recoverable SIGSEGV
+  for the baseline xotext check).
