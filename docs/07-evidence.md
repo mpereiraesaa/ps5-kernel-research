@@ -788,3 +788,24 @@ For the C1 experiment we now have everything ps5-hen's gpu_dma.cpp needs:
 - `gvmspace_start_va` = **+0x78** (the GPUVA base)
 - `gvmspace_size` = **+0x20** (always 4 GiB)
 - `VMSPACE_VM_VMID` = **0x1E4** (cross-FW stable)
+
+## 2026-10-09 (gpuvm v1 run) — GPUVA walk failed: CPU/GPU VA separation on 12.02 [verified-on-console]
+
+- **Payload**: `payloads/gpuvm_read/gpuvm_read.elf` (`d1b6fd68…`).
+  Run clean (no crash, console healthy).
+- **Observed**: VMID=0, PDB2 found (0xffffee6d02027000, phys
+  0x2027000), /dev/gc opened (fd=7), buffers allocated — but the
+  GPUVM walk failed because `cpu_va - gpuva_start` was negative:
+  buffer CPU VA = 0x200200000, GPUVA start = 0x6000000000.
+- **Root cause** [verified-on-console]: on 12.02, the **CPU VA and
+  GPU VA spaces are separate**. On ≤4.51 (ps5-hen), direct-memory
+  mappings returned addresses within the GPU VA range (identity or
+  aliased). On 12.02, userland CPU VAs are at ~0x200000000 while the
+  GPU VA window for VM 0 starts at 0x6000000000 — disjoint.
+- **Fix for v2**: scan the PDB2 directly for valid entries (kernel
+  data reads — safe class), walk any valid entry to find an existing
+  GPUVM PTE, and use THAT as the victim (it already has a GPU VA
+  the GPU can access). Then retarget it to kernel .text phys.
+- **Instrument gate**: all pipe operations target kernel data (safe);
+  kernel .text is only accessed through the GPU DMA path. Gate
+  passed before the run [verified].
