@@ -1059,3 +1059,65 @@ payload of the last two days uses) with kstuff's `prosper0gdb.o`
    (`mov_rax_cr0` at kdata-0xaa3c61), capture register state,
    locate `mov rax, cr4` / `mov cr4, rax`, then CR4|FSGSBASE via
    the UELF run-gadget mechanism for prospero-win
+
+## 2026-10-09 — R0GDB ring-0 verified live; first ring-0 session crashed the console
+
+### Milestone: ring-0 execution machinery works on 12.02 [verified-on-console]
+
+The full chain, verified live in one session:
+- elfldr spawn of `payload-elfldr-sdk.elf` (sha256 `38ece906…`)
+- Session client protocol: `+` handshake byte, **`+` ACK after every
+  reply** (`end_packet` blocks on it — a missing ack kills the session;
+  this is what produced the earlier zombie listeners)
+- `g` = 344-hex register struct + `x` padding to 1120; `G` accepts the
+  344-hex core
+- Base derivation: `qOffsets` degenerates to the constant 0x400000 in
+  our static-PIE build (its `start_nonreloc` static gets an
+  R_X86_64_RELATIVE applied at load, cancelling the formula). Real
+  base = initial-stop rip − 0x4df (`start_rip`, the post-main CRT
+  return point), **verified by byte-comparing m-read memory against
+  the local ELF PT_LOAD contents** (vaddr→file-offset via phdrs;
+  note first LOAD is p_offset 0x4000 → p_vaddr 0). Live base:
+  `0x200000000`
+- Ring-0 entry: `G(rip=r0gdb)` + `c` (free-run; `cont_mode` only
+  engages when breakpoints exist) → `r0gdb_setup` (IDT gates 1/6/9/179
+  + TSS IST patches, originals saved) → `r0gdb_loop`
+- **Ring-0 confirmed live: T05 stop + full `g` served from the loop;
+  rsp = kstack `0xffffff8012008838`** (TSS13 IST−0x28, a real kernel
+  stack)
+
+### Crash: console down, owner power cycle required [verified-on-console]
+
+The first ring-0 `G` (register write: rip=rdmsr_start, rcx=EFER) got
+no reply for 15 s (undetermined: reply raced/misparsed or handler
+stall; `g` had been served instantly). The client timed out and
+**closed the socket**. The `r0gdb_loop` has **no dead-client safety**:
+`wait_for_packet` read-failure returns into the loop, which calls
+`run_in_kernel` with whatever `ts.regs.rip` holds (0 if the G never
+applied, or rdmsr_start if it did) → runaway ring-0 execution past
+the gadget → kernel #PF → **console panic** (100% ping loss while
+the LAN is healthy).
+
+### Boundary knowledge gained
+
+1. **Any r0gdb ring-0 session must never disconnect without the
+   cleanup dance** (`rip=r0gdb_cleanup` step-through restoring
+   IDT/TSS/SFMASK, then `rip=r0gdb_exit`). A dead client mid-session
+   is a guaranteed console panic via runaway ring-0 execution.
+2. Client requirements: park mode on anomaly (hold the socket open —
+   a stub blocked in `wait_for_packet` is safe indefinitely), byte-
+   level protocol logging, generous timeouts, disconnect only after
+   cleanup.
+3. m/M packets are userland-only in this build (plain write()/read()
+   syscalls; kernel addresses fail EFAULT, no panic path). The first
+   LOAD is RWE, giving in-image gadget scratch (link 0x2ac50+ tail
+   padding) with no mprotect needed.
+4. The k packet (SIGKILL) is a dangling-IDT trap after ring-0 setup —
+   never use it.
+
+### Next
+
+After the owner power-cycles: re-run the session with the hardened
+client (park mode + protocol log), resolve the G reply stall, then
+EFER (rdmsr), CR0 (mov_rax_cr0), CR4 (own `mov rax,cr4` gadget in the
+tail padding) — all single `s`-steps.
