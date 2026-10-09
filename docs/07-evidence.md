@@ -830,3 +830,27 @@ For the C1 experiment we now have everything ps5-hen's gpu_dma.cpp needs:
 - **Lesson (same as dmap_sweep)**: "entry says it points there" ≠
   "CPU can read there." GPUVM entries describe GPU-visible memory,
   which includes regions the CPU cannot access through the NPT.
+
+## 2026-10-09 (gate upgrade) — Tier-2 gate now catches the GPUVM crash class
+
+**New gate capability** (`ps5-sim-lab/hvemu/gate.py` +
+`GPUVMSafety` class in `hv.py`):
+
+- `GPUVMSafety.is_cpu_accessible(phys)` — checks physical addresses
+  against known CPU RAM bands; anything outside = GPU-local/device
+- `gate_gpuvm_deref()` — validates GPUVM-derived pointer
+  dereferences separately from normal kernel reads
+- `gate_gpuvm_sequence()` — takes sequences tagged with
+  `is_gpuvm_derived` for each read
+
+**Verified**:
+- v2 crash sequence (pipe on GPUVM-derived GPU-local phys):
+  **blocked by all 5 policies** (15 failures)
+- v3 safe sequence (alias for all GPUVM derefs): **all pass**
+- All existing gates still green (replay, Unicorn, matrix, QA gate,
+  instrument gate)
+
+**gpuvm_read v3 built** (`65b596e4…`) — all GPUVM pointer chasing
+now uses the alias engine (guarded SIGSEGV). Pipe primitive only on
+kernel data and the PDB2's own kernel VA. **Staged, NOT sent —
+awaiting owner approval for console session.**
