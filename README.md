@@ -77,3 +77,11 @@ Every kernel-behavior claim in these docs carries one of:
   us.
 - **[inference]** — our conclusion from absence/architecture; labeled
   with the specific reasoning and what would falsify it.
+
+## Related repositories
+
+- **[ps5-sim-lab](https://github.com/mpereiraesaa/ps5-sim-lab)** (private) —
+  the simulation tooling: three tiers of payload validation (logic
+  replay, Unicorn execution, HV policy modeling) plus the
+  instrument-aware gate that blocks unsafe payloads before they reach
+  the console.
