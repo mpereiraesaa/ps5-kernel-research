@@ -709,3 +709,19 @@ mechanism and the matrix re-runs.
 - **Fix**: rebuild qa_probe with the alias-engine text probe
   (walk the .text leaf, alias it, guarded read — recoverable SIGSEGV
   for the baseline xotext check).
+
+## 2026-10-09 (post-fix) — qa_probe v2 + qa_check v2: Tier-2 gate passed, ready
+
+Both payloads rebuilt with the **alias engine** for all .text probes
+(guarded SIGSEGV, recoverable — the correct instrument per our safety
+rule). Build green: qa_probe.elf `3f83a568…`, qa_check.elf `29534b3d…`.
+
+**Tier-2 gate** (`ps5-sim-lab/tier2_qa_gate.py`) — the payload sequence
+(baseline probe → SL set → reinit → post-resume probe → restore)
+validated against all 5 policy models, ALL GATES PASS:
+- baseline faults under every policy ✓
+- chain works only under QA-reading-class policies ✓
+- restore always returns xotext ✓
+
+**Gate rule now enforced**: no payload reaches send_elf.py without a
+Tier-2 gate pass. The qa_probe crash was the last payload to skip it.
