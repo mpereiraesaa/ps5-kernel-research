@@ -42,31 +42,64 @@ battlefield.** Closed on 12.x (validation added).
 
 ### GPUVM PTE format and the text-read experiment
 
-AMD GPUVM (GFX10.3 family): radix tree, **64-bit entries, 512/table,
-~5 levels, 4 KiB + 2 MiB pages** (fragment bits encode large pages).
-Canonical entry shape [public-consensus, amdgpu; exact PS5 bit
-placement to be verified by us]:
+The PS5-specific GPUVM entry shape is publicly documented in
+`cragson/ps5-hen`'s `gpu_dma.h` and `gpu_dma.cpp` [public-consensus,
+PS5 HEN and ps5-jar-loader implementations]. The published walker uses
+64-bit entries and PDB2 → PDB1 → PDB0 → PTB levels. Its constants are:
 
 ```
 bit 0      VALID
-bit 1      SYSTEM (system memory vs VRAM)
-bits ~5-6  READABLE / WRITEABLE
-bits ~7-9  FRAGMENT (large-page size)
-bits 12-47 physical address
-bits 57-59 MTYPE (cache/coherency policy)
+bit 54     IS_PTE (2 MiB leaf in this walker)
+bit 56     TF
+bits 59-63 BLOCK_FRAG field (5-bit mask)
+bits 6-47  address field (mask 0x0000FFFFFFFFFFC0)
 ```
 
-**The experiment** [design proposal]: GPUVM page tables are
-kernel-memory objects (built by the AGC driver) → present in our dumps
-and writable by our primitives. Steps: locate the live GPU page tables
-→ insert a PTE mapping an unused GPUVA to kernel-text physical pages →
-invalidate the GPU TLB (a command-buffer opcode) → issue a GPU copy
-from that GPUVA into garlic memory → read the bytes. If the HV does not
-validate GPUVM translations, this reads `.text` wholesale; if it does,
-we learn where the validation lives — either result advances Phase B.
-Open question it probes: **do GPU accesses traverse the same NPT that
-enforces xotext, or does the GPU MMU translate directly to physical
-with only GPUVM between?**
+The walker handles 2 MiB leaves and 8 KiB / 64 KiB page-table blocks.
+This supersedes the approximate generic GFX10.3 entry sketch above; the
+field names and page sizes should still be tied to the referenced source
+revision when they are used in an implementation.
+
+**Existing public capability** [public-consensus]: `ps5-hen` remaps a
+GPU-visible buffer's PTE and submits a GPU DMA transfer to read or write a
+requested physical address. Its README scopes support to FW 1.00–4.51 and
+describes patching the IOMMU before disabling nested paging as part of its
+HV defeat chain. `ps5-jar-loader` independently documents the remap-and-DMA
+kernel accessor. These implementations establish a GPUVM-mediated physical
+access technique in their supported, HV-compromised context.
+
+**FW 12.02 question** [inference]: the older implementations do not establish
+what happens while 12.02's current IOMMU configuration and CPU NPT protections
+remain enabled. The PS5 wiki infers from hypercall names that the HV manages
+the IOMMU, but does not document whether a GPU request is checked through the
+same NPT, which IOMMU translation is applied, or how the two interact.
+Falsify this narrow version-specific question against public source and
+existing evidence before considering any console experiment. Inferring a
+full text-read route from generic AMD GPUVM behavior alone was too broad.
+
+**Owner approval and safety plan**
+
+- **Approval**: the console owner explicitly approved this GPUVM text-read
+  experiment in the project conversation on 2026-10-09. This approval is
+  scoped to the bounded read experiment described here; it does not cover
+  broader GPU, DMA, or hypervisor probing.
+- **Risk**: an incorrect GPUVM entry, address, or TLB invalidation may
+  target unintended memory or hang the GPU/system. An NPT denial may fault
+  or wedge the console and require a forced power cycle. The intended copy
+  is read-only, but editing GPU page tables still changes kernel data.
+- **Bounded run**: use one unused GPUVA, map one text page, issue one read
+  into a dedicated scratch allocation, and make no writes through the GPU
+  mapping. Do not widen the mapping or repeat with guessed addresses in the
+  same run. If the console remains responsive, remove the test PTE and
+  invalidate the GPU translation before ending the session.
+- **Stop conditions**: stop on any unexpected GPU fault, missing completion,
+  loss of console responsiveness, or output inconsistent with the one-page
+  read. Do not issue follow-up GPU commands after a hang or fault.
+- **Recovery**: if the console hangs or panics, stop the payload and perform
+  the established hard power cycle. On reboot, confirm normal startup and
+  inspect the saved host-side logs before any repeat. If normal startup does
+  not return, stop and use the owner's established recovery process; do not
+  repeat the experiment until the failure is understood.
 
 ### Modern-AMD context
 
@@ -224,3 +257,76 @@ chains against MODELED policies; it cannot predict the real 12.02 HV.
 Console sessions become falsification-only, with pre-survived payloads.
 Tier-2 (QEMU AMD-SVM mini-HV with pluggable policies) is the designated
 engine for the 1k-combination narrowing.
+
+## cragson/ps5-hen analysis (2026-10-09): GPUVM DMA recipe found
+
+Source: https://github.com/cragson/ps5-hen (FW 1.00–4.51, 99 stars)
+— `gpu_dma.cpp` + `gpu_dma.h` + `offsets.h` read in full.
+
+### What ps5-hen's gpu_dma does (the complete recipe)
+
+1. **Open `/dev/gc`** — the GPU compute device
+2. **Allocate 3 GPU-mapped buffers** (victim/transfer/cmd, 2 MiB each)
+   via `sceKernelAllocateMainDirectMemory` +
+   `sceKernelMapNamedDirectMemory` with `PROT_GPU_READ|PROT_GPU_WRITE`
+3. **Find the VMID**: `proc→vmspace→vm_vmid` (kernel data read)
+4. **Find the GPU page directory (PDB2)**: `gvmspace[vmid]→page_dir_va`
+   (kernel data read — the `DATA_BASE_GVMSPACE` offset is in their
+   per-FW table, e.g., 0x064C3F80 for FW 4.x)
+5. **Walk the GPUVM page tables** (PDB2→PDB1→PDB0→PTB) using
+   kernel_copyout through dmap — GPUVM tables are in kernel memory!
+6. **Find the victim buffer's PTE** in the GPUVM page tables
+7. **Retarget the PTE**: `kernel_setlong(victim_ptbe_va,
+   cleared_ptbe | target_phys)` — a kernel data write that makes the
+   GPUVM entry point at ANY physical address
+8. **Submit a PM4 DMA_DATA command** via ioctl to `/dev/gc` —
+   the GPU's DMA engine reads/writes whatever the PTE points to
+9. **Restore the original PTE**
+
+### GPUVM page-table format (from gpu_dma.h) [public-consensus → now verified]
+
+```
+PDB2 (PML4 equiv) → PDB1 (PDPT) → PDB0 (PD) → PTB (PT)
+PTE fields:
+  bit 0        VALID
+  bit 54       IS_PTE (2 MiB leaf flag)
+  bit 56       TF (translation fragmentation)
+  bits 59-63   BLOCK_FRAG (fragment size encoding)
+  bits 6-47    PHYSICAL ADDRESS (mask 0x0000FFFFFFFFFFC0)
+```
+
+### The critical architectural insight
+
+**GPUVM page tables are in KERNEL memory** — they are kernel data
+structures, readable and writable by our pipe primitive on ANY
+firmware. The GPU's DMA engine translates GPUVA→physical through
+these tables, NOT through the NPT. This is architecturally separate
+from the CPU's NPT enforcement.
+
+On ≤4.51 with HV defeated: GPU DMA to any physical address works
+(proven by this code). On 12.02 with HV active: the question is
+whether the HV-managed IOMMU adds a second check between GPUVM and
+physical memory, or whether GPUVM is the only translation layer for
+the GPU.
+
+### What we need for 12.02
+
+1. `DATA_BASE_GVMSPACE` offset for 12.02 — findable in our kdata dump
+   (it's where the 4 GiB-strided aperture table lives, at the region
+   we already identified as "GPUVM-class" at kdata+0xc880f0)
+2. `VMSPACE_VM_VMID` = 0x1E4 (same across all FWs in their table)
+3. The per-FW `sizeof_gvmspace` and `gvmspace_page_dir_va` offsets
+4. Everything else is standard: `/dev/gc` open, PM4 command building,
+   ioctl submission
+
+### Viability assessment update
+
+Previously: "medium-low odds, cheapest falsification, best skills
+match." Now: **the recipe exists in tested code, all the kernel-side
+primitives are the same class we already use, and the only unknown
+is whether the HV-IOMMU blocks GPU DMA on 12.02.** The experiment is:
+retarget a GPUVM PTE to kernel .text physical → PM4 DMA_DATA read →
+check if the bytes come back. Worst case: a GPU fault (recoverable —
+not a kernel panic, the ioctl returns an error).
+
+This is the strongest Phase B lead after QA-flags.
