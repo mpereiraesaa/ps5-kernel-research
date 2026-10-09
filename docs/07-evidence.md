@@ -809,3 +809,24 @@ For the C1 experiment we now have everything ps5-hen's gpu_dma.cpp needs:
 - **Instrument gate**: all pipe operations target kernel data (safe);
   kernel .text is only accessed through the GPU DMA path. Gate
   passed before the run [verified].
+
+## 2026-10-09 (gpuvm v2) — PDB2 scan crashed console (sixth down event)
+
+- **Payload**: `gpuvm_read.elf` v2 (`8a855446…`).
+- **What happened**: discovery worked (VMID=0, PDB2, dmap, ktext phys
+  all found), then the PDB2 scan started and the console went silent —
+  kernel panic or wedge class.
+- **Root cause**: the scan reads PDB2 entries (safe — kernel data at
+  the PDB2 kernel VA), then follows their physical addresses through
+  `dmap + phys` using `kernel_copyout` (the pipe primitive). **GPUVM
+  entries can point to GPU-local memory or device regions** — reading
+  those through the dmap via the pipe primitive is the same fatal
+  class as the dmap_sweep crash.
+- **The missing check**: every GPUVM-derived physical address must be
+  validated as CPU-accessible RAM before dereferencing it through
+  dmap. Alternatively: use the alias engine (guarded reads) for all
+  GPUVM pointer dereferences — recoverable SIGSEGV instead of panic.
+- **Recovery**: hard power cycle.
+- **Lesson (same as dmap_sweep)**: "entry says it points there" ≠
+  "CPU can read there." GPUVM entries describe GPU-visible memory,
+  which includes regions the CPU cannot access through the NPT.
