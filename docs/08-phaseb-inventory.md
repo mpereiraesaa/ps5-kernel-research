@@ -330,3 +330,85 @@ check if the bytes come back. Worst case: a GPU fault (recoverable —
 not a kernel panic, the ioctl returns an error).
 
 This is the strongest Phase B lead after QA-flags.
+
+## CVE analysis (2026-10-09): two HV bug classes confirmed in the wild
+
+### CVE-2026-63794: sev_dbg_crypt page overflow → UAF
+
+**The bug**: `len = min(PAGE_SIZE - s_off, size)` but NOT
+`min(len, PAGE_SIZE - d_off)` — a one-line missing bound check.
+When `d_off > s_off`, the PSP writes `round_up(4097, 16) = 4112`
+bytes into a 4096-byte buffer. Heap overflow → use-after-free →
+privilege escalation.
+
+**Why it matters for PS5 12.02**:
+1. **Same architecture**: KVM/SVM → PSP debug-decrypt path ↔
+   PS5 HV → PSP mailbox path. Both are hypervisor services that
+   read/write guest memory through the PSP for debugging.
+2. **Same bug class**: a simple length/offset validation gap in a
+   hypercall handler — exactly the class we model as
+   `validation_gap` policy and hunt via `B3:unmap-gap`.
+3. **The PSP path bypasses NPT by design**: the PSP reads physical
+   memory directly. If the PS5 HV has an equivalent debug-decrypt
+   service (even a private/internal one), invoking it on kernel
+   `.text` physical pages would read them without any NPT check.
+4. **Sony has the same code-pressure**: their HV is also a
+   translation-table manager with debug services. A missing bound
+   check there would be equally exploitable.
+
+**New chain candidate — D2: debug-decrypt service**:
+- Find or infer a HV service that reads guest memory through the PSP
+- The SBL crypto path (`sceSblServiceCryptAsync` /
+  `sceSblServiceMailbox`) is the PS5's PSP communication channel
+- If any mailbox command can be made to read from an arbitrary
+  physical address (a debug variant, a diagnostic mode, or a
+  validation gap in the normal path), it bypasses NPT entirely
+- Our captured singleton cipher objects + the live `0xdeb7` poison
+  slots are the entry points into this path
+
+### CVE-2026-53359: shadow paging UAF via role mismatch
+
+**The bug**: guest modifies a PDE from outside → HV's shadow page
+table creates a child with the wrong role (`direct=1` vs `direct=0`)
+→ stale rmap entry survives memslot deletion → later walk
+dereferences freed page.
+
+**Why it matters for PS5 12.02**:
+1. PS5 uses NPT, not shadow paging — but the **bug pattern**
+   (stale internal bookkeeping after guest-side modification →
+   later HV operation dereferences stale state) applies to ANY
+   hypervisor that maintains translation metadata.
+2. Our NPT premise: "the HV maps its own physical memory
+   present-but-denied." If we can modify something that causes
+   the HV's NPT bookkeeping to become inconsistent (e.g., the
+   QA flags, the memory map, a TMR entry), a later NPT
+   rebuild might use the stale state in a way that exposes
+   protected regions.
+3. This is the **B-class chain pattern**: modify a shared data
+   structure → trigger an HV reinit → the HV's own code operates
+   on attacker-influenced state.
+
+**New chain candidate — B5: stale-NPT-state**:
+- Modify a guest-visible data structure that the HV's NPT builder
+  consumes (QA flags is one; there may be others)
+- Trigger a rebuild (rest/resume, or any path that reconstructs)
+- If the builder's bookkeeping becomes inconsistent (e.g., partially
+  updated state from a race or ordering issue), the rebuilt NPT
+  might miss xotext on some pages — even without the QA-flags
+  SL bit being set
+
+### Meta-lesson from both CVEs
+
+Both bugs were found in **open-source** Linux KVM (millions of eyes).
+The PS5 HV is **closed-source** (zero external audit). The same
+classes of simple validation bugs almost certainly exist there —
+they're just harder to find without source. Our approach — modeling
+the HV's behavior, probing from the guest, and building the
+combination matrix — is the systematic way to find them.
+
+Add to the emulator:
+- `sev_dbg_overflow` policy: models a debug service with a
+  missing bound check (the PSP writes beyond the buffer)
+- `stale_npt_state` policy: models a rebuild that uses
+  partially-modified state
+- Both are new columns in the 1k-combination matrix
