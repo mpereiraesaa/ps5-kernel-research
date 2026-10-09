@@ -1183,3 +1183,10 @@ becomes the staged Phase-B text-read payloads:
 Both are built, gated, and staged. After the owner's power cycle
 #3, the next console phase should be the QA chain (needs its rest
 cycle), not another ring-0 session.
+
+### Raw evidence
+
+- `docs/evidence-logs/2026-10-09-r0gdb-session2.log` — the full
+  byte-level protocol log of ring-0 session #2 (stages A-F, the park,
+  and the 60 s stall after the user-page gadget step): the raw record
+  behind the EFER/CR0 reads and the SMEP derivation in PR #41.
