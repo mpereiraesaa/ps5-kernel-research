@@ -412,3 +412,115 @@ Add to the emulator:
 - `stale_npt_state` policy: models a rebuild that uses
   partially-modified state
 - Both are new columns in the 1k-combination matrix
+
+## STALEUS analysis (2026-10-09): a new mechanism class — data incoherence
+
+Source: USENIX Security '26, CVE-2025-54509, AMD-SB-3039.
+Confirmed on EPYC 9124 (Zen 4) / 9135 (Zen 5). NOT confirmed on PS5.
+
+### The mechanism (behavioral summary)
+
+```
+                    CPU cache: [metadata = NEW value (dirty)]
+                              ↕ (cache coherence normally synchronizes)
+                    DRAM:     [metadata = OLD value]
+
+                    PSP reads DRAM directly (NoSnoop mode):
+                    → sees OLD value → security check passes on stale data
+```
+
+Two stale-data windows:
+1. **PSP reads stale**: CPU wrote newer metadata to cache (not yet
+   flushed); PSP reads old DRAM value → security check on wrong data
+2. **PSP write lost**: PSP writes to DRAM; CPU cache later evicts
+   its dirty copy → overwrites PSP's write → CPU sees old, PSP
+   committed new
+
+The attacker (hypervisor) flips a SYSHUB bridge configuration register
+to make PSP transactions assert `NoSnoop` — bypassing cache snooping.
+
+### Why this matters for PS5 12.02 — five connections
+
+1. **Same hardware family**: PS5 = AMD APU with PSP, interconnect
+   fabric, cache coherence controllers. The architectural pattern
+   (even if the exact registers differ) exists on our console.
+
+2. **We already talk to the PSP**: The SBL mailbox path
+   (`sceSblServiceCryptAsync` / `sceSblServiceMailbox`) is our
+   documented, reachable PSP communication channel. The singleton
+   cipher objects we captured ARE the kernel-side PSP state.
+
+3. **Our QA-flags chain is a metadata attack on the HV**; STALEUS is
+   a metadata attack on the PSP. Both make a security processor
+   consume attacker-influenced state — but through completely
+   different mechanisms (direct write vs coherence split).
+
+4. **A possible explanation for "flag didn't take effect"**: If the
+   HV reads QA flags from cached memory while our kernel R/W writes
+   to DRAM, the HV might see stale flags even after our write
+   "succeeds." This could explain why some NPT-construction inputs
+   might not behave as expected even when the data looks correct from
+   our side.
+
+5. **The PSP path already bypasses NPT**: The PSP reads physical
+   memory directly. STALEUS shows that the COHERENCE of what the
+   PSP reads can be attacker-controlled. If we can influence what
+   the PSP sees (even without the NoSnoop register), we might be
+   able to make it operate on data that differs from what the kernel
+   considers authoritative.
+
+### New mechanism class: E — data incoherence
+
+Added to the combination framework:
+
+**E: Data incoherence** — make two agents (CPU and PSP) disagree
+about the contents of security-critical data.
+
+- E1: **Coherence split via bridge config** (STALEUS proper):
+  flip a SYSHUB-like register → PSP reads/writes non-coherent
+  → stale metadata consumed. [requires HV privilege on EPYC;
+  unknown what privilege is needed on PS5]
+- E2: **Race the flush**: write metadata, immediately trigger a PSP
+  operation before the cache line is flushed. The PSP reads the
+  pre-write value. [doesn't require any register change — just
+  timing]
+- E3: **Cache-line ping-pong**: write metadata from multiple CPUs
+  to keep a cache line dirty, preventing the PSP's DRAM write from
+  being visible to the CPU (or vice versa).
+- E4: **DMA incoherence**: use the GPU's DMA engine (which we
+  already know bypasses NPT) to write to a page that's also cached
+  by the CPU. The GPU writes to DRAM; a dirty CPU cache line
+  can overwrite it.
+
+### Practical PS5 chain candidates from STALEUS inspiration
+
+- **E2 (race the flush)**: write QA flags → immediately trigger
+  rest/resume before the cache line flushes → the HV's NPT builder
+  reads the OLD (pre-SL) flags → NPT built with xotext. This is
+  the INVERSE of A1: instead of setting the flag early, we exploit
+  that the flag might not be visible yet. [Requires precise timing;
+  may explain A1 failures]
+- **E4 (GPU incoherence)**: the GPUVM experiment (C1) retargets a
+  GPUVM PTE via kernel write. If the GPU's page-table walker has
+  its own cache of that PTE, our kernel write might not be what
+  the GPU sees — or vice versa. The "ioctl failed" result from
+  our v1 attempt could be a coherence artifact, not an IOMMU block.
+
+### Meta-lesson
+
+STALEUS attacks a layer BELOW the NPT — cache coherence. It means
+that even if NPT permissions are perfect, the DATA the security
+processors consume can be made stale or inconsistent. This is a
+fundamentally different attack surface from everything in our
+current matrix, and it exists on the same hardware family.
+
+### Safe adaptation
+
+Build a behavioral simulation in the Tier-3 emulator:
+- CPU cache model (dirty lines, eviction)
+- DRAM model (authoritative backing store)
+- PSP-like agent (reads/writes with coherent vs NoSnoop modes)
+- A security check that reads metadata
+- Verify: coherent mode preserves invariants; non-coherent mode
+  breaks them (stale read, lost write)
+- Label as behavioral simulation of the published mechanism
