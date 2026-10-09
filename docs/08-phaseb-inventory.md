@@ -524,3 +524,15 @@ Build a behavioral simulation in the Tier-3 emulator:
 - Verify: coherent mode preserves invariants; non-coherent mode
   breaks them (stale read, lost write)
 - Label as behavioral simulation of the published mechanism
+
+## 2026-10-09 priority update: QA-flags chain is the CR4 prerequisite
+
+The ring-0 sessions (PRs #40/#41) proved the r0gdb machinery can execute
+any kernel-text instruction with controlled registers (EFER, CR0 read
+live), but CR4 needs a kernel-text `mov rax,cr4` (`0f 20 e0`) address,
+and text is XOM to every reader we have. **The A1 QA-flags chain
+(qa_probe v2 → rest cycle → qa_check v2) is now the prioritized next
+console phase** — a successful QA text read plus a byte-scan delivers
+both CR4 gadgets (read + write), after which the ring-0 machinery
+becomes the CR4 engine. The GPUVM route (gpuvm_read v3) remains the
+alternative. Full context: docs/09-live-kernel-state-and-fsgsbase.md.
