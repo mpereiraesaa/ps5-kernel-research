@@ -991,3 +991,71 @@ still requires the CR4 bit to be set.
 3. **The sysarch handler is a new lead** — if the kernel's sysarch
    code internally enables or touches CR4 (to read/write FS base),
    tracing that code reveals the CR4 manipulation path.
+
+## 2026-10-09 — prosper0gdb live on console (R0GDB endpoint up); elfldr internals mapped
+
+### Status: kernel GDB stub operational [verified-on-console]
+
+`payload-elfldr-sdk.elf` (sha256 `5497d80d…`,
+`/tmp/kstuff-lite-cr4/prosper0gdb/sdk-build/`): port 1234 listening,
+RSP handshake verified — stop reply `+$T05#B9`, full `g` register
+packet (1125 bytes). Three root causes fixed in sequence:
+
+1. **ET_EXEC base collision** [verified-on-console]: the console's
+   elfldr (ps5-payload-dev/elfldr, john-tornblom) rforks a
+   SceSpZeroConf (NPXS40112) host and maps ET_EXEC payloads with
+   MAP_FIXED at their link base. The host's own eboot occupies
+   ~0x400000, so every `-no-pie`/ET_EXEC prosper0gdb send failed at
+   `elfldr.c:190: pt_mmap: Invalid argument` — visible only in klog
+   ("Error spawning payload" is the generic socket message).
+   **Every prior direct prosper0gdb send died at spawn, not at args.**
+2. **Stub-bootstrap crash**: kstuff's raw syscall stubs bootstrap
+   `p_syscall` through `addr__dynlib_dlsym` on first use, and
+   crt-elf leaves it holding the payload_args *pointer* — any stub
+   call before repairing it jumps into the struct (SIGSEGV/SIGILL,
+   deferred coredump visible in klog).
+3. **One-shot accept**: the stub accepts exactly one connection and
+   requires `+` as the first byte; a port probe consumes the listener.
+
+**Working recipe**: SDK crt + libc link (the structure every working
+payload of the last two days uses) with kstuff's `prosper0gdb.o`
+(r0gdb+run+offsets) + `dbg.c` as plain objects; `_end` bridged via
+`--defsym=_end=__image_end`, `__sysctl` bridged to SDK `sysctl`.
+
+### Live kernel verification [verified-on-console]
+
+- `fw_version=0x12020000`, `>>16 = 0x1202` — offsets dispatch correct
+- `r0gdb_init rc=0` — IPv6-socket + kernel-pipe + pktopts stack works
+  via elfldr's `rwpair`/`rwpipe`/`kpipe_addr` (identical primitive to
+  ps5debug-NG's own `kern_rw_fast`, constants match byte-for-byte)
+- `kread8(allproc head)` works — pipe primitive end-to-end
+- **`sysent[165].sy_call - kdata_base = -0xa3c878` (live
+  `0xffffffffd5930000` boot) — EXACTLY our dump-derived delta.**
+  Third independent confirmation (our alias-dump derivation,
+  kstuff's 12_02 table, live read). Sysent stride 48, `sy_call`+8
+  re-derived from our own dump against all anchor entries.
+
+### Environment facts [verified-on-console]
+
+- Live kdata base this boot: `0xffffffffd5930000` (per-boot slide)
+- klog msgbuf is small and churns fast (PFAuth spam, coredump
+  progress, SceShellCore FMEM listings); error forensics require
+  an immediate `klog_tail.elf` read after the failing send
+- **Syscore serializes process spawns during game launches** —
+  payload spawns queue behind them (elfldr blocked in
+  kevent/waitpid; send_elf.py reports "timed out; execution result
+  is unknown"). Concurrent fullscreen game tests (bridge agent)
+  jammed one send this way; spawns resume when the queue drains.
+- elfldr bootstrap uses `kernel_get_qa_flags`/`kernel_set_qa_flags`
+  (ps5-payload-dev/elfldr main.c) — relevant to the A1 QA chain
+
+### Next
+
+1. Local TCP proxy (sends `+` first, then relays) + real GDB
+2. `r0gdb()` ring-0 phase (IDT patch, `run_in_kernel`) — separate
+   operator gate before any ring-0 execution
+3. CR4 gadget hunt: single-step `pmap_activate_sw`
+   (`mov_rax_cr3` at kdata-0x3cf570) and the cpu_switch region
+   (`mov_rax_cr0` at kdata-0xaa3c61), capture register state,
+   locate `mov rax, cr4` / `mov cr4, rax`, then CR4|FSGSBASE via
+   the UELF run-gadget mechanism for prospero-win
