@@ -934,3 +934,60 @@ approach for finding and single-stepping a CR4-read gadget.
    a. Modify the kernel's saved CR4 (data write — our proven class)
    b. Find and call a kernel function that writes CR4 (gadget chain)
    c. The HV's CR4 interception handler may allow or mask the write
+
+## 2026-10-09 — fsgsbase_enable read-only run: sysarch WORKS, CR4 candidates wrong
+
+- **Payload**: `fsgsbase_enable.elf` v2 (`a26b9338…`, read-only mode,
+  no `--write` argument — the other agent's safe design).
+  Console healthy throughout.
+
+### Finding 1: sysarch WORKS on 12.02 [verified-on-console]
+
+```
+sysarch(AMD64_GET_FSBASE): ret=0 errno=3
+  -> FS base = 0x00000008ff800080
+```
+
+FreeBSD's `sysarch` syscall (165) with `AMD64_GET_FSBASE` (128)
+**succeeded**. This means:
+- The kernel has a working FS/GS base read/write path via sysarch
+- `sysarch(AMD64_SET_FSBASE)` (129) should also work
+- prospero-win can use this as a **functional baseline** for TLS
+  switching even without FSGSBASE — it's slower (syscall vs userland
+  instruction) but it works
+
+### Finding 2: CR4 candidates are WRONG for this boot [verified-on-console]
+
+```
+kdata+0x21bf828: value = 0x0000000000001dec (NOT CR4)
+kdata+0x21bf830: value = 0x0000000000001dec (same)
+```
+
+The value `0x1dec` does NOT match a plausible CR4 (missing PAE,
+OSFXSR, OSXMM bits). The kdata-relative offsets `0x21bf828/0x21bf830`
+held `0x45da0` in the DUMP boot but `0x1dec` in THIS boot — these
+are not boot-stable CR4 values. They were either coincidental data
+in the dump or a boot-varying structure.
+
+The verification-abort correctly prevented any kernel write.
+
+### Finding 3: rdfsbase still #UD [confirmed]
+
+CR4.FSGSBASE remains disabled. The fast path (userland `wrfsbase`)
+still requires the CR4 bit to be set.
+
+### Practical outcome for prospero-win
+
+1. **sysarch works NOW** — `sysarch(AMD64_SET_FSBASE)` is a
+   functional path for TLS switching. Not as fast as `wrfsbase`
+   but it eliminates the need for Linux-style `arch_prctl` wrappers.
+   Worth measuring the actual syscall cost on-console.
+
+2. **CR4 hunt needs redo** — the saved-CR4 values must be found on
+   the CURRENT boot (not from the old dump). The pcpu_array offset
+   (kdata+0x2e9cf00) is the right starting point — walk the per-CPU
+   pointers to find where CR4 is saved.
+
+3. **The sysarch handler is a new lead** — if the kernel's sysarch
+   code internally enables or touches CR4 (to read/write FS base),
+   tracing that code reveals the CR4 manipulation path.
