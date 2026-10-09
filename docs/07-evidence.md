@@ -749,3 +749,42 @@ alias engine hit the same NPT denial — but fail differently:
 blocked by all 5 policies**; the v2 sequence (alias on .text) is
 **correctly cleared**. The exact crash that cost a console power cycle
 can no longer reach `send_elf.py`.
+
+## 2026-10-09 (gpuvm hunt) — DATA_BASE_GVMSPACE found for 12.02: kdata+0x21853e0
+
+Host-side hunt in the existing alias dump. Found a **4-entry gvmspace
+array** at `kdata+0x21853e0`, stride **0x108** (264 bytes), each entry:
+
+```
++0x00  dmap ptr (page_dir area)     e.g., phys 0x355c018
++0x08  dmap ptr (page_dir + 0x38)   e.g., phys 0x355c050
++0x10  dmap ptr (PDB2 base!)        e.g., phys 0x355c000  ← GPU page dir
++0x18  allocation counter           varying (7563, 20618, 6, 2237)
++0x20  SIZE = 0x100000000           4 GiB GPU VA aperture
++0x30  kdata+0x3ec06c              shared ops/handler (same in all)
++0x38  0x1030000                    constant (type/flags)
++0x50  0xffffffff                   constant
++0x78  GPUVA base                   varies per VM (see below)
+```
+
+Four entries decoded [verified-on-dump]:
+
+| VM | PDB2 phys | GPUVA base | counter |
+|---|---|---|---|
+| 0 | 0x355c000 | 0x006000000000 | 7563 |
+| 1 | 0x355a000 | 0x048000000000 | 20618 |
+| 2 | 0x3551000 | 0x004000000000 | 6 |
+| 3 | 0x32e1000 | 0x000000000000 | 2237 |
+
+**GPUVA base values correlate with our aperture table** (0x4 GiB-strided
+values at kdata+0xc880f0: 0x1b0, 0x2b0, 0x3b0... ×0x100000000) — the
+aperture table IS the GPU VA window map, and each gvmspace entry maps
+its VM into one of those windows.
+
+For the C1 experiment we now have everything ps5-hen's gpu_dma.cpp needs:
+- `DATA_BASE_GVMSPACE` = **0x21853e0**
+- `sizeof_gvmspace` = **0x108**
+- `gvmspace_page_dir_va` = **+0x10** (the PDB2 pointer)
+- `gvmspace_start_va` = **+0x78** (the GPUVA base)
+- `gvmspace_size` = **+0x20** (always 4 GiB)
+- `VMSPACE_VM_VMID` = **0x1E4** (cross-FW stable)
