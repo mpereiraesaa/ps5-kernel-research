@@ -1121,3 +1121,65 @@ After the owner power-cycles: re-run the session with the hardened
 client (park mode + protocol log), resolve the G reply stall, then
 EFER (rdmsr), CR0 (mov_rax_cr0), CR4 (own `mov rax,cr4` gadget in the
 tail padding) — all single `s`-steps.
+
+## 2026-10-09 — Ring-0 session #2: EFER + CR0 read live; SMEP crash; CR4.SMEP confirmed
+
+### Session record [verified-on-console] (protocol log: payloads/prosper0gdb_elfldr/session_protocol.log)
+
+Fresh boot (kdata `0xffffffffde590000`), client v3.1
+(`b3997e98…`, park-mode + byte-log). All stages green through the
+kernel-text gadget work:
+
+- Base `0x200000000` verified against local ELF; kdata and the offsets
+  struct m-read live from payload statics (nothing hardcoded)
+- Ring-0 entry via `G(rip=r0gdb)` + free-run `c`; rsp = kstack
+  `0xffffff8012e78838`
+- **[D] EFER = `0x11d01`** (rdmsr gadget, kernel text, multi-step):
+  SCE|LME|LMA|NXE|**SVME** — **bit 16 SVME is SET: the PS5 kernel
+  itself runs SVM virtualization** (consistent with the per-app
+  "vm#" tags in EXEC log lines — the app sandboxes are SVM VMs)
+- **[E] CR0 = `0x8005003b`** (mov_rax_cr0 gadget, kernel text,
+  single step): PE|MP|TS|ET|NE|WP|AM|PG — TS set (lazy-FPU state on
+  the stepped CPU; passes kstuff's `is_sane_cr0`: known bits
+  `0xe005003f`, required `0x80000001`)
+- **Ring-0 single-step of KERNEL-TEXT gadget RIPs is fully proven**
+  (rdmsr_start, mov_rax_cr0 — frame machinery, TF trap, register
+  capture all work)
+
+### Crash #2 and the SMEP discovery [verified-on-console]
+
+Stage F wrote `mov rax,cr4` (`0f 20 e0`) into the payload's own
+executable-segment tail padding (link `0x2ac80`, first LOAD = RWE)
+and pointed rip at it. The `s`-step got its OK (loop served it,
+`run_in_kernel` iret'd to CPL0), then **no trap ever returned**:
+instruction fetch at CPL0 from a USER page → **SMEP violation** →
+#PF (vector 14, NOT gated by the stub) → kernel #PF handler at CPL0
+on a user page → **console panic**.
+
+- The kernel-text gadget executed perfectly seconds earlier; the
+  ONLY difference was the user-page target → **CR4.SMEP is SET**
+  (first live-confirmed CR4 bit; consistent with the dump's
+  `0x45da0` candidate SMEP|SMAP|OSXSAVE)
+- Park mode worked as designed (client held the socket 60 s,
+  never disconnected; the panic was intrinsic to the SMEP fault)
+- **Boundary: ring-0 gadget RIPs must be kernel text. CPL0
+  execution of userland pages (even RWE ones) is a guaranteed
+  console panic on this console.** The in-image gadget-slot
+  technique is dead here; also any "write own code to kernel
+  heap/user pages and execute" plan is dead unless SMEP is first
+  cleared (which itself needs a kernel-text CR4 gadget...)
+
+### Consequence for the CR4 hunt
+
+Reading CR4 (and later writing CR4|FSGSBASE) needs kernel-text
+`mov rax,cr4` (`0f 20 e0`) / `mov cr4,rax` (`0f 22 e0`) addresses.
+Kernel text is XOM for every reader we have, so the prerequisite
+becomes the staged Phase-B text-read payloads:
+- **qa_probe v2 → rest cycle → qa_check v2** (the A1 QA-flags chain:
+  HV builds text pages RW without xotext → text becomes readable →
+  byte-scan for the CR4 gadgets)
+- or **gpuvm_read v3** (PDB2 → retarget to .text → PM4 DMA)
+
+Both are built, gated, and staged. After the owner's power cycle
+#3, the next console phase should be the QA chain (needs its rest
+cycle), not another ring-0 session.
