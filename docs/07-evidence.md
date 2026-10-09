@@ -725,3 +725,27 @@ validated against all 5 policy models, ALL GATES PASS:
 
 **Gate rule now enforced**: no payload reaches send_elf.py without a
 Tier-2 gate pass. The qa_probe crash was the last payload to skip it.
+
+## 2026-10-09 (gate upgrade) — instrument models added; v1 crash now reproduces in the emulator
+
+The gap: the HV emulator checked **what the NPT permits** but not
+**which instrument you're using**. Both the pipe primitive and the
+alias engine hit the same NPT denial — but fail differently:
+
+| Instrument | NPT-denied memory | Console result |
+|---|---|---|
+| `kernel_copyout` (pipe) | kernel panic | **console dies** |
+| alias engine (guarded) | SIGSEGV | **recoverable** |
+
+**Added** (`hvemu/hv.py` Instruments class + `hvemu/gate.py`):
+- `Instruments.pipe_read()` → raises `InstrumentError("kernel_panic")`
+  on denied memory — **the v1 crash now reproduces bit-for-bit**
+- `Instruments.alias_read()` → returns empty (recoverable)
+- `gate.py` — the instrument-aware Tier-2 gate that validates BOTH
+  the chain sequence AND every read/write instrument choice against
+  all 5 policy models
+
+**Verified**: the v1 qa_probe sequence (pipe on .text) is **correctly
+blocked by all 5 policies**; the v2 sequence (alias on .text) is
+**correctly cleared**. The exact crash that cost a console power cycle
+can no longer reach `send_elf.py`.
