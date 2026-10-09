@@ -854,3 +854,36 @@ For the C1 experiment we now have everything ps5-hen's gpu_dma.cpp needs:
 now uses the alias engine (guarded SIGSEGV). Pipe primitive only on
 kernel data and the PDB2's own kernel VA. **Staged, NOT sent —
 awaiting owner approval for console session.**
+
+## 2026-10-09 (STALEUS + CVE integration) — emulator: 7 policies × 9 chains = 63 combinations
+
+**New policies added to the Tier-3 emulator**:
+- `sev_dbg_overflow` [CVE-2026-63794]: models the PSP debug-decrypt
+  path with a missing bound check — `debug_decrypt()` accepts a
+  transfer that overflows the buffer (reproduces the CVE's behavior)
+- `stale_npt_state` [CVE-2026-53359]: models a NPT rebuild that
+  consumes partially-modified state — some text pages skip xotext
+  even without the QA flag (reproduces the stale-state pattern)
+
+**New chains added**:
+- `E2: race-the-flush` [STALEUS-inspired]: write QA flags → trigger
+  rebuild before cache flush → HV reads STALE flags → NPT built WITH
+  xotext. The inverse of A1 — exploits coherence, not the flag.
+- `E4: gpu-incoherence` [STALEUS-inspired]: CPU writes GPUVM PTE →
+  GPU walker has cached the old value → DMA reads the original
+  mapping, not the retargeted one.
+
+**CoherenceModel** (behavioral simulation of the STALEUS mechanism,
+labeled as such — NOT a PS5/EPYC exploit reproduction):
+- CacheLine with dirty/coherent/NoSnoop states
+- PSP reads: coherent (sees CPU dirty line) vs NoSnoop (reads stale
+  DRAM) — **4/4 tests pass** including the lost-write case
+- Models both the stale-read and the eviction-overwrite windows
+
+**Matrix status**: 7 policies × 9 chains = **63 combinations**, all
+reality gates green. B1 (vmcb write) correctly fails everywhere;
+A1 wins only under QA-reading-class policies (now including the two
+new CVE-inspired policies that inherit from QAReadingPolicy).
+
+All gates re-verified after integration: replay 8/8, Unicorn 3/3,
+GPUVM gate ✓, QA gate ✓, instrument gate ✓, matrix ✓.
