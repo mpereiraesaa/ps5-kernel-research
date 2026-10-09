@@ -887,3 +887,50 @@ new CVE-inspired policies that inherit from QAReadingPolicy).
 
 All gates re-verified after integration: replay 8/8, Unicorn 3/3,
 GPUVM gate ✓, QA gate ✓, instrument gate ✓, matrix ✓.
+
+## 2026-10-09 — FSGSBASE test: DISABLED on 12.02; CR4-read gadget research
+
+### Userland test [verified-on-console]
+
+`payloads/fsgsbase_test/fsgsbase_test.elf` (v2, `b93e6a54…`):
+- **rdfsbase/rdgsbase: #UD** — CR4.FSGSBASE is **clear** on this console
+- CPUID.7.0:EBX[0]=1 — the hardware **supports** FSGSBASE (Zen 2)
+- v1 used Linux `arch_prctl` syscall numbers on FreeBSD → hung;
+  v2 tests raw instructions only
+
+### CR4-read gadget research (by another agent)
+
+**Goal**: find a `mov rax, cr4` instruction sequence in kernel text
+(same approach as kstuff's `mov_rax_cr0` for CR0).
+
+**Approach attempted**: kstuff-lite's R0GDB helper built out-of-tree
+and sent via elfldr. The GDB endpoint did not come up (ports 1234
+and 9019 refused). Console stayed healthy (ping OK, 9021 open).
+
+**Research direction**: FreeBSD kernel paths that naturally read CR4:
+- CPU initialization (sets SMEP/SMAP at boot)
+- TLB/cache management (checks PCID bits)
+- Debugger code (ptrace reads CR4)
+- But no safe post-boot trigger verified yet
+
+**Blocker**: need a working R0GDB/GDB endpoint or an alternative
+approach for finding and single-stepping a CR4-read gadget.
+
+### Alternative approaches (not yet attempted)
+
+1. **Hunt saved CR4 in kdata**: look for the kernel's per-CPU saved
+   CR4 value in our existing dump (a qword with SMEP|SMAP bits:
+   `0x00000000_00030000` pattern). The `pcpu_array` offset from
+   kstuff's table gives the entry point.
+
+2. **Syscall-based CR4 read**: FreeBSD has `sysarch()` — check if
+   `AMD64_GET_FS` or a similar subcommand reveals CR4 state.
+
+3. **CPUID + inference**: if we can read the kernel's saved CR4 from
+   the pcpu structure, we can determine the exact CR4 value without
+   a gadget.
+
+4. **If CR4.FSGSBASE needs to be SET**: the approaches are:
+   a. Modify the kernel's saved CR4 (data write — our proven class)
+   b. Find and call a kernel function that writes CR4 (gadget chain)
+   c. The HV's CR4 interception handler may allow or mask the write
