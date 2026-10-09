@@ -29,6 +29,14 @@ scene research artifacts and documentation.
   (NPT xotext bit 58; HV maps text RW in its own tables; "nda feature"
   AMD hardware XOM collaboration; masked EFER bits; HV part of kernel
   binary ≤ FW 2.70.)
+- cragson/ps5-hen — https://github.com/cragson/ps5-hen
+  (`gpu_dma.h` / `gpu_dma.cpp`: PS5 GPUVM PTE fields, page-table walker,
+  and GPU DMA physical-access helper; README scopes the project to FW
+  1.00–4.51 and describes IOMMU patching plus NPT disable in its HV
+  defeat chain. These details do not establish FW 12.02 behavior.)
+- hammer-83/ps5-jar-loader — https://github.com/hammer-83/ps5-jar-loader
+  (`KernelAccessorAgc.java`: independent GPU PTE remap and DMA-based
+  kernel-memory accessor implementation.)
 - Cryptogenic/PS5-SELF-Decrypter —
   https://github.com/Cryptogenic/PS5-SELF-Decrypter
   (decrypt system SELF/SPRX files from the filesystem via kernel R/W —
