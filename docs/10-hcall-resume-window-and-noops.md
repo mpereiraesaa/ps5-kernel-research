@@ -120,7 +120,7 @@ verified — confirming the full write primitive.
 | Plain gdb without '+' ACK after every reply | The stub's end_packet blocks reading '+'; a missing ack kills the session (produces zombie listeners) | verified-on-console |
 | TCP port-probing a live gdb stub | The stub does exactly one accept(); a probe consumes it | verified-on-console |
 | The gdb k packet after ring-0 setup | SIGKILL leaves patched IDT gates + TSS IST pointing into freed memory | verified-by-analysis |
-| r0gdb cleanup via rip-stepping | The cleanup function's nested ring-0 operations (RDMSR/WRMSR via `run_in_kernel`) and its copyin/copyout restore path are unproven; the client restores IDT/TSS itself via mov-gadget single-steps instead | verified-by-analysis |
+| Manually invoking r0gdb cleanup via rip-stepping | The prior client restore path and cleanup's nested ring-0 operations (RDMSR/WRMSR via `run_in_kernel`) were unproven; auto-cleanup is now wired in source but remains unvalidated on-console | verified-by-analysis |
 | qOffsets from the prosper0gdb stub in static-PIE builds | start_nonreloc gets an R_X86_64_RELATIVE applied, degenerating the formula to a constant | verified-on-console |
 
 ### Deprioritized (viable but superseded)
@@ -574,43 +574,37 @@ the `store_rax_rdi` **write** gadget specifically (the two proven
 gadgets are reads), the full restore sequence, the verified return,
 and the #60/#62 stub changes at ring-0.
 
-#### Forward-looking safety gap: stub-side cleanup after disconnect
+#### Stub-side cleanup after disconnect
 
-The current source has no automatic restoration when the debugger
-session exits [verified-in-tree]. `r0gdb_loop()` breaks when the RSP
-parser reports transport failure, `r0gdb()` returns after setup and
-the loop, and no caller invokes `r0gdb_cleanup()`; the cleanup routine
-is only defined/exported (`r0gdb/prosper0gdb/r0gdb.c:427-453,
-461-487`; `r0gdb/prosper0gdb/main.c:14-19`). Consequently a client
-disconnect can leave the IDT gates and TSS IST fields patched while
-the payload remains alive. If the payload is then terminated or its
-code mapping is released, a later exception could enter through stale
-state [inference]. This risk claim would be falsified by evidence that
-the live implementation restores those fields on disconnect or keeps
-the gate target mapped for the full lifetime of the patched IDT.
+The automatic cleanup path is now wired in source [verified-in-tree].
+`r0gdb_loop()` exits on normal `r0gdb_exit` or parser/transport
+failure; `r0gdb()` then calls `r0gdb_cleanup()` before returning
+(`r0gdb/prosper0gdb/r0gdb.c:540-549`). The checked cleanup restores
+each TSS IST field before restoring the patched IDT gates, verifies
+those values through `copyout()`, and clears its initialized state
+only after the checks pass (`r0gdb/prosper0gdb/r0gdb.c:427-537`). It
+also applies and verifies the existing IA32_FMASK setting through
+RDMSR/WRMSR helpers using `run_in_kernel()`.
 
-The next design step is to invoke cleanup automatically on every
-session exit, including normal `r0gdb_exit` and parser/transport
-failure. The existing `r0gdb_cleanup()` performs TSS/IDT restoration
-through the same `copyout()`/`copyin()` helpers used by setup, but it
-also begins with RDMSR/WRMSR operations through `run_in_kernel()`
-(`r0gdb/prosper0gdb/r0gdb.c:173-197, 427-453, 483-485`). It is a
-userland-callable C routine, but the complete cleanup sequence is not
-yet verified after ring-0 entry. In this source tree, `copyin()` and
-`copyout()` are not `sysarch` calls: they configure pipe-based kernel
-access through `kwrite20()` and then use pipe `read()`/`write()`
-(`r0gdb/prosper0gdb/r0gdb.c:173-197`). A future change should first
-make cleanup idempotent, guarantee it runs before the payload can
-return or unmap, and verify each restored IDT/TSS value plus the return
-path.
+If a transfer or readback check fails, the cleanup routine keeps the
+payload mapped by parking in userland rather than returning while an
+IDT target may still point into the payload [verified-in-tree]. In
+this source tree, `copyin()` and `copyout()` are not `sysarch` calls:
+they configure pipe-based kernel access through `kwrite20()` and then
+use pipe `read()`/`write()` (`r0gdb/prosper0gdb/r0gdb.c:173-197`).
 
-If that path is proven, a debugger-client disconnect could let the
-stub restore kernel state and return to userland, reducing the exposure
-from an abandoned session to the cleanup interval [inference]. It
-would not cover forced termination of the stub process, a fault or
-power loss during cleanup, or a broken kernel R/W primitive. Do not
-shorten parked-session timeouts or treat client termination as safe
-until the auto-restore path passes the graduated validation ladder.
+This is a source-level repair, not a demonstrated safety result. If
+the complete cleanup returns successfully, a debugger-client
+disconnect should reduce the stale-gate exposure to the cleanup
+interval [inference]. This does not cover forced termination of the
+stub process, a fault that prevents the cleanup routine from returning,
+power loss during cleanup, or a setup failure before the initialized
+state is recorded. The SDK payload cross-build passed after syncing the
+canonical source into the lab build tree; it emitted pointer-sign
+warnings from the existing GDB packet-formatting code and a GNU-stack
+note for `r0run.o`. No console run was performed. Validate this path
+through the graduated ladder before shortening parked-session timeouts
+or treating client termination as safe.
 
 Operational lesson (also live): the parked script must hold its
 socket open indefinitely — running gated ring-0 scripts under

@@ -88,17 +88,16 @@ The change has not been built or run on a console. Keep level 2 and
 full ring-0 sessions gated until the documented local build and
 graduated validation ladder pass.
 
-One separate safety gap remains [verified-in-tree]: `r0gdb_loop()` can
-return after a transport failure, but `r0gdb()` does not call
-`r0gdb_cleanup()` on that or its normal exit path. A disconnected
-client can therefore leave the patched IDT/TSS state installed while
-the payload remains alive. Automatic cleanup on every session exit is
-the next design task (`prosper0gdb/r0gdb.c:427-453, 461-487`). The
-cleanup routine uses the setup `copyin()`/`copyout()` path to restore
-IDT/TSS, but its full sequence (including the `run_in_kernel()` MSR
-operations) has not been validated after ring-0 entry. In this tree,
-those copy helpers use `kwrite20()` plus pipe I/O rather than `sysarch`
+Automatic cleanup is now wired into `r0gdb()` after both normal loop
+exit and transport failure [verified-in-tree]. `r0gdb_cleanup()`
+restores and verifies TSS IST fields and IDT gates; if a transfer or
+verification fails, it parks the payload in userland to keep potential
+gate targets mapped (`prosper0gdb/r0gdb.c:427-549`). Its full sequence,
+including `run_in_kernel()` MSR operations, has not been validated
+after ring-0 entry. In this tree, `copyin()`/`copyout()` use
+`kwrite20()` plus pipe I/O rather than `sysarch`
 (`prosper0gdb/r0gdb.c:173-197`). Keep the socket park and recovery
-plan until automatic cleanup is independently proven. See the
+plan until the automatic restore path is proven on-console. The SDK
+payload cross-build passed; no console run was performed. See the
 incident record in
 [`../docs/10-hcall-resume-window-and-noops.md`](../docs/10-hcall-resume-window-and-noops.md).
