@@ -68,36 +68,96 @@ static int gdb_socket, pipe_r, pipe_w;
 
 typedef unsigned char pkt_opaque[1];
 
+/* Read ahead from the TCP stream, then assemble and checksum a complete RSP
+ * packet before any command parser sees it.  A G packet is hundreds of bytes;
+ * parsing directly from the socket one byte at a time leaves the session
+ * lock held across hundreds of interruptible reads. */
+#define RSP_RX_CHUNK 4096
+#define RSP_PACKET_MAX (64 * 1024)
+static unsigned char rsp_rx_buf[RSP_RX_CHUNK];
+static size_t rsp_rx_pos, rsp_rx_len;
+static unsigned char rsp_packet[RSP_PACKET_MAX];
+static size_t rsp_packet_len, rsp_packet_pos;
+static int rsp_packet_ready;
+
+static int socket_get_byte(unsigned char* out)
+{
+    if(rsp_rx_pos == rsp_rx_len)
+    {
+        ssize_t n;
+        do
+            n = read(gdb_socket, rsp_rx_buf, sizeof(rsp_rx_buf));
+        while(n < 0 && errno == EINTR);
+        if(n <= 0)
+            return -1;
+        rsp_rx_pos = 0;
+        rsp_rx_len = (size_t)n;
+    }
+    *out = rsp_rx_buf[rsp_rx_pos++];
+    return 0;
+}
+
+static int socket_write_byte(unsigned char value)
+{
+    ssize_t n;
+    do
+        n = write(gdb_socket, &value, 1);
+    while(n < 0 && errno == EINTR);
+    return n == 1 ? 0 : -1;
+}
+
 static int wait_for_packet(pkt_opaque o)
 {
+    rsp_packet_ready = 0;
     unsigned char c = 0;
     while(c != '$')
-        if(read(gdb_socket, &c, 1) != 1)
+        if(socket_get_byte(&c))
             return -1;
+
+    rsp_packet_len = 0;
+    rsp_packet_pos = 0;
+    unsigned int checksum = 0;
+    for(;;)
+    {
+        if(socket_get_byte(&c))
+            return -1;
+        if(c == '#')
+            break;
+        if(rsp_packet_len == sizeof(rsp_packet))
+            return -1;
+        rsp_packet[rsp_packet_len++] = c;
+        checksum = (checksum + c) & 0xff;
+    }
+
+    unsigned char check[2];
+    if(socket_get_byte(&check[0]) || socket_get_byte(&check[1]))
+        return -1;
+    int hi = (check[0] >= '0' && check[0] <= '9') ? check[0] - '0' :
+             (check[0] >= 'a' && check[0] <= 'f') ? check[0] - 'a' + 10 :
+             (check[0] >= 'A' && check[0] <= 'F') ? check[0] - 'A' + 10 : -1;
+    int lo = (check[1] >= '0' && check[1] <= '9') ? check[1] - '0' :
+             (check[1] >= 'a' && check[1] <= 'f') ? check[1] - 'a' + 10 :
+             (check[1] >= 'A' && check[1] <= 'F') ? check[1] - 'A' + 10 : -1;
+    if(hi < 0 || lo < 0 || (int)checksum != ((hi << 4) | lo))
+    {
+        return socket_write_byte('-') ? -1 : 1;
+    }
+    if(socket_write_byte('+'))
+        return -1;
+
+    rsp_packet_ready = 1;
     o[0] = 0;
     return 0;
 }
 
 static int pkt_getchar(pkt_opaque o)
 {
-    unsigned char c;
-    if(read(gdb_socket, &c, 1) != 1)
+    (void)o;
+    if(!rsp_packet_ready)
         return -1;
-    if(c == '#')
-    {
-        unsigned char cc[2];
-        if(read(gdb_socket, cc, 1) != 1 || read(gdb_socket, cc+1, 1) != 1)
-            return -1;
-        int cs = hex2int(cc[0]) << 4 | hex2int(cc[1]);
-        if(cs != o[0])
-            return -1;
-        unsigned char ack = '+';
-        if(write(gdb_socket, &ack, 1) != 1)
-            return -1;
+    if(rsp_packet_pos >= rsp_packet_len)
         return -2;
-    }
-    o[0] += c;
-    return c;
+    return rsp_packet[rsp_packet_pos++];
 }
 
 static int skip_to_end(pkt_opaque o)
@@ -146,7 +206,7 @@ static int end_packet(pkt_opaque o)
     if(pkt_puts(o, c, 3))
         return -1;
     unsigned char ack;
-    if(read(gdb_socket, &ack, 1) != 1 || ack != '+')
+    if(socket_get_byte(&ack) || ack != '+')
         return -1;
     return 0;
 }
@@ -208,7 +268,7 @@ static int end_packet(pkt_opaque o)
         p += chk;
     }
     unsigned char ack;
-    if(read(gdb_socket, &ack, 1) != 1 || ack != '+')
+    if(socket_get_byte(&ack) || ack != '+')
         return -1;
     return 0;
 }
@@ -599,7 +659,12 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
     }
     for(;;)
     {
-        wait_for_packet(o);
+        int packet_status;
+        do
+            packet_status = wait_for_packet(o);
+        while(packet_status == 1); /* checksum failure: NAK and retry */
+        if(packet_status < 0)
+            return -1;
         switch(match_packet(o))
         {
         case CMD_Q:
@@ -1040,7 +1105,10 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 #endif
         }
     };
-    gdbstub_main_loop(&ts, 0, 0);
+    struct trap_state original_ts = ts;
+    int status = gdbstub_main_loop(&ts, 0, 0);
+    if(status < 0)
+        ts = original_ts;
 #ifdef __PS4__
     mc->mc_rax = ts.regs.rax;
     mc->mc_rcx = ts.regs.rcx;
@@ -1089,8 +1157,9 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 
 long gdb_remote_syscall(const char* name, int nargs, int* ern, ...)
 {
-    while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
-        cpu_relax();
+    sigset_t oldmask;
+    if(gdbstub_session_lock(&oldmask))
+        return -1;
     pkt_opaque o;
     start_packet(o);
     PKT_PUTS(o, "F");
@@ -1108,12 +1177,18 @@ long gdb_remote_syscall(const char* name, int nargs, int* ern, ...)
             p[16-i] = int2hex((q >> (4*i)) & 15);
         pkt_puts(o, p, 17);
     }
-    end_packet(o);
     va_end(ls);
+    if(end_packet(o))
+    {
+        gdbstub_session_unlock(&oldmask);
+        return -1;
+    }
     struct trap_state st = {0};
-    ssize_t ans;
+    ssize_t ans = -1;
     int status = gdbstub_main_loop(&st, &ans, ern);
-    __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+    gdbstub_session_unlock(&oldmask);
+    if(status < 0)
+        return -1;
     if(status == 2)
         kill(getpid(), SIGINT);
 #ifdef INTERRUPTER_THREAD
@@ -1211,6 +1286,7 @@ static void* stdio_redirect_thread(void* o)
 #endif
 
 static unsigned long long start_rip;
+static void debug_signal_set(sigset_t* set);
 
 static void tmp_sigsegv(int sig, siginfo_t* idc, void* o_uc)
 {
@@ -1223,8 +1299,9 @@ static void tmp_sigsegv(int sig, siginfo_t* idc, void* o_uc)
 #endif
     struct sigaction siga = {
         .sa_sigaction = signal_handler,
-        .sa_flags = SA_SIGINFO
+        .sa_flags = SA_SIGINFO | SA_RESTART
     };
+    debug_signal_set(&siga.sa_mask);
     sigaction(SIGSEGV, &siga, NULL);
     signal_handler(0, idc, o_uc);
 }
@@ -1257,6 +1334,55 @@ static void unblock_signals(void)
     sigaddset(&ss, SIGSEGV);
     sigaddset(&ss, SIGFPE);
     pthread_sigmask(SIG_UNBLOCK, &ss, NULL);
+#endif
+}
+
+static void debug_signal_set(sigset_t* set)
+{
+#ifdef __PS4__
+    *set = (sigset_t){0};
+    set->__bits[_SIG_WORD(SIGTRAP)] |= _SIG_BIT(SIGTRAP);
+    set->__bits[_SIG_WORD(SIGILL)] |= _SIG_BIT(SIGILL);
+    set->__bits[_SIG_WORD(SIGBUS)] |= _SIG_BIT(SIGBUS);
+    set->__bits[_SIG_WORD(SIGINT)] |= _SIG_BIT(SIGINT);
+    set->__bits[_SIG_WORD(SIGSYS)] |= _SIG_BIT(SIGSYS);
+    set->__bits[_SIG_WORD(SIGSEGV)] |= _SIG_BIT(SIGSEGV);
+    set->__bits[_SIG_WORD(SIGFPE)] |= _SIG_BIT(SIGFPE);
+#else
+    sigemptyset(set);
+    sigaddset(set, SIGTRAP);
+    sigaddset(set, SIGILL);
+    sigaddset(set, SIGBUS);
+    sigaddset(set, SIGINT);
+    sigaddset(set, SIGSYS);
+    sigaddset(set, SIGSEGV);
+    sigaddset(set, SIGFPE);
+#endif
+}
+
+int gdbstub_session_lock(sigset_t* oldmask)
+{
+    sigset_t blocked;
+    debug_signal_set(&blocked);
+#ifdef __PS4__
+    if(sigprocmask(SIG_BLOCK, &blocked, oldmask))
+        return -1;
+#else
+    if(pthread_sigmask(SIG_BLOCK, &blocked, oldmask))
+        return -1;
+#endif
+    while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
+        cpu_relax();
+    return 0;
+}
+
+void gdbstub_session_unlock(const sigset_t* oldmask)
+{
+    __atomic_store_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+#ifdef __PS4__
+    sigprocmask(SIG_SETMASK, oldmask, NULL);
+#else
+    pthread_sigmask(SIG_SETMASK, oldmask, NULL);
 #endif
 }
 
@@ -1308,8 +1434,9 @@ void real_dbg_enter(uint64_t* rsp)
         return;
     struct sigaction siga = {
         .sa_sigaction = signal_handler,
-        .sa_flags = SA_SIGINFO
+        .sa_flags = SA_SIGINFO | SA_RESTART
     };
+    debug_signal_set(&siga.sa_mask);
     int a = sigaction(SIGTRAP, &siga, NULL);
     int b = sigaction(SIGILL, &siga, NULL);
     int c = sigaction(SIGBUS, &siga, NULL);

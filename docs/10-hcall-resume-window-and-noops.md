@@ -501,27 +501,44 @@ What validated green before the incident [verified-on-console]:
   hardened entry design works on-console.
 
 Then the freeze, root-caused by reading `dbg.c`/`r0gdb.c`
-[verified-on-dump of the payload sources]:
+[verified-in-tree]:
 
-1. `r0gdb_loop` holds `in_signal_handler` across the entire
-   blocking packet session
-2. every incoming byte is its own blocking `read()` — a `G` write is
-   **337 consecutive single-char reads**, the largest interrupt
-   window in the protocol
-3. the still-installed process-wide signal handlers spin
-   unconditionally on that flag (dbg.c:966)
-4. a signal delivered during the `G` window → the handler spins
-   forever on the flag held by the loop that cannot proceed until
-   the handler returns → the thread froze inside the handler →
-   silence → park
+1. `r0gdb_loop` held `in_signal_handler` across the entire blocking
+   packet session.
+2. each incoming byte used its own blocking `read()`; a `G` write
+   required **337 consecutive single-byte reads**.
+3. installed process-wide signal handlers spun on the same flag.
+4. a signal delivered to the session-owning thread during the `G`
+   window could enter the handler, which waited on a flag held by the
+   interrupted loop. The loop could not resume until the handler
+   returned, producing the observed freeze. This causal explanation
+   is [inference]; it would be falsified if a trace showed the freeze
+   occurred outside the handler/lock wait.
 
-This also retroactively explains the Oct 9 "stub death" (step + OK,
-then silence — the same freeze after a shorter window). Implication:
-the level-2 restore phase (~56 `G` writes ≈ 19k single-char reads)
-is one revolver spin per write — **level 2 cannot run reliably until
-the stub is fixed** (handler must not spin when the flag is already
-held / signals masked on the r0gdb thread; `SA_RESTART` on the
-sigactions; ideally whole-packet buffering).
+The source repair is now present [verified-in-tree] in the canonical
+`r0gdb/` tree. The shared signal mask and lock implementation are in
+`r0gdb/gdb_stub/dbg.c:1340-1386`; callers are in `dbg.c:1155-1188`,
+`r0gdb/gdb_stub/ring0.c:170-181`, and
+`r0gdb/prosper0gdb/r0gdb.c:468-480`. These callers block the debugger
+signals on the owning thread before acquiring the shared flag, then
+release the flag before restoring the prior signal mask. This prevents
+the handler from interrupting a thread that owns the session lock;
+handlers also mask the debugger signal set and use `SA_RESTART`
+(`dbg.c:1437-1449`, `r0gdb/prosper0gdb/r0gdb.c:764-768`). The RSP
+reader at `dbg.c:75-160` buffers socket bytes, assembles and checksums
+a bounded whole packet before dispatch, and uses the same buffer for
+outgoing ACK reads so read-ahead preserves subsequent protocol bytes.
+Transport failure exits the session parser (`dbg.c:662-668`); the
+signal-handler and ring-0 mailbox paths leave their original register
+snapshots intact (`dbg.c:1108-1110`, `ring0.c:177-181`), and
+`r0gdb_loop` does not run stale state (`r0gdb.c:472-480`).
+
+The implementation has not been built or run on-console as part of
+this change. The level-2 restore phase and full ring-0 sessions remain
+gated until the canonical source is synced to the build sandbox and
+the documented graduated validation ladder passes. The earlier Oct 9
+"stub death" may share this cause, but remains an [inference] without
+a captured trace.
 
 Operational lesson (also live): the parked script must hold its
 socket open indefinitely — running gated ring-0 scripts under
@@ -534,8 +551,9 @@ in a timeout.
 `gdb_stub/` + `prosper0gdb/` sources are now canonically maintained
 in this repo under [`r0gdb/`](../r0gdb/) (the lab payload tree is the
 build sandbox only — edit here, sync, build there). The deadlock fix
-above will land there as PRs with review, replacing the unversioned
-mtime-archaeology workflow that made tonight's edits invisible.
+above is implemented in the canonical source tree for review,
+replacing the unversioned mtime-archaeology workflow that made
+tonight's edits invisible.
 
 Unrelated transient during the same window: four stub ports
 (1234–1237) opened and died on their own around the failed level-1
