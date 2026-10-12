@@ -17,10 +17,26 @@ import sys
 from stub_verify import *  # noqa: F401,F403 — Session, discover, connect_stub,
                           # read_offsets, constants, log, hexs, park, time
 
-RING0 = {"transition_attempted": False, "sock": None}
+# `entered` remains for the legacy stub_verify3 import path; this client uses
+# the conservative transition_attempted state instead.
+RING0 = {"transition_attempted": False, "entered": False, "sock": None,
+         "frame_restore": None}
 TSS_FIELDS = (0x34, 0x3C, 0x4C)
 CPU_COUNT = 16
 TSS_STRIDE = 0x68
+# Pinned to offsets/12_02.h. Provenance: the payload selects its table from
+# the console's live sysctl FW version (offsets.c set_offsets() dispatches
+# `case 0x1202: set_offsets_1202()`), and this console is 12.02 (0x12020000).
+# Cross-validated on-console 2026-10-09: rdmsr_start/mov_rax_cr0 from this
+# table produced the sane EFER (0x11d01)/CR0 (0x8005003b) reads. The initial
+# pin here used the 13_60.h values by mistake and would have refused on a
+# healthy console; corrected 2026-10-12 before any live level-2 run.
+EXPECTED_FW_DELTAS = {
+    "rdmsr_start": -0xA9E10A,
+    "store_rax_rdi": -0xAA3EEE,
+    "tss_array": 0x2E8AFE0,
+    "idt": 0x2E88300,
+}
 
 
 def _is_kernel_address(value):
@@ -48,6 +64,19 @@ def verify_ring0(stub_port, verified_store_gadget):
             _park_after_ambiguous_transition(RING0["sock"], why)
             return 2
         sock = RING0["sock"]
+        frame_restore = RING0["frame_restore"]
+        if frame_restore is not None:
+            session, addr, original = frame_restore
+            try:
+                session.write_mem(addr, original)
+                if session.read_mem(addr, len(original)) != original:
+                    raise RuntimeError("stack-frame restore readback mismatch")
+                RING0["frame_restore"] = None
+            except BaseException as restore_error:
+                if sock is not None:
+                    park(sock, "%s; pre-transition stack restore failed: %s" %
+                         (why, restore_error))
+                return 2
         if sock is not None:
             try:
                 sock.close()
@@ -61,7 +90,9 @@ def verify_ring0(stub_port, verified_store_gadget):
 def _verify_ring0_inner(stub_port, verified_store_gadget):
     # Reset per invocation, including when imported and called repeatedly.
     RING0["transition_attempted"] = False
+    RING0["entered"] = False
     RING0["sock"] = None
+    RING0["frame_restore"] = None
 
     c, s, base, kdata = connect_stub(stub_port)
     RING0["sock"] = c
@@ -71,7 +102,11 @@ def _verify_ring0_inner(stub_port, verified_store_gadget):
     for name in ("rdmsr_start", "store_rax_rdi", "tss_array", "idt"):
         if not _is_kernel_address(offs[name]):
             raise RuntimeError("offset %s implausible: %s" % (name, hexs(offs[name])))
-        log("[V2] offsets.%s = kdata%s", name, hexs(offs[name] - kdata))
+        delta = offs[name] - kdata
+        log("[V2] offsets.%s = kdata%s", name, hexs(delta))
+        if delta != EXPECTED_FW_DELTAS[name]:
+            raise RuntimeError("offset %s does not match the pinned 12.02 table: got %s expected 0x%x" %
+                               (name, hexs(delta), EXPECTED_FW_DELTAS[name]))
 
     if verified_store_gadget != offs["store_rax_rdi"]:
         raise RuntimeError(
@@ -92,6 +127,7 @@ def _verify_ring0_inner(stub_port, verified_store_gadget):
     if frame_rsp & 0xF != 8:
         raise RuntimeError("cannot form ABI-aligned function entry frame from RSP=%s" % hexs(original_rsp))
     old_frame_word = s.read_mem(frame_rsp, 8)
+    RING0["frame_restore"] = (s, frame_rsp, old_frame_word)
     s.write_mem(frame_rsp, original_rip.to_bytes(8, "little"))
     if s.read_mem(frame_rsp, 8) != original_rip.to_bytes(8, "little"):
         raise RuntimeError("could not verify r0gdb return frame")
@@ -181,6 +217,24 @@ def _verify_ring0_inner(stub_port, verified_store_gadget):
     idt_restore = []
     for vector, sym in restore_gates:
         raw = s.read_mem(base + sym, 16)
+        selector = int.from_bytes(raw[2:4], "little")
+        handler = (int.from_bytes(raw[0:2], "little") |
+                   (int.from_bytes(raw[6:8], "little") << 16) |
+                   (int.from_bytes(raw[8:12], "little") << 32))
+        if selector != 0x20 or not _is_kernel_address(handler):
+            raise RuntimeError("saved IDT vector %d is implausible" % vector)
+
+        live = s.read_mem(idt + vector * 16, 16)
+        expected_ist, expected_attr = {
+            1: (4, 0x8E), 6: (4, 0x8E), 9: (3, 0xEE), 179: (6, 0xEE)
+        }[vector]
+        live_handler = (int.from_bytes(live[0:2], "little") |
+                        (int.from_bytes(live[6:8], "little") << 16) |
+                        (int.from_bytes(live[8:12], "little") << 32))
+        if (int.from_bytes(live[2:4], "little") != 0x20 or
+                live[4] != expected_ist or live[5] != expected_attr or
+                not _is_kernel_address(live_handler)):
+            raise RuntimeError("live IDT vector %d does not match the expected r0gdb gate" % vector)
         for half in range(2):
             val = int.from_bytes(raw[half * 8:(half + 1) * 8], "little")
             idt_restore.append((idt + vector * 16 + half * 8, val))
@@ -208,8 +262,10 @@ def _verify_ring0_inner(stub_port, verified_store_gadget):
     s.write_mem(frame_rsp, old_frame_word)
     if s.read_mem(frame_rsp, 8) != old_frame_word:
         raise RuntimeError("could not restore the original user-stack word")
+    RING0["frame_restore"] = None
     RING0["transition_attempted"] = False
     c.close()
+    RING0["sock"] = None
     log("[V2] verified userland return; frame restored; session closed")
     log("LEVEL 2 PASSED: EFER=%s; TSS/IDT restoration read back", hexs(efer))
     return True
