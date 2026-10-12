@@ -74,33 +74,37 @@ if not PS5:
         "Set PS5_HOST (the console address) to run the stub tools; "
         "the sanitized repo never hardcodes it.")
 
-START_RIP_OFF = 0x4EF  # fault rip = base+0x4ef (verified on-console 2026-10-12:
-                       # read at rip-0x4ef+0x228c0 returned exactly ELF@0x228c0
-                       # with base=0x200000000; the old 0x4DF was a D/E typo)
+START_RIP_OFF = 0x551  # fault rip = base+0x551 = start_rip, the `call dbg_enter`
+                       # return address (dbg.c:1553 start_rip = *rsp; main.c calls
+                       # dbg_enter). Re-derived for build 97ebc9a9: main's addr32
+                       # call at 0x54b is 6 bytes -> start_rip 0x551. base =
+                       # rip-START_RIP_OFF; verify via VERIFY_OFF bytes.
 VERIFY_OFF = 0x228C0
 # Payload symbol offsets (link-relative vaddrs, from nm of the CURRENT build:
-# sha256 a8276b5aa26c47e042f9ee750bdbfab433da9db35174f6679bfd23bd37aaf2b4 —
-# the deadlock-fix + oversize-recovery + auto-cleanup build (PRs
-# #60+#62+#67); the BSS moved ~+0x11000 vs the f92401 build; #67 shifted
-# r0gdb/r0gdb_exit again (+0x24E). Build is reproducible (rebuild = same sha)).
-SYM_KDATA_BASE = 0x49508
-SYM_OFFSETS = 0x5A600
-SYM_OG_TSS = 0x495A0
-SYM_OG_IDT1 = 0x49560
-SYM_OG_IDT6 = 0x49570
-SYM_OG_IDT9 = 0x49580
-SYM_OG_IDT179 = 0x49590
-SYM_IDT6_PATCHED = 0x4955C
-SYM_R0GDB = 0x4993
-SYM_R0GDB_EXIT = 0x480F
+# sha256 cbd34cbd5dd5465e09f1415bde33b62944e41805503d285fecd6983316a14f02 —
+# the #70 GS-restore/never-spin build + the GS/TLS instrumentation (qDiagF4,
+# [D9]). The BSS grew by the gdb_last_uc_capture buffer, shifting the symbol
+# cluster up (SYM_R0GDB 0x4993 -> 0x4C94). Build is reproducible (rebuild = same
+# sha); re-derive with `make` + `llvm-nm -n payload-elfldr-sdk.elf` on any change.
+SYM_KDATA_BASE = 0x49B08
+SYM_OFFSETS = 0x5AC00
+SYM_OG_TSS = 0x49BA0
+SYM_OG_IDT1 = 0x49B60
+SYM_OG_IDT6 = 0x49B70
+SYM_OG_IDT9 = 0x49B80
+SYM_OG_IDT179 = 0x49B90
+SYM_IDT6_PATCHED = 0x49B5C
+SYM_R0GDB = 0x4C94
+SYM_R0GDB_EXIT = 0x4A8F
 # The old gadget scratch slots (0x2AC80/0x2AC90, f92401 build): RETIRED for
 # ring-0 use (SMEP: userland rip at CPL0 = #PF panic) AND stale in this build
 # (that range is now live LOAD1 code). Ring-0 stores go through the
 # kernel-text store_rax_rdi gadget.
-# M-test scratch (level 1): the BSS segment tail (LOAD3 memsz ends 0x5B158;
-# the last aligned slot, beyond every symbol — linker padding). The old
-# 0x2AC00 scratch was tail padding of the f92401 LOAD1; live code now.
-SYM_M_TEST = 0x5B148
+# M-test scratch (level 1): the BSS segment tail (LOAD3 memsz ends at
+# __bss_end = 0x5B578; the last aligned 4-byte slot, beyond every symbol —
+# linker padding). The old 0x2AC00 scratch was tail padding of the f92401
+# LOAD1; live code now.
+SYM_M_TEST = 0x5B770
 EFER_MSR = 0xC0000080
 OFFSET_LIST = os.environ.get(
     "R0GDB_OFFSET_LIST",
@@ -269,6 +273,23 @@ class Session:
         if r != b"OK":
             raise RuntimeError("M reply: %r" % r)
 
+    def diag_f4(self, timeout=15):
+        """Fetch the F4 instrumentation reply: the raw fault ucontext the
+        stub captured, for FS-vs-GS TLS and _MC_HASBASES diagnosis. Returns
+        (signum, cap_len, frame_bytes). Requires the instrumented build."""
+        body = self.cmd(b"qDiagF4", timeout=timeout)
+        magic = b"F4:4e42:"
+        if not body.startswith(magic):
+            raise RuntimeError("qDiagF4 reply: %r" % body[:32])
+        rest = body[len(magic):]
+        signum = int(rest[0:2], 16)
+        cap_len = int(rest[2:6], 16)
+        frame = bytes.fromhex(rest[6:6 + cap_len * 2].decode())
+        if len(frame) != cap_len:
+            raise RuntimeError("qDiagF4 frame length %d != %d" % (len(frame), cap_len))
+        return signum, cap_len, frame
+
+
 
 def load_offset_fields():
     fields = []
@@ -279,6 +300,63 @@ def load_offset_fields():
                 if line.startswith(kind):
                     fields.append(line[len(kind):].rstrip(")"))
     return fields
+
+
+# --- fault-ucontext analysis (instrumentation, F4 query) -------------------
+# mcontext_t field offsets within __mcontext (freebsd-headers machine/ucontext.h):
+# the 16 register slots, then rip/cs/rflags/rsp/ss at 0xa0..0xc0, mc_len 0xc8,
+# fpstate 0xe0..0x2e0, fsbase 0x2e0, gsbase 0x2e8. The captured ucontext_t
+# begins with other members, so we locate mc by signature rather than assume
+# the offset.
+MC_FS_OFF, MC_GS_OFF = 0x84, 0x86
+MC_FLAGS_OFF = 0x90
+MC_RIP_OFF, MC_CS_OFF = 0xA0, 0xA8
+MC_RSP_OFF, MC_SS_OFF = 0xB8, 0xC0
+MC_FSBASE_OFF, MC_GSBASE_OFF = 0x2E0, 0x2E8
+MC_HASSEGS, MC_HASBASES = 0x1, 0x2
+USER_SEL = {0x33, 0x43}          # user CS is 0x33 on this console; 0x43 seen too
+USER_SS = {0x2B, 0x3B}
+
+
+def _u64(frame, off):
+    return int.from_bytes(frame[off:off + 8], "little")
+
+
+def find_mc_offset(frame):
+    """Locate the __mcontext base inside a captured ucontext_t by the trapframe
+    signature (user rip/cs/ss). Returns the offset or None."""
+    for o in range(0, 0x300 - MC_SS_OFF - 8):
+        rip = _u64(frame, o + MC_RIP_OFF)
+        cs = _u64(frame, o + MC_CS_OFF)
+        ss = _u64(frame, o + MC_SS_OFF)
+        if 0x10000 <= rip <= 0x7FFFFFFFFFFF and cs in USER_SEL and ss in USER_SS:
+            return o
+    return None
+
+
+def analyze_fault_frame(frame):
+    """Decode a captured fault ucontext. Returns dict or raises with a clear
+    'no mc found' error. The two questions it settles:
+      - _MC_HASBASES set?  -> does sigreturn restore fs/gs base from the frame?
+      - mc_fsbase vs mc_gsbase -> which register the errno TLS uses.
+    """
+    o = find_mc_offset(frame)
+    if o is None:
+        raise RuntimeError("no __mcontext trapframe signature found in capture")
+    flags = int.from_bytes(frame[o + MC_FLAGS_OFF:o + MC_FLAGS_OFF + 4], "little")
+    return {
+        "mc_offset": o,
+        "mc_flags": flags,
+        "has_segs": bool(flags & MC_HASSEGS),
+        "has_bases": bool(flags & MC_HASBASES),
+        "mc_fs": int.from_bytes(frame[o + MC_FS_OFF:o + MC_FS_OFF + 2], "little"),
+        "mc_gs": int.from_bytes(frame[o + MC_GS_OFF:o + MC_GS_OFF + 2], "little"),
+        "mc_rip": _u64(frame, o + MC_RIP_OFF),
+        "mc_cs": _u64(frame, o + MC_CS_OFF),
+        "mc_ss": _u64(frame, o + MC_SS_OFF),
+        "mc_fsbase": _u64(frame, o + MC_FSBASE_OFF),
+        "mc_gsbase": _u64(frame, o + MC_GSBASE_OFF),
+    }
 
 
 def read_offsets(s, base):
@@ -364,11 +442,52 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-send", action="store_true")
+    parser.add_argument("--diag-f4", action="store_true",
+                        help="dump/decode the captured fault ucontext (F4 "
+                             "query); requires the instrumented build and a "
+                             "session where a debugger signal has fired")
     args = parser.parse_args()
 
     stub_port = args.port if args.port is not None else discover(args.no_send)
     if stub_port is None:
         return 1
+
+    if args.diag_f4:
+        try:
+            c, s, base, kdata = connect_stub(stub_port)
+        except Exception as e:
+            log("FAIL: connect/verify: %s: %s", type(e).__name__, e)
+            return 1
+        s.cmd(b"?")
+        try:
+            signum, cap_len, frame = s.diag_f4()
+        except Exception as e:
+            log("FAIL: qDiagF4: %s: %s", type(e).__name__, e)
+            c.close()
+            return 1
+        log("F4 capture: signum=%d cap_len=0x%x", signum, cap_len)
+        if not any(frame):
+            log("F4 capture is all zero: no debugger signal has fired yet "
+                "(the ring-0 entry / synthetic stop populates it)")
+        else:
+            try:
+                info = analyze_fault_frame(frame)
+            except Exception as e:
+                log("decode FAILED: %s", e)
+                c.close()
+                return 1
+            log("mc_offset=0x%x mc_flags=0x%x has_segs=%d has_bases=%d",
+                info["mc_offset"], info["mc_flags"], info["has_segs"],
+                info["has_bases"])
+            log("mc_fs=0x%x mc_gs=0x%x cs=0x%x ss=0x%x",
+                info["mc_fs"], info["mc_gs"], info["mc_cs"], info["mc_ss"])
+            log("mc_fsbase=0x%x mc_gsbase=0x%x", info["mc_fsbase"], info["mc_gsbase"])
+            log("VERDICT: _MC_HASBASES=%s -> sigreturn %s restore fs/gs base",
+                info["has_bases"], "WILL" if info["has_bases"] else "will NOT")
+            log("TLS hint: fsbase==gsbase -> cannot distinguish; fsbase!=gsbase "
+                "-> the errno TLS register matters (GS restore may be wrong)")
+        c.close()
+        return 0
 
     log("=" * 60)
     log("LEVEL 1: userland-only verification (zero ring-0 risk)")

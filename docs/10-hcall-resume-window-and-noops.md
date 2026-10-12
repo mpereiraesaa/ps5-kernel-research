@@ -294,6 +294,7 @@ HCALL 0x0f → AP on root 0 → VMCB write.
 | `08-phaseb-inventory.md` | Phase B capability inventory |
 | `09-live-kernel-state-and-fsgsbase.md` | Live kernel state + FSGSBASE analysis + HV lineage survey |
 | `10-hcall-resume-window-and-noops.md` | This document |
+| `11-debunked-theories-and-corrections.md` | Register of debunked theories + corrections |
 | `evidence-logs/` | Raw protocol logs |
 
 ### NOOP: FACS wake vector (2026-10-12)
@@ -517,14 +518,14 @@ Then the freeze, root-caused by reading `dbg.c`/`r0gdb.c`
 
 The source repair is now present [verified-in-tree] in the canonical
 `r0gdb/` tree. The shared signal mask and lock implementation are in
-`r0gdb/gdb_stub/dbg.c:1340-1386`; callers are in `dbg.c:1155-1188`,
+`r0gdb/gdb_stub/dbg.c:1387-1470`; callers are in `dbg.c:1155-1188`,
 `r0gdb/gdb_stub/ring0.c:170-181`, and
 `r0gdb/prosper0gdb/r0gdb.c:468-480`. These callers block the debugger
 signals on the owning thread before acquiring the shared flag, then
 release the flag before restoring the prior signal mask. This prevents
 the handler from interrupting a thread that owns the session lock;
 handlers also mask the debugger signal set and use `SA_RESTART`
-(`dbg.c:1437-1449`, `r0gdb/prosper0gdb/r0gdb.c:764-768`). The RSP
+(`dbg.c:1403`, `dbg.c:1475`, `r0gdb/prosper0gdb/r0gdb.c:900`). The RSP
 reader at `dbg.c:75-160` buffers socket bytes, assembles and checksums
 a bounded whole packet before dispatch, and uses the same buffer for
 outgoing ACK reads so read-ahead preserves subsequent protocol bytes.
@@ -533,12 +534,14 @@ signal-handler and ring-0 mailbox paths leave their original register
 snapshots intact (`dbg.c:1108-1110`, `ring0.c:177-181`), and
 `r0gdb_loop` does not run stale state (`r0gdb.c:472-480`).
 
-The implementation has not been built or run on-console as part of
-this change. The level-2 restore phase and full ring-0 sessions remain
-gated until the canonical source is synced to the build sandbox and
-the documented graduated validation ladder passes. The earlier Oct 9
-"stub death" may share this cause, but remains an [inference] without
-a captured trace.
+This repair was built and run on-console 2026-10-13 (build
+`cbd34cbd…`): the ring-0 entry succeeded but the freeze **recurred**,
+so this repair is necessary-but-not-sufficient for the freeze — see the
+"GS-base freeze theory: FALSIFIED" subsection below, which shows the
+freeze's hypothesized GS-clobber link does not hold on this console.
+The level-2 restore phase and full ring-0 sessions remain gated. The
+Oct 9 "stub death" may share this cause, but remains an [inference]
+without a captured trace.
 
 #### What Oct 9 proved at ring-0 [verified-on-console]
 
@@ -634,3 +637,56 @@ Unrelated transient during the same window: four stub ports
 attempt, with no sends from any agent — attributed to console-side
 supervision churn while the afternoon zombie processes expired; not
 reproducible and not blocking.
+
+#### GS-base freeze theory: FALSIFIED on-console (2026-10-13)
+
+After the 2026-10-12 evening incident, a root-cause theory was proposed
+for the ring-0 freeze: the PS5's signal frame carries `mc_gsbase=0`; the
+ring-0 entry passes through the kernel's sigreturn; if that restore
+clobbers the thread's GS base, the SDK libc's errno-TLS access faults at
+the first failing syscall (~100–250 ms in), and the nested SIGSEGV met
+the still-spinning handler, freezing the session and holding the patched
+IDT/TSS window open. Fix #70 implemented two parts: (a) save the
+boot-time GS base via `SYS_sysarch AMD64_GET_GSBASE` in `r0gdb_init()`
+and restore it as `r0gdb()`'s first action
+(`r0gdb/prosper0gdb/r0gdb.c:573-620, 1857`); (b) make `signal_handler`
+never spin when the flag is held (non-fault signals dropped; fault
+signals park on a raw `nanosleep` loop, `dbg.c:1093-1120`).
+
+Instrumentation was added to test it against evidence instead of
+inference [verified-in-tree]: the stub captures the fault `ucontext` it
+is delivered on (`gdb_stub/dbg.c:1128-1134`) and exposes it via a
+non-invasive `qDiagF4` query (`dbg.c:856-884`); the clients decode it
+with a self-locating `__mcontext` scanner (`tools/stub_verify.py`
+`analyze_fault_frame` / `--diag-f4`; `tools/experiment_exit.py` prints the
+entry-frame verdict). New build sha `cbd34cbd…`; level 1 re-run green
+(base `0x200000000`, kdata `0xffffffff8b150000`).
+
+On-console result (2026-10-13, experiment 1 on the #70 build)
+[verified-on-console]:
+
+- Entry worked: synthetic stop with kernel-stack `rsp=0xffffff801aee4838`
+- The captured entry fault frame decoded to `mc_flags=0x5`,
+  `mc_fsbase=0x0`, `mc_gsbase=0x0`, `cs=0x33`, `ss=0x2b`
+- `mc_flags=0x5` = `_MC_HASSEGS` (0x1) set, **`_MC_HASBASES` (0x2)
+  clear**. FreeBSD `set_mcontext` (`machine/ucontext.h`) only restores
+  `mc_fsbase`/`mc_gsbase` when `_MC_HASBASES` is set, so the ring-0
+  entry's sigreturn does **not** clobber the GS base from `mc_gsbase=0`
+- Therefore the GS-clobber link is **falsified**, and since
+  `fsbase==gsbase==0` the "wrong TLS register" variant is moot
+- **The freeze still occurred** on the same run: the packet after the
+  synthetic-stop `g` got no reply and the client parked (~131 s). Freeze
+  signature identical to the 2026-10-12 runs; #70 did not fix it
+
+Two consequences: (1) fix #70(a) (GS restore) targets a mechanism that
+does not fire on this path — inert; (2) fix #70(b) converts the handler's
+busy-spin into a park, which is client-indistinguishable from the old
+spin (both hang the session) and may mask the true fault by sleeping
+through it. The real freeze is a genuine hang that is neither the GS→TLS
+chain nor the busy-spin, and remains **unexplained**. Prime remaining
+suspects: a lock/mailbox deadlock in the ring-0 session path itself (the
+`gdbstub_session_lock` flag interaction when packets are served from the
+entry handler context), or `r0gdb_cleanup()`'s `run_in_kernel` MSR step.
+Next instrument: a handler-entry counter + park counter (F4 extension) to
+determine whether a nested signal occurs at the freeze point or the hang
+is a plain packet-read deadlock.

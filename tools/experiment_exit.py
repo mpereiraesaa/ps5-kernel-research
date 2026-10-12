@@ -111,6 +111,30 @@ def _inner(stub_port):
     if not _is_kernel_address(regs["rsp"]):
         raise RuntimeError("debugger stop did not report a kernel-stack RSP")
 
+    # Instrumentation: decode the captured entry fault frame (F4 query). This
+    # is best-effort and read-only; it settles both load-bearing links of the
+    # GS-restore theory: _MC_HASBASES (does sigreturn restore fs/gs base from
+    # the frame at all) and mc_fsbase vs mc_gsbase (which register TLS uses).
+    try:
+        signum, cap_len, frame = s.diag_f4()
+        log("[E1] F4 capture: signum=%d cap_len=0x%x", signum, cap_len)
+        if any(frame):
+            info = analyze_fault_frame(frame)
+            log("[E1] entry frame: mc_flags=0x%x has_bases=%d fsbase=0x%x gsbase=0x%x",
+                info["mc_flags"], info["has_bases"],
+                info["mc_fsbase"], info["mc_gsbase"])
+            if not info["has_bases"]:
+                log("[E1] NOTE: _MC_HASBASES clear -> sigreturn does not restore "
+                    "fs/gs base from this frame; the GS-clobber link should not hold")
+            elif info["mc_fsbase"] != info["mc_gsbase"]:
+                log("[E1] NOTE: fsbase != gsbase -> the errno TLS register matters; "
+                    "a GS-only restore may not be the right register")
+        else:
+            log("[E1] F4 capture all zero (unexpected at the entry stop)")
+    except Exception as e:
+        log("[E1] F4 diagnostic unavailable (%s: %s); continuing",
+            type(e).__name__, e)
+
     # THE EXPERIMENT: exit immediately. No g, no G, no steps, no client
     # restores. The window is: entry -> exit -> auto-cleanup -> return.
     r = s.read_regs()

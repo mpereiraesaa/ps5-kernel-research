@@ -29,8 +29,9 @@ v5 changes (2026-10-12, after on-console validation of stub_verify level 1):
   - Pre-scan probes DO connect to zombie stub ports; a zombie sitting in
     accept() exits on the probe (its '+' read fails). Acceptable —
     zombies are stale — but the pre-scan can clean them as a side effect.
-  - START_RIP_OFF corrected: 0x4DF -> 0x4EF (the fault rip is base+0x4ef;
-    verified on-console: reading at rip-0x4ef+0x228c0 returned exactly
+  - START_RIP_OFF re-derived to 0x551 for build 97ebc9a9 (the fault rip is
+    base+0x551, the `call dbg_enter` return address; verified structurally:
+    reading at rip-0x551+0x228c0 returns exactly the ELF bytes at 0x228c0
     the ELF bytes at vaddr 0x228c0 with base=0x200000000).
 
 v4 changes (2026-10-12, after the zombie-port root-cause discovery):
@@ -94,24 +95,27 @@ if not PS5:
         "the sanitized repo never hardcodes it.")
 
 # Payload symbol offsets (link-relative vaddrs, from nm of the CURRENT build:
-# sha256 a8276b5aa26c47e042f9ee750bdbfab433da9db35174f6679bfd23bd37aaf2b4 —
-# the deadlock-fix + oversize-recovery + auto-cleanup build (PRs
-# #60+#62+#67); the BSS moved ~+0x11000 vs the f92401 build; #67 shifted
-# r0gdb/r0gdb_exit again (+0x24E). Build is reproducible (rebuild = same sha)).
-SYM_KDATA_BASE = 0x49508
-SYM_OFFSETS = 0x5A600
-SYM_OG_TSS = 0x495A0
-SYM_OG_IDT1 = 0x49560
-SYM_OG_IDT6 = 0x49570
-SYM_OG_IDT9 = 0x49580
-SYM_OG_IDT179 = 0x49590
-SYM_IDT6_PATCHED = 0x4955C
-SYM_R0GDB = 0x4993
-SYM_R0GDB_EXIT = 0x480F
+# sha256 cbd34cbd5dd5465e09f1415bde33b62944e41805503d285fecd6983316a14f02 —
+# the #70 GS-restore/never-spin build + the GS/TLS instrumentation (qDiagF4,
+# [D9]). The BSS grew by the gdb_last_uc_capture buffer, shifting the symbol
+# cluster up (SYM_R0GDB 0x4993 -> 0x4C94). Build is reproducible (rebuild = same
+# sha); re-derive with `make` + `llvm-nm -n payload-elfldr-sdk.elf` on any change.
+SYM_KDATA_BASE = 0x49B08
+SYM_OFFSETS = 0x5AC00
+SYM_OG_TSS = 0x49BA0
+SYM_OG_IDT1 = 0x49B60
+SYM_OG_IDT6 = 0x49B70
+SYM_OG_IDT9 = 0x49B80
+SYM_OG_IDT179 = 0x49B90
+SYM_IDT6_PATCHED = 0x49B5C
+SYM_R0GDB = 0x4C94
+SYM_R0GDB_EXIT = 0x4A8F
 
-START_RIP_OFF = 0x4EF  # fault rip = base+0x4ef (verified on-console; 0x4DF was a
-                       # typo; unchanged in the deadlock-fix build — the call
-                       # dbg_enter at 0x4e9 is still 6 bytes)
+START_RIP_OFF = 0x551  # fault rip = base+0x551 = start_rip, the `call dbg_enter`
+                       # return address (dbg.c:1553 start_rip = *rsp; main.c calls
+                       # dbg_enter). Re-derived for build 97ebc9a9: main's addr32
+                       # call at 0x54b is 6 bytes -> start_rip 0x551. base =
+                       # rip-START_RIP_OFF; verify via VERIFY_OFF bytes.
 VERIFY_OFF = 0x228C0   # any unique LOAD1 location; compared against THIS build's ELF
 GADGET_RD_CR4 = 0x2AC80      # RETIRED (SMEP: userland rip at CPL0 = #PF panic) AND
                              # STALE in the current build (live LOAD1 code now)

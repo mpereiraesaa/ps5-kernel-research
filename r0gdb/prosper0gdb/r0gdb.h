@@ -83,6 +83,14 @@ uint64_t r0gdb_kmalloc(size_t sz);
 //get current firmware version
 uint32_t r0gdb_get_fw_version(void);
 
+/* GS/TLS diagnostics (read-only; see the GS-restore fix in r0gdb.c).
+ * r0gdb_saved_gsbase is captured in r0gdb_init(); *_valid is 0 if sysarch
+ * AMD64_GET_GSBASE failed or the base read as 0 (the restore is a no-op). */
+uint64_t r0gdb_saved_gsbase(void);
+int r0gdb_saved_gsbase_valid(void);
+uint64_t r0gdb_read_fsbase(void);
+uint64_t r0gdb_read_gsbase(void);
+
 uint64_t r0gdb_find_syscall_cfi_table_jmp_int3_addr(void);
 
 /* internals */

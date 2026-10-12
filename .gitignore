@@ -4,3 +4,10 @@ __pycache__/
 *.elf
 *.a
 session_protocol.log
+.env
+kernel-data.bin
+*.bin
+*.dump
+*.kdata
+*.text
+*.data

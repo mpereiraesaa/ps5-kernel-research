@@ -589,6 +589,27 @@ static void restore_user_gsbase(void)
                      (long)&saved_user_gsbase);
 }
 
+/* --- diagnostic accessors (read-only; for main.c [D9] and the F4 query) --
+ * These expose what the GS/TLS fix actually observed, so a console run can
+ * distinguish "the theory's precondition held" from "sysarch failed and the
+ * restore was a silent no-op". r0gdb_read_*base use the same raw syscall. */
+uint64_t r0gdb_saved_gsbase(void) { return saved_user_gsbase; }
+int r0gdb_saved_gsbase_valid(void) { return saved_user_gsbase_valid; }
+
+uint64_t r0gdb_read_fsbase(void)
+{
+    uint64_t v = 0;
+    raw_syscall2(165 /* SYS_sysarch */, 128 /* AMD64_GET_FSBASE */, (long)&v);
+    return v;
+}
+
+uint64_t r0gdb_read_gsbase(void)
+{
+    uint64_t v = 0;
+    raw_syscall2(165 /* SYS_sysarch */, 130 /* AMD64_GET_GSBASE */, (long)&v);
+    return v;
+}
+
 void r0gdb(void)
 {
     /* First action: the thread arrives here through the entry sigreturn;
