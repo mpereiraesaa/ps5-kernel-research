@@ -87,3 +87,18 @@ semantics at `dbg.c:1437-1449` and `prosper0gdb/r0gdb.c:764-768`.
 The change has not been built or run on a console. Keep level 2 and
 full ring-0 sessions gated until the documented local build and
 graduated validation ladder pass.
+
+One separate safety gap remains [verified-in-tree]: `r0gdb_loop()` can
+return after a transport failure, but `r0gdb()` does not call
+`r0gdb_cleanup()` on that or its normal exit path. A disconnected
+client can therefore leave the patched IDT/TSS state installed while
+the payload remains alive. Automatic cleanup on every session exit is
+the next design task (`prosper0gdb/r0gdb.c:427-453, 461-487`). The
+cleanup routine uses the setup `copyin()`/`copyout()` path to restore
+IDT/TSS, but its full sequence (including the `run_in_kernel()` MSR
+operations) has not been validated after ring-0 entry. In this tree,
+those copy helpers use `kwrite20()` plus pipe I/O rather than `sysarch`
+(`prosper0gdb/r0gdb.c:173-197`). Keep the socket park and recovery
+plan until automatic cleanup is independently proven. See the
+incident record in
+[`../docs/10-hcall-resume-window-and-noops.md`](../docs/10-hcall-resume-window-and-noops.md).
