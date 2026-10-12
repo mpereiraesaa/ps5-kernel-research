@@ -2,6 +2,7 @@
 #include <sys/thr.h>
 #include <sys/mman.h>
 #include <stdint.h>
+#include "dbg.h"
 #include "trap_state.h"
 
 extern char r0hook_start[];
@@ -128,8 +129,6 @@ static void copy_to_kernel(void* p, struct mailbox*** q)
     ENABLE_WP();
 }
 
-extern int in_signal_handler;
-
 int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern);
 
 static void ring0_mailbox_thread(void* ptr)
@@ -168,9 +167,19 @@ static void ring0_mailbox_thread(void* ptr)
         };
         if(data.int_no == 3)
             ts.regs.rip--;
-        while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE));
-        gdbstub_main_loop(&ts, 0, 0);
-        __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+        sigset_t oldmask;
+        int status = gdbstub_session_lock(&oldmask);
+        if(!status)
+        {
+            status = gdbstub_main_loop(&ts, 0, 0);
+            gdbstub_session_unlock(&oldmask);
+        }
+        if(status < 0)
+        {
+            mb = (struct mailbox*)1;
+            kexec(write_mailbox, mb);
+            continue;
+        }
 #ifdef INTERRUPTER_THREAD
         {
             void start_interrupter_thread(void);

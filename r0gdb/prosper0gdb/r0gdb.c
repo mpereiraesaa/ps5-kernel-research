@@ -315,7 +315,6 @@ static void getpid_for_smsw_ax(void)
     getpid();
 }
 
-extern int in_signal_handler;
 int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern);
 void run_in_kernel(struct regs*);
 
@@ -466,10 +465,13 @@ static void r0gdb_loop(void)
     ts.regs.eflags = 0x102;
     for(;;)
     {
-        while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
-            cpu_relax();
-        gdbstub_main_loop(&ts, 0, 0);
-        __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+        sigset_t oldmask;
+        if(gdbstub_session_lock(&oldmask))
+            break;
+        int status = gdbstub_main_loop(&ts, 0, 0);
+        gdbstub_session_unlock(&oldmask);
+        if(status < 0)
+            break;
         ts.regs.eflags &= ~0x200;
         ts.regs.eflags |= 0x102;
         if((void*)ts.regs.rip == (void*)r0gdb_exit)
@@ -760,7 +762,7 @@ int r0gdb_instrument(size_t size)
         return -1;
     struct sigaction sa = {
         .sa_sigaction = clear_tf,
-        .sa_flags = SA_SIGINFO
+        .sa_flags = SA_SIGINFO | SA_RESTART
     };
     sigaction(SIGTRAP, &sa, 0);
     instrumented = 1;

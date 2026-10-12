@@ -55,24 +55,35 @@ After any stub change, re-run the graduated ladder
 (`tools/stub_verify.py` level 1 first — it is the regression gate
 and validates the new build's protocol/constants).
 
-## Known defect to fix next (2026-10-12 post-mortem)
+## Signal/session deadlock fix (2026-10-12)
 
-The ring-0 session freeze (root-caused, see docs/10): three
-consumers share `in_signal_handler` with an unconditional spin —
-`gdb_stub/dbg.c:966` (signal handler), `prosper0gdb/r0gdb.c:469`
-(`r0gdb_loop`, holds the flag across the entire blocking packet
-session), `gdb_stub/ring0.c:171` (mailbox thread). Any signal
-during a ring-0 packet session freezes the handling thread forever
-(a `G` write is 337 single-char blocking reads — the largest
-window). The fix, agreed in the coordination mailbox:
+The ring-0 session freeze and its source-level repair are recorded in
+[`../docs/10-hcall-resume-window-and-noops.md`](../docs/10-hcall-resume-window-and-noops.md).
+Four code paths acquire the shared `in_signal_handler` flag: the
+signal handler, `r0gdb_loop`, the ring-0 mailbox thread, and
+`gdb_remote_syscall`. The three non-handler paths now use
+`gdbstub_session_lock()` / `gdbstub_session_unlock()`, which block
+the debugger signal set on the owning thread before taking the flag
+and restore the prior mask after releasing it. The handler retains a
+spin acquisition: it cannot interrupt an owner holding the lock, and
+a handler on another thread can wait while the owner progresses.
 
-1. the signal handler must NOT spin when the flag is already held
-   (return/defer), or better: block the dbg signals on the r0gdb
-   thread while it holds the flag
-2. `SA_RESTART` on the sigactions so `EINTR` cannot desync the
-   per-char reads
-3. ideally: buffer whole incoming packets before parsing to shrink
-   the interrupt windows from N reads to ~1
+All installed debugger signal actions use `SA_RESTART` and mask the
+debugger signal set while a handler runs. Incoming RSP data is read
+ahead in chunks, assembled into a bounded complete packet, checksummed,
+then parsed from memory. Outgoing ACK reads share the same buffered
+stream reader so read-ahead cannot consume bytes needed by the next
+packet. A transport failure now returns from the parser; the signal
+handler and ring-0 mailbox path preserve the original register
+snapshot, and `r0gdb_loop` does not execute stale register state.
 
-Until this lands and the ladder re-validates, **do not run level 2
-or full ring-0 sessions**.
+These are source changes [verified-in-tree]: packet assembly is in
+`gdb_stub/dbg.c:75-160`, parser error handling is at `dbg.c:662-668`,
+the signal mask and session lock are at `dbg.c:1340-1386`, and callers
+are at `dbg.c:1155-1188`, `gdb_stub/ring0.c:170-181`, and
+`prosper0gdb/r0gdb.c:468-480`. The original signal context is restored
+on parser failure at `dbg.c:1108-1110`. Signal actions use restart
+semantics at `dbg.c:1437-1449` and `prosper0gdb/r0gdb.c:764-768`.
+The change has not been built or run on a console. Keep level 2 and
+full ring-0 sessions gated until the documented local build and
+graduated validation ladder pass.
