@@ -123,3 +123,69 @@ machinery becomes the CR4 read/write engine, and the FSGSBASE enable
 is: read CR4 → write CR4|`0x10000` (owner-gated) → identify and set
 `cpu_stdext_feature` bit 0 → live `rdfsbase` test → prospero-win
 native TLS switching.
+
+## 2026-10-12 — Public HV-defeat lineage survey (the E1 ABI verdict + the TMR layer)
+
+### The raw hcall ABI: NOT publicly established [public-consensus: absence]
+
+Per the owner's discipline (verify the 0x00 handler and ABI from
+available evidence before any launch), the survey result is negative:
+
+- ps5-wiki: hcall **names only** ("little information is known beyond
+  the call names"); no ABI, no GET_MESSAGE_CONF semantics
+- Byepervisor (≤2.xx): reuses the kernel's own wrapper gadget
+  (`VMMCALL_HV_SET_CPUID_PS4` at kernel-text addresses) — the raw
+  convention stays inside the wrappers
+- flatz's HV exploit gist (HvExploit.java, the "Prosperous" lineage)
+  and ps5-linux/ps5-linux-loader (3.00–7.61): **no raw hcalls at all**
+  — both defeat the HV via memory/VMCB manipulation, never by calling
+  it. E1 stays **held**: no guess-launches.
+
+### The three public HV-defeat generations [public-consensus]
+
+1. **≤2.xx (embedded HV)** — flatz's gist: TMR relax + disarm via the
+   kernel's exported `__hv_vm_area` (vcpu_t array → vmcb_va → VMCB
+   physical) → patch the VMCB control area: NP_CTRL (clear NP enable +
+   GMET enable), CR intercepts = 0, general1 cleared (keep CPUID),
+   general2 → 0xF (keep VMRUN/VMMCALL/VMLOAD/VMSAVE)
+2. **3.00–4.51 (external HV "HyLonome")** — ps5-linux hv_defeat_0304:
+   stage1 TMR relax (regions 5/16/17/18 → permissive via the D18F2
+   index/data ports), stage2 VMCB patch via IOMMU physical writes
+   (VMCB bases hardcoded per FW: 0x6290B000 / 0x62A05000 + core*0x3000),
+   stage3 forced VMCB reload per core (exception-safe VMMCALL harness:
+   SIGILL handler + setjmp + pin-to-core — the exact pattern for E1),
+   then kernel shellcode in a code cave + a `HOOK_ACPI_WAKEUP_MACHDEP`
+   call-near hook into the resume path
+3. **5.00–7.61 (TMR/VMCB patched)** — hv_defeat_0506/0607: IDT gate
+   patching + ROP chains on the HV's per-CPU IST stacks + the APICBASE
+   wrmsr trigger (the 7.61 APICBASE validator — already modeled in our
+   emulator), IPIs between vcpus, GMET bit in NP_CTRL
+
+### The TMR layer (new mechanism for our model) [public-consensus]
+
+The memory protections are three layers: NPT (per-root), **TMR —
+Trusted Memory Region, a HARDWARE protection with per-fabric
+source-access-enable bits (SMU/PIE/CCM/GFX/NCM/IOM)** configured via
+PCI D18F2x80/x84 (index/data port) MMIO, and XOM. The kernel text and
+the HV region each have a TMR region; ctl=0 + all SAE bits + WE/CE/V
+disarms one. **"TMR based HV exploit is patched on 5.00"** (flatz) —
+but the registers remain the protection mechanism, so reading the TMR
+table on 12.02 is free intel and writing it is a testable question.
+
+### The HV physical layout (per-FW drift, 0x62x physical) [public-consensus]
+
+VMCB bases: 3.00 0x6290B000+core*0x3000; 4.x 0x62A05000+core*0x3000;
+5.x 0x62a08000+core*0x2000; 6.00-6.02 0x62a57000+core*0x2000;
+6.50/7.x hv_stack 0x628d0000 / 0x628ec000. hv_shm: 0x62a01000 (5.x),
+0x62a22000 (6.00-6.02). Our emulator's "HV-own physical regions"
+(NPT-denied) align with this band. The 12.02 equivalents are unknown —
+findable via our GPUVM/PM4 route into the 0x62 band.
+
+### New safe console experiment (no ABI needed, read-only)
+
+**E-TMR: read the TMR region table** — D18F2x80/x84 (index/data) MMIO
+through the dmap via our proven pipe-read class: dump all 22 TMR
+regions (base/limit/ctl/fid). Zero crash risk (reads of live MMIO
+config registers via dmap), and it maps 12.02's hardware-protection
+layout (kernel text physical range! HV region!) independent of the
+hcall question entirely.
