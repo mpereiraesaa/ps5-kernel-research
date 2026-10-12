@@ -543,8 +543,58 @@ static void r0gdb_loop(void)
     }
 }
 
+/* --- GS base save/restore around the ring-0 entry ----------------------
+ * The PS5's signal frame carries mc_gsbase = 0 (documented at the
+ * signal_handler guard in gdb_stub/dbg.c), and the ring-0 entry passes
+ * through the kernel's sigreturn. If that restore clobbers the thread's
+ * GS base, the SDK libc's errno-TLS access faults at the first failing
+ * syscall (~100-250ms into the session on the 2026-10-12 runs), the
+ * nested SIGSEGV froze the old handler, and the abandoned patched IDT/TSS
+ * window eventually killed the console. Save the boot-time GS base and
+ * restore it as r0gdb()'s FIRST action, before anything can touch the
+ * TLS. Raw inline-asm syscalls: no libc dependency (the SDK libc does
+ * not provide sysarch), and idempotent-safe - restoring the correct
+ * base is a no-op if the sigreturn never clobbered it.
+ * Constants verified against this tree's freebsd-headers:
+ * SYS_sysarch=165, AMD64_GET_GSBASE=130, AMD64_SET_GSBASE=131. */
+static uint64_t saved_user_gsbase;
+static int saved_user_gsbase_valid;
+
+static long raw_syscall2(long n, long a, long b)
+{
+    long ret;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "a"(n), "D"(a), "S"(b)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
+
+static void save_user_gsbase(void)
+{
+    uint64_t gs = 0;
+    if(raw_syscall2(165 /* SYS_sysarch */, 130 /* AMD64_GET_GSBASE */,
+                    (long)&gs) == 0
+       && gs)
+    {
+        saved_user_gsbase = gs;
+        saved_user_gsbase_valid = 1;
+    }
+}
+
+static void restore_user_gsbase(void)
+{
+    if(saved_user_gsbase_valid)
+        raw_syscall2(165 /* SYS_sysarch */, 131 /* AMD64_SET_GSBASE */,
+                     (long)&saved_user_gsbase);
+}
+
 void r0gdb(void)
 {
+    /* First action: the thread arrives here through the entry sigreturn;
+     * the GS base must be correct before r0gdb_setup's libc calls (and
+     * anything else) can touch the errno TLS. */
+    restore_user_gsbase();
     r0gdb_setup(1);
     r0gdb_loop();
     r0gdb_cleanup();
@@ -1780,6 +1830,10 @@ int r0gdb_init(void* ds, int a, int b, uintptr_t c, uintptr_t d)
         victim_pktopts = c;
     }
     kdata_base = d;
+    /* Save the SDK TLS GS base while it is certainly correct (boot
+     * context, before dbg_enter's deliberate fault). r0gdb() restores
+     * it as its first action; see the comment above r0gdb(). */
+    save_user_gsbase();
     /*
      * TODO(FW_PORT): verify what anchor the new elfldr passes and what anchor
      * was used to produce its prosper0gdb offsets.  Add an explicit firmware
