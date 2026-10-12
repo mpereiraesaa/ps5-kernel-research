@@ -39,6 +39,27 @@ root. This supersedes every text-read route previously pursued.
 | [`06-sources.md`](docs/06-sources.md) | Reference | Source catalog |
 | [`evidence-logs/`](docs/evidence-logs/) | Archive | Raw protocol logs |
 
+## Tools (regression gates)
+
+The graduated verification ladder for the r0gdb stub, published as
+runnable code. **Level 1 is a regression gate: it must be green before
+any ring-0 session** — it validates the full stub protocol (handshake,
+register layout, base/kdata constants, m/M round-trips) with zero
+ring-0 risk, so payload or protocol drift fails fast instead of
+hanging the console on a bad assumption.
+
+| Tool | Status | Purpose |
+|---|---|---|
+| [`tools/stub_verify.py`](tools/stub_verify.py) | **Validated green on-console (2026-10-12)** | Level 1: userland-only full protocol check |
+| [`tools/stub_verify2.py`](tools/stub_verify2.py) | Written; first console run pending | Level 2: + ring-0 entry + EFER + restore + exit |
+| [`tools/stub_verify3.py`](tools/stub_verify3.py) | Written; first console run pending | Level 3: + CR0 read + sanity check |
+
+Required environment: `PS5_HOST` (console address — never hardcoded in
+this repo), `R0GDB_ELF` (path to the exact `payload-elfldr-sdk.elf`
+build under test), `R0GDB_SEND_ELF` (path to `send_elf.py`). The
+working copies with the payload and private tree layout live in the
+lab; these are the sanitized, published baselines.
+
 ## Quick facts (unchanged)
 
 | Item | Value |
