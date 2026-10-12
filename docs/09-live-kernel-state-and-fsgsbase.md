@@ -181,11 +181,42 @@ VMCB bases: 3.00 0x6290B000+core*0x3000; 4.x 0x62A05000+core*0x3000;
 (NPT-denied) align with this band. The 12.02 equivalents are unknown —
 findable via our GPUVM/PM4 route into the 0x62 band.
 
-### New safe console experiment (no ABI needed, read-only)
+### E-TMR: risk correction (owner challenge accepted)
 
-**E-TMR: read the TMR region table** — D18F2x80/x84 (index/data) MMIO
-through the dmap via our proven pipe-read class: dump all 22 TMR
-regions (base/limit/ctl/fid). Zero crash risk (reads of live MMIO
-config registers via dmap), and it maps 12.02's hardware-protection
-layout (kernel text physical range! HV region!) independent of the
-hcall question entirely.
+The initial "zero crash risk" claim was WRONG. Retracted. The honest
+risk analysis:
+
+1. **The NPT governs the kernel too.** The question is not whether a
+   TMR register read is semantically harmless — it is whether the
+   GUEST (kernel included) is permitted to touch that physical page
+   on 12.02. A kernel load from an NPT-denied page = kernel #PF =
+   panic. Nothing about the read being "just a config read" protects
+   against this.
+2. **Device MMIO is on our own measured never-pipe list** — the
+   boundary knowledge from the six console crashes explicitly lists
+   device MMIO among the pipe primitive's panic classes. The TMR
+   index/data ports ARE device MMIO (D18F2 PCI config). The proposal
+   violated our own lab rule.
+3. **The 5.00+ patch's most plausible form is exactly this denial** —
+   Sony patched the TMR exploit on 5.00; NPT-denying the guest's
+   access to the D18F2 config alias is the natural patch, in which
+   case the kernel read faults on sight.
+4. **Dmap layout drift** — the dmap alias of the config region is a
+   <=4.51 fact; on 12.02 the VA may simply be unmapped → the
+   measured unmapped-panic class.
+5. **No public datasheet for the Sony-custom TMR registers** —
+   read side effects are not provably absent.
+
+Corrected ladder for E-TMR:
+
+- **E-TMR-1 (genuinely safe)**: walk the kernel page tables (kernel
+  data, proven class) for the PCI-config dmap alias region — does a
+  mapping exist on 12.02, at which VA, pointing at which physical
+  address, with which PTE attributes (M/PAT bits would even confirm
+  it is MMIO-typed). No MMIO access occurs.
+- **E-TMR-2**: only if an alias exists — validate the underlying
+  physical page with the established oracle methodology (the
+  anchor_read discipline: 146 pages, 0 faults) BEFORE any read.
+- **E-TMR-3**: if the page is NPT-denied, no guest-side reader can
+  read it at all — the question moves to the GPUVM/PM4 route or a
+  root-0 execution, not to a riskier pipe attempt.
