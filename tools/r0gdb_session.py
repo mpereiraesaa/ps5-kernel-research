@@ -94,8 +94,9 @@ if not PS5:
         "the sanitized repo never hardcodes it.")
 
 # Payload symbol offsets (link-relative vaddrs, from nm of the CURRENT build:
-# sha256 03de042fc8bbf5d31133872974bb4bbca0d079776aa5667a7413a61e6c6e89e9 —
-# the deadlock-fix build; the BSS moved ~+0x11000 vs the f92401 build).
+# sha256 7a88dcfafb8dee2be35f616bb95167125714d1b1d19e1463c943391f1889b1b3 —
+# the deadlock-fix + oversize-recovery build (PRs #60+#62); the BSS moved
+# ~+0x11000 vs the f92401 build; PR #62 shifted r0gdb/r0gdb_exit by +0x80).
 SYM_KDATA_BASE = 0x49508
 SYM_OFFSETS = 0x5A5E0
 SYM_OG_TSS = 0x495A0
@@ -104,8 +105,8 @@ SYM_OG_IDT6 = 0x49570
 SYM_OG_IDT9 = 0x49580
 SYM_OG_IDT179 = 0x49590
 SYM_IDT6_PATCHED = 0x4955C
-SYM_R0GDB = 0x45A8
-SYM_R0GDB_EXIT = 0x44D1
+SYM_R0GDB = 0x4628
+SYM_R0GDB_EXIT = 0x4551
 
 START_RIP_OFF = 0x4EF  # fault rip = base+0x4ef (verified on-console; 0x4DF was a
                        # typo; unchanged in the deadlock-fix build — the call
