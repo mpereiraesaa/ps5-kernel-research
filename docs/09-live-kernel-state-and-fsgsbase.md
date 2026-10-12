@@ -308,3 +308,45 @@ come from kernel context during the resume window:
 The build chain: r0gdb ring-0 session → arm DR0 at the resume-path
 breakpoint → owner enters rest mode → owner resumes → #DB fires →
 ROP invokes the hcall → AP launches at the carrier page.
+
+## 2026-10-12 — ACPI text region mapping from the dump
+
+### Text pointers in the ACPI range [verified-on-dump]
+
+Only 3 text pointers in [ktext+0x380000, ktext+0x400000) across the
+entire 134 MiB dump (scanned at every 4-byte alignment):
+
+| kdata location | ktext target | Context |
+|---|---|---|
+| kdata+0x01991b8 | ktext+0x396390 | kobj device method (pos ~4) |
+| kdata+0x0199bd8 | ktext+0x3b3b60 | kobj device method (pos ~6) |
+| kdata+0x2060cd8 | ktext+0x3f9b9f | debug/trace context |
+
+### ACPI tables [verified-on-dump]
+
+- FADT at kdata+0x7604000 (signature "FACP", length 268)
+- FACS at phys **0x9bf60** (from FADT X_FIRMWARE_CTRL at +0x40)
+- The FACS wake vector (at +0x0C 32-bit or +0x18 64-bit) would give
+  the kernel resume entry point — one alias-engine read needed
+- DSDT at kdata+0x2cb4c58
+
+### ACPI strings in kernel data [verified-on-dump]
+
+- "acpi_wakeup: failed to resume AP #%d" at kdata+0x04ac6eb
+- "acpi_wakeup_event" at kdata+0x0444015
+- "acpi_sleep_event" at kdata+0x04821b9
+- "power_resume" at kdata+0x037b4ee and 0x04395ef
+- "power_suspend" at kdata+0x0399a65 and 0x048c6aa
+
+No aligned kernel data pointers to these strings exist (the
+eventhandler lists are outside the dump window or use a different
+naming scheme on PS5).
+
+### HCALL H0 result [verified-on-console]
+
+VMMCALL from CPL3 (rdfsbase instruction with rax=0x00, GET_MESSAGE_CONF):
+**SIGILL (#UD)** on the first call. The VMCB's VMMCALL intercept bit
+is clear at runtime on 12.02. Userland hypercalls are impossible —
+the hcall path requires kernel context. This is consistent with the
+resume-window model: the HV enables the VMMCALL intercept only during
+boot/resume when the kernel needs it, then clears it.
