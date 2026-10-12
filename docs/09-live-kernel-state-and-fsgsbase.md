@@ -220,3 +220,35 @@ Corrected ladder for E-TMR:
 - **E-TMR-3**: if the page is NPT-denied, no guest-side reader can
   read it at all — the question moves to the GPUVM/PM4 route or a
   root-0 execution, not to a riskier pipe attempt.
+
+## 2026-10-12 — E-TMR-1 answered entirely offline from the existing dump
+
+The owner's point: the 134 MiB kernel-data dump (Oct 8, boot
+kdata=0xffffffff89210000, dmap=0xffff89a100000000) already contains
+the answer — no console needed.
+
+### Findings [verified-on-dump]
+
+1. **ECAM/MMCONFIG is dmap-mapped on 12.02**: phys `0xE0000000` →
+   dmap `0xffff89a1e0000000`. Two kernel-data hits at
+   kdata+0x27e71a0 and kdata+0x2c6d9e8 hold `{phys=0xe0000000,
+   size=0x200000, va=dmap+0xe0000000}` — active resource structures.
+2. **Six PCI resource entries** contain the ECAM base as a BAR
+   descriptor — the kernel actively uses this region.
+3. **D18F2 TMR port physical addresses computed**: BDF offset
+   0xC2000 → TMR index at phys `0xE00C2080`, TMR data at
+   `0xE00C2084` (dmap VAs 0xffff89a1e00c2080/84).
+4. The pml4 is NOT in the dump window (at dmap+phys outside kdata),
+   but the dmap VA pointers in kernel data are equivalent proof.
+5. The pipe primitive on these addresses is the known device-MMIO
+   panic class (our own boundary rule). The alias engine is the
+   correct reader (SIGSEGV on NPT denial, not a kernel panic).
+
+### E-TMR-2 design (the remaining console step)
+
+One alias-engine read of phys `0xE00C2080` (TMR index register):
+map the page as an uncacheable device page into the payload's PT,
+read as userland memory. If the NPT allows guest ECAM access, we
+walk the index/data protocol for all 22 TMR regions and dump the
+full hardware-protection table. If NPT-denied → SIGSEGV (caught,
+zero kernel risk) and the question moves to GPUVM/PM4.
