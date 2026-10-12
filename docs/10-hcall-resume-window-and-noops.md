@@ -540,6 +540,40 @@ the documented graduated validation ladder passes. The earlier Oct 9
 "stub death" may share this cause, but remains an [inference] without
 a captured trace.
 
+#### What Oct 9 proved at ring-0 [verified-on-console]
+
+The preserved protocol log (`session_protocol.log`, archived
+entries) of the 2026-10-09 session shows the full ring-0 machinery
+working before the CR4 attempt ended it:
+
+- ring-0 **entry** (IDT/TSS patch + the int179 trampoline): worked;
+  ring-0 confirmed by kernel-stack rsp
+- **`rdmsr_start`** (kernel text) stepped at CPL0: EFER = `0x11d01`
+- **`mov_rax_cr0`** (kernel text) stepped at CPL0: CR0 = `0x8005003b`
+- then the CR4 attempt wrote a `mov rax,cr4` gadget (`0f 20 e0`)
+  into the payload's **userland** memory and stepped it at CPL0 →
+  SMEP `#PF` (vector 14, not gated by the stub) → **console panic →
+  power cycle**. This is the live confirmation of CR4.SMEP=1 and the
+  origin of the kernel-text-only rule for ring-0 rip targets.
+
+Two distinct failure classes are on record — do not conflate them
+(an earlier version of this account did):
+
+- **Oct 9**: the panic was immediate, **during** the step — a SMEP
+  `#PF` on a userland rip at CPL0; the OS died mid-instruction
+  [verified-on-console].
+- **2026-10-12**: the freeze was **before any step** — the
+  signal-handler spin deadlock during packet processing
+  [verified-on-dump of the payload sources]; the console survived
+  until the `timeout` wrapper closed the socket over the patched
+  state.
+
+For level 2 this means: the entry, the trampoline, and kernel-text
+gadget **stepping** are proven on-console; the unproven pieces are
+the `store_rax_rdi` **write** gadget specifically (the two proven
+gadgets are reads), the full restore sequence, the verified return,
+and the #60/#62 stub changes at ring-0.
+
 Operational lesson (also live): the parked script must hold its
 socket open indefinitely — running gated ring-0 scripts under
 `timeout N` kills the park and closes the socket over the
