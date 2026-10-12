@@ -334,6 +334,17 @@ static uint64_t og_tss[16][3];
 extern char _start[];
 extern char _end[];
 
+static int restore_idt_gate(unsigned int vector, const char original[16])
+{
+    uint64_t gate_addr = offsets.idt + vector * 16;
+    char verify[16];
+    if(copyin(gate_addr, original, 16) != 16)
+        return -1;
+    if(copyout(verify, gate_addr, sizeof(verify)) != sizeof(verify))
+        return -1;
+    return memcmp(verify, original, sizeof(verify)) ? -1 : 0;
+}
+
 void r0gdb_setup(int do_swapgs)
 {
     if(init_run)
@@ -424,11 +435,16 @@ void r0gdb_setup(int do_swapgs)
     init_run = 1;
 }
 
-void r0gdb_cleanup(void)
+static int r0gdb_cleanup_checked(void)
 {
     if (!init_run)
-        return;
-    r0gdb_wrmsr(0xc0000084, r0gdb_rdmsr(0xc0000084) | 0x100);
+        return 0;
+
+    int failed = 0;
+    uint64_t fmask = r0gdb_rdmsr(0xc0000084) | 0x100;
+    r0gdb_wrmsr(0xc0000084, fmask);
+    if(r0gdb_rdmsr(0xc0000084) != fmask)
+        failed = 1;
 
 #ifdef CPU_2
     int cpu = 13;
@@ -438,18 +454,65 @@ void r0gdb_cleanup(void)
     {
         uint64_t tss_for_cpu = offsets.tss_array + cpu * 0x68;
         char utss[0x68];
-        copyout(utss, tss_for_cpu, 0x68);
+        if(copyout(utss, tss_for_cpu, sizeof(utss)) != sizeof(utss))
+        {
+            failed = 1;
+            continue;
+        }
         *(volatile uint64_t*)(utss+0x34) = og_tss[cpu][0];
         *(volatile uint64_t*)(utss+0x3c) = og_tss[cpu][1];
         *(volatile uint64_t*)(utss+0x4c) = og_tss[cpu][2];
-        copyin(tss_for_cpu, utss, 0x68);
+        if(copyin(tss_for_cpu, utss, sizeof(utss)) != sizeof(utss))
+        {
+            failed = 1;
+            continue;
+        }
+
+        char verify[0x68];
+        uint64_t ist1, ist2, ist3;
+        if(copyout(verify, tss_for_cpu, sizeof(verify)) != sizeof(verify))
+            failed = 1;
+        else
+        {
+            memcpy(&ist1, verify+0x34, sizeof(ist1));
+            memcpy(&ist2, verify+0x3c, sizeof(ist2));
+            memcpy(&ist3, verify+0x4c, sizeof(ist3));
+            if(ist1 != og_tss[cpu][0] || ist2 != og_tss[cpu][1] ||
+               ist3 != og_tss[cpu][2])
+                failed = 1;
+        }
     }
 
-    copyin(offsets.idt+1*16, og_idt1, 16);
+    if(restore_idt_gate(1, og_idt1))
+        failed = 1;
     if(idt6_patched)
-        copyin(offsets.idt+6*16, og_idt6, 16);
-    copyin(offsets.idt+9*16, og_idt9, 16);
-    copyin(offsets.idt+179*16, og_idt179, 16);
+        if(restore_idt_gate(6, og_idt6))
+            failed = 1;
+    if(restore_idt_gate(9, og_idt9))
+        failed = 1;
+    if(restore_idt_gate(179, og_idt179))
+        failed = 1;
+
+    if(failed)
+        return -1;
+
+    init_run = 0;
+    idt6_patched = 0;
+    return 0;
+}
+
+static void r0gdb_park_after_cleanup_failure(void)
+{
+    /* Keep this payload mapped if any gate/IST restore could not be
+     * verified; returning could leave an installed IDT target unmapped. */
+    for(;;)
+        sleep(1);
+}
+
+void r0gdb_cleanup(void)
+{
+    if(r0gdb_cleanup_checked())
+        r0gdb_park_after_cleanup_failure();
 }
 
 void r0gdb_exit(void)
@@ -484,6 +547,7 @@ void r0gdb(void)
 {
     r0gdb_setup(1);
     r0gdb_loop();
+    r0gdb_cleanup();
 }
 
 uint64_t r0gdb_rdmsr(uint32_t ecx)

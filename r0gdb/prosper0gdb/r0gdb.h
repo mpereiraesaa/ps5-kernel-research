@@ -28,7 +28,7 @@ int r0gdb_trace(size_t trace_size);
 //set up for instrumentation
 int r0gdb_instrument(size_t trace_size);
 
-//restore IDT entries and TSS IST stacks patched by r0gdb_setup
+//restore IDT entries and TSS IST stacks patched by r0gdb_setup; parks on failure
 void r0gdb_cleanup(void);
 
 //call from kernel gdb to exit
