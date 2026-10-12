@@ -85,6 +85,12 @@ static int socket_get_byte(unsigned char* out)
     if(rsp_rx_pos == rsp_rx_len)
     {
         ssize_t n;
+        /* Retry on EINTR only.  errno is live after read() on every build
+         * (the mem-xfer path relies on it too, see read_mem/write_mem), so
+         * this distinguishes an interrupted read from a hard error -- do not
+         * broaden to "retry on any n < 0" or a real disconnect spins forever.
+         * With debug signals masked during the session and SA_RESTART set,
+         * EINTR here is already rare; this is belt-and-suspenders. */
         do
             n = read(gdb_socket, rsp_rx_buf, sizeof(rsp_rx_buf));
         while(n < 0 && errno == EINTR);
@@ -124,7 +130,21 @@ static int wait_for_packet(pkt_opaque o)
         if(c == '#')
             break;
         if(rsp_packet_len == sizeof(rsp_packet))
-            return -1;
+        {
+            /* Packet is larger than our assembly buffer.  A well-behaved GDB
+             * never sends one this big (we advertise no PacketSize, so it
+             * stays conservative), but rather than drop the whole debug
+             * session on a malformed/oversized peer, drain the remainder to
+             * the packet boundary (body up to '#', then the two checksum
+             * digits), NAK, and let the caller retry. */
+            while(c != '#')
+                if(socket_get_byte(&c))
+                    return -1;
+            unsigned char discard[2];
+            if(socket_get_byte(&discard[0]) || socket_get_byte(&discard[1]))
+                return -1;
+            return socket_write_byte('-') ? -1 : 1;
+        }
         rsp_packet[rsp_packet_len++] = c;
         checksum = (checksum + c) & 0xff;
     }
