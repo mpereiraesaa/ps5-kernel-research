@@ -65,7 +65,9 @@ ELF_PATH = os.environ.get(
 SEND_ELF = os.environ.get(
     "R0GDB_SEND_ELF",
     os.path.join(HERE, "../../send_elf.py"))
-LOG_PATH = os.path.join(HERE, "session_protocol.log")
+LOG_PATH = os.environ.get(
+    "R0GDB_LOG",
+    os.path.join(HERE, "session_protocol.log"))
 
 if not PS5:
     raise RuntimeError(
@@ -76,20 +78,31 @@ START_RIP_OFF = 0x4EF  # fault rip = base+0x4ef (verified on-console 2026-10-12:
                        # read at rip-0x4ef+0x228c0 returned exactly ELF@0x228c0
                        # with base=0x200000000; the old 0x4DF was a D/E typo)
 VERIFY_OFF = 0x228C0
-SYM_KDATA_BASE = 0x384D8
-SYM_OFFSETS = 0x495C0
-SYM_OG_TSS = 0x38580
-SYM_OG_IDT1 = 0x38530
-SYM_OG_IDT6 = 0x38540
-SYM_OG_IDT9 = 0x38550
-SYM_OG_IDT179 = 0x38560
-SYM_IDT6_PATCHED = 0x3852C
-SYM_R0GDB = 0x4098
-SYM_R0GDB_EXIT = 0x3FD1
-GADGET_RD_CR4 = 0x2AC80
-GADGET_WRITE_QWORD = 0x2AC90
+# Payload symbol offsets (link-relative vaddrs, from nm of the CURRENT build:
+# sha256 03de042fc8bbf5d31133872974bb4bbca0d079776aa5667a7413a61e6c6e89e9 —
+# the deadlock-fix build; the BSS moved ~+0x11000 vs the f92401 build).
+SYM_KDATA_BASE = 0x49508
+SYM_OFFSETS = 0x5A5E0
+SYM_OG_TSS = 0x495A0
+SYM_OG_IDT1 = 0x49560
+SYM_OG_IDT6 = 0x49570
+SYM_OG_IDT9 = 0x49580
+SYM_OG_IDT179 = 0x49590
+SYM_IDT6_PATCHED = 0x4955C
+SYM_R0GDB = 0x45A8
+SYM_R0GDB_EXIT = 0x44D1
+# The old gadget scratch slots (0x2AC80/0x2AC90, f92401 build): RETIRED for
+# ring-0 use (SMEP: userland rip at CPL0 = #PF panic) AND stale in this build
+# (that range is now live LOAD1 code). Ring-0 stores go through the
+# kernel-text store_rax_rdi gadget.
+# M-test scratch (level 1): the BSS segment tail (LOAD3 memsz ends 0x5B158;
+# the last aligned slot, beyond every symbol — linker padding). The old
+# 0x2AC00 scratch was tail padding of the f92401 LOAD1; live code now.
+SYM_M_TEST = 0x5B148
 EFER_MSR = 0xC0000080
-OFFSET_LIST = os.path.join(HERE, "kstuff-lite/prosper0gdb/offsets/offset_list.txt")
+OFFSET_LIST = os.environ.get(
+    "R0GDB_OFFSET_LIST",
+    os.path.join(HERE, "..", "r0gdb", "prosper0gdb", "offsets", "offset_list.txt"))
 
 QWORD_REGS = ["rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp",
               "r8","r9","r10","r11","r12","r13","r14","r15","rip"]
@@ -368,7 +381,7 @@ def main():
         base, hexs(kdata))
 
     # M write/read/restore test (payload's own memory)
-    test_addr = base + 0x2AC00
+    test_addr = base + SYM_M_TEST
     orig = s.read_mem(test_addr, 4)
     s.write_mem(test_addr, b"\xde\xad\xbe\xef")
     if s.read_mem(test_addr, 4) != b"\xde\xad\xbe\xef":

@@ -85,9 +85,19 @@ See docs/10 for the full post-mortem.
 Required environment: `PS5_HOST` (console address — never hardcoded in
 this repo), `R0GDB_ELF` (path to the exact `payload-elfldr-sdk.elf`
 build under test), `R0GDB_SEND_ELF` (path to `send_elf.py`),
-`R0GDB_OFFSET_LIST` (session client only: path to `offset_list.txt`).
-The working copies with the payload and private tree layout live in the
-lab; these are the sanitized, published baselines.
+`R0GDB_LOG` (protocol log path — defaults beside the script),
+`R0GDB_OFFSET_LIST` (defaults to this repo's own canonical
+`r0gdb/prosper0gdb/offsets/offset_list.txt`).
+
+**These `tools/` copies are the CANONICAL, editable clients** (since
+2026-10-12, owner-directed — the lab payload directory is the
+operational sandbox only: build tree, binaries, logs, and a private
+env file exporting the variables above). Run from here:
+
+```sh
+source <lab-sandbox>/env.sh   # exports PS5_HOST, R0GDB_ELF, ...
+python3 tools/stub_verify.py  # level 1 — the regression gate
+```
 
 ## Quick facts (unchanged)
 
