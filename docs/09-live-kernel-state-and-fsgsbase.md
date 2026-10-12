@@ -252,3 +252,59 @@ read as userland memory. If the NPT allows guest ECAM access, we
 walk the index/data protocol for all 22 TMR regions and dump the
 full hardware-protection table. If NPT-denied → SIGSEGV (caught,
 zero kernel risk) and the question moves to GPUVM/PM4.
+
+## 2026-10-12 — HCALL H0: VMMCALL from CPL3 = #UD; hcalls need kernel context
+
+### Result [verified-on-console]
+
+`hcall_h0.elf` (sha256 `a6f7168f…`): VMMCALL with rax=0x00
+(GET_MESSAGE_CONF) from CPL3 raised **SIGILL (#UD)** on the first
+call. The exception harness caught it cleanly; the console survived
+with zero side effects. The payload did NOT proceed to further calls
+by design.
+
+### Interpretation
+
+On AMD SVM, VMMCALL raises #UD when the VMMCALL intercept bit is
+clear in the VMCB; it causes a #VMEXIT to the HV when the bit is set.
+The #UD proves: **the VMMCALL intercept is NOT set in this core's
+VMCB at runtime on 12.02.**
+
+This means:
+- **Userland hcalls are impossible on 12.02** — the CPU faults before
+  any VMEXIT/hcall dispatch can occur
+- **K is resolved: the hcall path requires kernel context** (CPL1/0),
+  either because the kernel enables the intercept dynamically or
+  because it uses a different mechanism
+
+### Consistency with the resume-window model
+
+The most natural explanation: the HV enables the VMMCALL intercept
+only during boot and resume (when the kernel needs to make
+hypercalls: START_LOADING_SELF, STARTUP_MP, etc.), then clears it
+once the startup phase completes. This is consistent with:
+
+- The one-shot bitmap for STARTUP_MP (opens during resume, closes
+  after the kernel's own AP startup)
+- The owner-source design: the hcall is invoked from a #DB
+  breakpoint in the kernel's resume path (kernel context, where the
+  intercept is presumably set)
+- The ps5-linux-loader's stage3: it does VMMCALL only AFTER patching
+  the VMCB (their context is different — they cleared the intercept
+  to cause #UD, proving they expected it to be set)
+
+### Consequence for the route
+
+The hcall invocation cannot come from a userland payload. It must
+come from kernel context during the resume window:
+
+1. r0gdb's debug register machinery arms #DB at
+   acpi_sleep_machdep+0x18e (in the resume path)
+2. The #DB fires after resumectx but before acpi_wakeup_cpus
+3. The ROP chain (or gadget-step) invokes VMMCALL from the kernel
+   context where the intercept is (presumably) enabled
+4. HCALL 0x0f launches the AP on root 0
+
+The build chain: r0gdb ring-0 session → arm DR0 at the resume-path
+breakpoint → owner enters rest mode → owner resumes → #DB fires →
+ROP invokes the hcall → AP launches at the carrier page.
