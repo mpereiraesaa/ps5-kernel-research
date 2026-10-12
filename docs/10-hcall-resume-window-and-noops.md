@@ -346,15 +346,33 @@ exactly like a crash. Always verify the port is OUR process.
 
 ### Anti-zombie harness (v4 session client, 2026-10-12)
 
-The r0gdb session client now includes stage-0 port diffing:
-1. Pre-scan all open TCP ports on the PS5
-2. Send a fresh payload via elfldr
-3. Post-scan; connect ONLY to ports that are NEW (not in pre-scan)
+The r0gdb session client (v5) uses **computed** port discovery —
+never a post-scan diff. Two on-console facts drive the design:
 
-This eliminates zombie port confusion by construction. Usage:
+- The stub binds the **first free port scanning up from 1234**
+  (the bind loop in `gdb_stub/dbg.c`), so the port a fresh payload
+  *will* take is simply the first port >= 1234 that the pre-scan
+  finds closed. [verified-on-console 2026-10-12]
+- The stub takes exactly **one** `accept()` and reads one byte
+  expecting `'+'`. A port-scan probe that connects-and-closes makes
+  that read fail and the stub **silently exits**. The earlier v4
+  design (pre-scan, send, post-scan, connect to the diff) would have
+  killed its own stub with the post-scan. [verified-on-console
+  2026-10-12 — the post-scan probe was eliminated before it could
+  ever fire]
+
+Stage 0 (full auto) is therefore: parallel pre-scan of 1234-1400
+(closed ports drop SYNs, no RST — each miss costs the full connect
+timeout, so the old sequential 1234-22000 scan was measured at >120s
+with zero progress), compute the expected port, send the payload,
+connect straight to it. Side effect: pre-scan probes do connect to
+zombie ports; a zombie sitting in `accept()` exits on the probe.
+Acceptable — zombies are stale.
+
+Usage:
 
 ```sh
-python3 r0gdb_session.py              # auto: send + diff + connect
+python3 r0gdb_session.py              # auto: send + computed port
 python3 r0gdb_session.py --no-send    # manual: scan for live stub
 python3 r0gdb_session.py --port 1234  # manual: known port
 ```
@@ -367,11 +385,43 @@ chain. The dependency chain is now fully explicit.
 ### Graduated safety ladder for ring-0 work (2026-10-12)
 
 Before any kernel-text single-stepping, run the three verification
-levels in order (`payloads/prosper0gdb_elfldr/stub_verify*.py`):
+levels in order (`tools/stub_verify*.py` in this repo — the
+sanitized regression baselines; the working copies live in the lab):
 
-| Level | Script | Tests | Risk |
-|---|---|---|---|
-| 1 | stub_verify.py | Anti-zombie + connect + base + kdata + offsets + M write/read | Zero (userland only) |
-| 2 | stub_verify2.py | Level 1 + ring-0 entry + EFER read + restore + exit | Low |
-| 3 | stub_verify3.py | Level 2 + CR0 read + sanity check | Low |
-| 4 | acpi probe | Level 3 + single-step from ACPI text anchors | Moderate |
+| Level | Script | Tests | Risk | Status |
+|---|---|---|---|---|
+| 1 | stub_verify.py | Anti-zombie + connect + base + kdata + offsets + M write/read | Zero (userland only) | **PASSED on-console 2026-10-12** |
+| 2 | stub_verify2.py | Level 1 + ring-0 entry + EFER read + restore + exit | Low | Written; first run pending owner review |
+| 3 | stub_verify3.py | Level 2 + CR0 read + sanity check | Low | Written; first run pending |
+| 4 | acpi probe | Level 3 + single-step from ACPI text anchors | Moderate | Blocked on levels 2-3 |
+
+**Level 1 is the regression gate**: it must be green before any
+ring-0 session. It validates the whole stub protocol against the
+payload build with zero ring-0 risk, so payload or protocol drift
+fails fast instead of hanging the console on a bad assumption.
+
+#### Level 1 results (2026-10-12) [verified-on-console]
+
+All five sub-tests green, three zombie ports (1234-1236, left by the
+failed development runs) correctly skipped by computed discovery
+(stub bound 1237):
+
+- handshake `?` -> `T05`
+- registers: fault rip = **base+0x4ef** (see the START_RIP_OFF
+  correction below), rsp userland
+- base verification: load base = **0x200000000**
+- kdata_base = **0xffffffff85d10000** (per-boot KASLR — the check is
+  the canonical-prefix test, not the value)
+- M write/read/restore round-trip on payload memory
+
+#### Two bugs found and fixed by the level-1 run (2026-10-12)
+
+1. **`START_RIP_OFF = 0x4DF` was a D/E typo** — the real fault rip
+   offset is **0x4EF** [verified-on-console: reading at
+   `rip-0x4EF+0x228c0` returned exactly the ELF bytes at vaddr
+   0x228c0, base landing page-aligned at 0x200000000]. Fixed in the
+   session client and the ladder.
+2. **The v4 post-scan diff design would kill the stub** (see the
+   computed-port section above). Also the sequential 1234-22000
+   pre-scan was unusably slow (>120s, zero progress — closed ports
+   drop SYNs). Fixed: parallel 1234-1400 pre-scan + computed port.
