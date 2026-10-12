@@ -39,6 +39,19 @@ root. This supersedes every text-read route previously pursued.
 | [`06-sources.md`](docs/06-sources.md) | Reference | Source catalog |
 | [`evidence-logs/`](docs/evidence-logs/) | Archive | Raw protocol logs |
 
+## r0gdb/ — the stub toolchain (ours, in-repo)
+
+[`r0gdb/`](r0gdb/) is the canonical source of the GDB stub
+toolchain (`gdb_stub/` + `prosper0gdb/` incl. the per-FW offset
+tables), maintained in this repo since 2026-10-12 — previously it
+lived unversioned in the lab payload tree. Rule: **edit sources in
+the repo, sync to the lab sandbox, build there** (the sandbox holds
+the external build deps: freebsd-headers, yasm, the payload SDK).
+Builds produce `payload-elfldr-sdk.elf`; the sha is recorded per
+build and the `tools/` ladder re-validates each new build. See
+[`r0gdb/README.md`](r0gdb/README.md) for lineage, the build flow, and
+the pending signal-handling deadlock fix.
+
 ## Tools (regression gates)
 
 The graduated verification ladder for the r0gdb stub, published as
