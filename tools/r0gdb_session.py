@@ -83,33 +83,38 @@ SEND_ELF = os.environ.get(
     os.path.join(HERE, "../../send_elf.py"))
 OFFSET_LIST = os.environ.get(
     "R0GDB_OFFSET_LIST",
-    os.path.join(HERE, "kstuff-lite/prosper0gdb/offsets/offset_list.txt"))
-LOG_PATH = os.path.join(HERE, "session_protocol.log")
+    os.path.join(HERE, "..", "r0gdb", "prosper0gdb", "offsets", "offset_list.txt"))
+LOG_PATH = os.environ.get(
+    "R0GDB_LOG",
+    os.path.join(HERE, "session_protocol.log"))
 
 if not PS5:
     raise RuntimeError(
         "Set PS5_HOST (the console address) to run the stub tools; "
         "the sanitized repo never hardcodes it.")
 
-# payload symbols (link-relative, from nm of the built ELF)
-SYM_KDATA_BASE = 0x384D8
-SYM_OFFSETS = 0x495C0
-SYM_OG_TSS = 0x38580
-SYM_OG_IDT1 = 0x38530
-SYM_OG_IDT6 = 0x38540
-SYM_OG_IDT9 = 0x38550
-SYM_OG_IDT179 = 0x38560
-SYM_IDT6_PATCHED = 0x3852C
-SYM_R0GDB = 0x4098
-SYM_R0GDB_EXIT = 0x3FD1
+# Payload symbol offsets (link-relative vaddrs, from nm of the CURRENT build:
+# sha256 03de042fc8bbf5d31133872974bb4bbca0d079776aa5667a7413a61e6c6e89e9 —
+# the deadlock-fix build; the BSS moved ~+0x11000 vs the f92401 build).
+SYM_KDATA_BASE = 0x49508
+SYM_OFFSETS = 0x5A5E0
+SYM_OG_TSS = 0x495A0
+SYM_OG_IDT1 = 0x49560
+SYM_OG_IDT6 = 0x49570
+SYM_OG_IDT9 = 0x49580
+SYM_OG_IDT179 = 0x49590
+SYM_IDT6_PATCHED = 0x4955C
+SYM_R0GDB = 0x45A8
+SYM_R0GDB_EXIT = 0x44D1
 
-START_RIP_OFF = 0x4EF  # fault rip = base+0x4ef (verified on-console; 0x4DF was a typo)
-VERIFY_OFF = 0x228C0
-GADGET_RD_CR4 = 0x2AC80      # RETIRED for ring-0 use (SMEP: userland rip at
-                              # CPL0 = #PF panic; see the Oct 9 CR4 attempt)
-GADGET_WRITE_QWORD = 0x2AC90  # RETIRED for ring-0 use (same SMEP mode);
-                              # stage G now uses the kernel-text
-                              # store_rax_rdi gadget from the offset table
+START_RIP_OFF = 0x4EF  # fault rip = base+0x4ef (verified on-console; 0x4DF was a
+                       # typo; unchanged in the deadlock-fix build — the call
+                       # dbg_enter at 0x4e9 is still 6 bytes)
+VERIFY_OFF = 0x228C0   # any unique LOAD1 location; compared against THIS build's ELF
+GADGET_RD_CR4 = 0x2AC80      # RETIRED (SMEP: userland rip at CPL0 = #PF panic) AND
+                             # STALE in the current build (live LOAD1 code now)
+GADGET_WRITE_QWORD = 0x2AC90  # RETIRED (same SMEP mode) AND STALE; stage G uses the
+                              # kernel-text store_rax_rdi gadget from the offset table
 
 EFER_MSR = 0xC0000080
 

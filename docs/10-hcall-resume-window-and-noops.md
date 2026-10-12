@@ -555,6 +555,14 @@ above is implemented in the canonical source tree for review,
 replacing the unversioned mtime-archaeology workflow that made
 tonight's edits invisible.
 
+**The session clients are also canonical in-repo (2026-10-12,
+owner-directed)**: `tools/stub_verify*.py` and
+`tools/r0gdb_session.py` are the only editable copies; the lab
+payload directory keeps no duplicates (it remains the operational
+sandbox: build tree, binaries, protocol logs, and a private `env.sh`
+exporting `PS5_HOST` / `R0GDB_ELF` / `R0GDB_SEND_ELF` /
+`R0GDB_LOG`). Clients run from the repo.
+
 Unrelated transient during the same window: four stub ports
 (1234–1237) opened and died on their own around the failed level-1
 attempt, with no sends from any agent — attributed to console-side
