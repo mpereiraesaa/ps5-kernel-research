@@ -363,3 +363,15 @@ The CR4 read stage is now skipped (SMEP makes userland gadgets
 fatal). CR4 requires a kernel-text `mov rax,cr4` gadget — which
 requires a Phase-B text read, which requires the resume-window
 chain. The dependency chain is now fully explicit.
+
+### Graduated safety ladder for ring-0 work (2026-10-12)
+
+Before any kernel-text single-stepping, run the three verification
+levels in order (`payloads/prosper0gdb_elfldr/stub_verify*.py`):
+
+| Level | Script | Tests | Risk |
+|---|---|---|---|
+| 1 | stub_verify.py | Anti-zombie + connect + base + kdata + offsets + M write/read | Zero (userland only) |
+| 2 | stub_verify2.py | Level 1 + ring-0 entry + EFER read + restore + exit | Low |
+| 3 | stub_verify3.py | Level 2 + CR0 read + sanity check | Low |
+| 4 | acpi probe | Level 3 + single-step from ACPI text anchors | Moderate |
