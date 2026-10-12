@@ -1048,8 +1048,37 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 {
     /* diagnostic: are we reaching the handler? */
     int tmp_errno = errno;
-    while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
-        cpu_relax();
+    if(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
+    {
+        /* Another consumer (r0gdb_loop / gdb_remote_syscall via
+         * gdbstub_session_lock) holds the session and blocks on packet
+         * I/O for its whole duration. NEVER spin here: the holder cannot
+         * proceed until this handler returns, so a spin is an
+         * unconditional freeze (the 2026-10-12 deadlock). Non-fault
+         * signals are dropped (the holder's session continues). Fault
+         * signals cannot safely return (the fault would re-trigger
+         * immediately); park this thread sleeping so the console
+         * survives. The flag stays set - only the true holder releases
+         * it. Exiting is NOT an option: it would unmap the payload while
+         * a patched IDT target may still point into it. */
+        if(signum == SIGSEGV || signum == SIGILL || signum == SIGBUS
+           || signum == SIGFPE)
+        {
+            /* Raw SYS_nanosleep (240) loop; no libc dependency. */
+            long ts[2];
+            for(;;)
+            {
+                ts[0] = 3600;
+                ts[1] = 0;
+                long ret;
+                __asm__ volatile("syscall"
+                                 : "=a"(ret)
+                                 : "a"(240L), "D"(ts), "S"(0L)
+                                 : "rcx", "r11", "memory");
+            }
+        }
+        return;
+    }
     ucontext_t* uc = (ucontext_t*)o_uc;
 #ifdef __PS4__
     mcontext_t* mc = (mcontext_t*)(((char*)&uc->uc_mcontext)+48); // wtf??
