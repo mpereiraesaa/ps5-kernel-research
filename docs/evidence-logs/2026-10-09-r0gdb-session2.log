@@ -83,4 +83,4 @@
 [   62.381] !!! Holding the socket open; target execution state is unverified.
 [   62.381] !!! To end this session: POWER-CYCLE THE CONSOLE.
 [   62.381] !!! Killing this script closes the socket and may PANIC the console.
-[   62.381] !!! Protocol log: /home/manuel/personal/ing_pereira/engineering/payloads/prosper0gdb_elfldr/session_protocol.log
+[   62.381] !!! Protocol log: <lab>/payloads/prosper0gdb_elfldr/session_protocol.log

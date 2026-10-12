@@ -119,7 +119,7 @@ console untouched.
   same day]: every probe (BSD and sceNet variants) filled `sin_addr`
   with `(a<<24)|(b<<16)|(c<<8)|d` — which packs the octets into the u32
   **big-endian**, reversing the address in the little-endian `s_addr`
-  field (192.168.0.187 was dialed as 187.168.0.192). The field-proven
+  field (x.x.x.187 was dialed as 187.168.0.192). The field-proven
   `hello_log` payload (byte-wise fill, `ps5log__fill_ipv4`) connected
   fine all along; a bisect payload (`payloads/port_probe/hello_probe.c`)
   that ran a verbatim copy of `ps5log__open_channel` next to the

@@ -1,6 +1,6 @@
 # Agent guidance — ps5-kernel-research
 
-Private research-notes repository for the PS5 FW 12.02 kernel-privilege
+Research-notes repository for the PS5 FW 12.02 kernel-privilege
 stack. Contributions from other agents are welcome; follow the rules
 below.
 
