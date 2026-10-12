@@ -343,3 +343,23 @@ connected to port 21000 → send '+' → handler fires → GDB responds:
 **NOOP addition**: connecting to zombie ports on 1234 while the live
 stub is on a higher port produces ConnectionResetError that looks
 exactly like a crash. Always verify the port is OUR process.
+
+### Anti-zombie harness (v4 session client, 2026-10-12)
+
+The r0gdb session client now includes stage-0 port diffing:
+1. Pre-scan all open TCP ports on the PS5
+2. Send a fresh payload via elfldr
+3. Post-scan; connect ONLY to ports that are NEW (not in pre-scan)
+
+This eliminates zombie port confusion by construction. Usage:
+
+```sh
+python3 r0gdb_session.py              # auto: send + diff + connect
+python3 r0gdb_session.py --no-send    # manual: scan for live stub
+python3 r0gdb_session.py --port 1234  # manual: known port
+```
+
+The CR4 read stage is now skipped (SMEP makes userland gadgets
+fatal). CR4 requires a kernel-text `mov rax,cr4` gadget — which
+requires a Phase-B text read, which requires the resume-window
+chain. The dependency chain is now fully explicit.
