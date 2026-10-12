@@ -60,6 +60,14 @@ Findings only. No Sony proprietary code, no kernel dumps, no Ghidra
 databases — links and knowledge, never payload material (see
 `AGENTS.md`).
 
+## Evidence labels
+
+- `[verified-in-tree]` — directly supported by this repository; cite the
+  exact file and line.
+- `[public-consensus]` — documented in a cited public source.
+- `[inference]` — derived from evidence; state the reasoning and what
+  observation would falsify it.
+
 Started 2026-10-08 from a consolidation session over the local lab
 (`homebrew_ps5`, `ps5debug-NG`, `prospero-win`, `payloads/`) and public
 scene sources. Pivoted to the resume-window route 2026-10-12.
