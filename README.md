@@ -62,6 +62,13 @@ supplied. The ring-0 restore path uses ONLY the kernel-text
 `store_rax_rdi` gadget — the old userland write-slot stepped rip at
 payload memory at CPL0, the live-confirmed SMEP #PF panic mode.
 
+Live status (2026-10-12 evening): the 12.02 pin and the staged-frame
+ring-0 entry validated green on-console; the run then froze in the
+stub's signal-handler spin deadlock during a `G` write (root-caused;
+stub fix pending) and the console died when a `timeout` wrapper killed
+the parked session — never wrap gated ring-0 scripts in a timeout.
+See docs/10 for the full post-mortem.
+
 Required environment: `PS5_HOST` (console address — never hardcoded in
 this repo), `R0GDB_ELF` (path to the exact `payload-elfldr-sdk.elf`
 build under test), `R0GDB_SEND_ELF` (path to `send_elf.py`),

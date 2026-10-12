@@ -270,7 +270,10 @@ class Session:
 
     def read_mem(self, addr: int, size: int) -> bytes:
         r = self.cmd(b"m%x,%x" % (addr, size))
-        if len(r) != size * 2 or r[:1] == b"E":
+        # Never test the first char for 'E' (valid data can start 0xE0-0xEF;
+        # the stub never sends E-replies for m — a failed read is short).
+        # Found live by level 2 (2026-10-12).
+        if len(r) != size * 2:
             raise Parked("m reply: %r" % r[:32])
         return bytes.fromhex(r.decode())
 

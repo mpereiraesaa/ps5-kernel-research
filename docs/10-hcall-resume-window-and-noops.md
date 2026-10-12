@@ -479,3 +479,59 @@ Corrected to the 12.02 pin before any live run:
 All of levels 2/3 and the session client v5.1 remain **pending live
 validation** — the next console window runs level 2 (gated), then
 level 3, before any real session work.
+
+#### Level 2 first live run (2026-10-12, evening) — partial pass, then a console death
+
+What validated green before the incident [verified-on-console]:
+
+- Level 1 green twice more (base 0x200000000, kdata
+  0xffffffff85d10000 — the console was NOT restarted; the same boot
+  as the afternoon runs)
+- The **corrected 12.02 pin passed live** (rdmsr_start −0xa9e10a,
+  store_rax_rdi −0xaa3eee, tss_array +0x2e8afe0, idt +0x2e88300) —
+  definitive on-console disproof of the original 13.60 pin, which
+  would have refused right there
+- Staged return frame written + read back (the live readback also
+  caught and fixed a client bug: `read_mem` misparsed any reply
+  starting `E…` as a GDB error — valid data like the little-endian
+  `0x00000002000004EF` → `EF04000002000000` — the stub never sends
+  E-replies for `m`; fixed to length-only validation)
+- **Ring-0 entry via the staged frame: VALIDATED LIVE** — `c` → OK →
+  T05 synthetic stop with kernel rsp `0xffffff801ff4c838`. The
+  hardened entry design works on-console.
+
+Then the freeze, root-caused by reading `dbg.c`/`r0gdb.c`
+[verified-on-dump of the payload sources]:
+
+1. `r0gdb_loop` holds `in_signal_handler` across the entire
+   blocking packet session
+2. every incoming byte is its own blocking `read()` — a `G` write is
+   **337 consecutive single-char reads**, the largest interrupt
+   window in the protocol
+3. the still-installed process-wide signal handlers spin
+   unconditionally on that flag (dbg.c:966)
+4. a signal delivered during the `G` window → the handler spins
+   forever on the flag held by the loop that cannot proceed until
+   the handler returns → the thread froze inside the handler →
+   silence → park
+
+This also retroactively explains the Oct 9 "stub death" (step + OK,
+then silence — the same freeze after a shorter window). Implication:
+the level-2 restore phase (~56 `G` writes ≈ 19k single-char reads)
+is one revolver spin per write — **level 2 cannot run reliably until
+the stub is fixed** (handler must not spin when the flag is already
+held / signals masked on the r0gdb thread; `SA_RESTART` on the
+sigactions; ideally whole-packet buffering).
+
+Operational lesson (also live): the parked script must hold its
+socket open indefinitely — running gated ring-0 scripts under
+`timeout N` kills the park and closes the socket over the
+un-restored IDT/TSS state. That is what killed the console tonight
+(ARP failed; owner power cycle required). Never wrap these scripts
+in a timeout.
+
+Unrelated transient during the same window: four stub ports
+(1234–1237) opened and died on their own around the failed level-1
+attempt, with no sends from any agent — attributed to console-side
+supervision churn while the afternoon zombie processes expired; not
+reproducible and not blocking.
