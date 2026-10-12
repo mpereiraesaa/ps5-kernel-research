@@ -425,3 +425,57 @@ failed development runs) correctly skipped by computed discovery
    computed-port section above). Also the sequential 1234-22000
    pre-scan was unusably slow (>120s, zero progress — closed ports
    drop SYNs). Fixed: parallel 1234-1400 pre-scan + computed port.
+
+#### The SMEP-fatal restore path, found and fixed (2026-10-12)
+
+A second hardening round (the parallel agent, 21:03) caught a **fatal
+flaw shared by the original level 2, level 3, and the session
+client's stage G**: the restore path wrote `mov [rcx],rax`
+(`488901`) into the payload's userland write slot
+(`base+GADGET_WRITE_QWORD`) and single-stepped it **at CPL0** —
+exactly the SMEP #PF panic mode live-confirmed on Oct 9 (the `0f20e0`
+CR4 attempt: userland rip at CPL0 = panic). The restore path had
+never been exercised on-console (the Oct 9 session parked before
+reaching it), so the flaw was invisible until reviewed.
+
+The fix, now in levels 2/3 and the session client (v5.1):
+- restore ONLY through the kernel-text `store_rax_rdi` gadget from
+  the firmware offset table (SMEP-safe; kernel text at CPL0 is fine)
+- per-store `m` readback of every kernel write
+- TSS restore writes every IST word **including zeros** (the old
+  `if val:` skip would leave patched zeros live where the original
+  value was zero)
+- saved AND live IDT gates validated before any write (selector
+  0x20, expected IST/attr per vector: 1:(4,0x8E), 6:(4,0x8E),
+  9:(3,0xEE), 179:(6,0xEE), canonical kernel handlers)
+- staged ABI-aligned return frame at entry; the exit must return to
+  the exact original RIP/RSP, and the frame word is restored even on
+  the park path
+- operator gates (`--ring0`, `--verified-store-gadget`,
+  `--recovery-plan-confirmed`) — levels 2/3 refuse BEFORE any payload
+  is sent
+
+#### The pinned-delta bug, found and fixed (2026-10-12)
+
+The hardening round pinned the live offset deltas to the **13.60**
+header values. Definitively wrong for this console: the payload
+selects its table from the console's **live sysctl FW version**
+(`offsets.c` `set_offsets()` dispatches `case 0x1202:
+set_offsets_1202()`), and this console is 12.02 — so the live deltas
+are the **12_02.h** values [cross-validated on-console 2026-10-09:
+`rdmsr_start`/`mov_rax_cr0` from this table produced the sane
+EFER (0x11d01)/CR0 (0x8005003b) reads]. The 13.60 pin would have made
+level 2 refuse on a healthy console (safe direction, but blocking).
+Corrected to the 12.02 pin before any live run:
+
+| Offset | Pinned delta (kdata-relative, offsets/12_02.h) |
+|---|---|
+| rdmsr_start | −0xA9E10A |
+| mov_rax_cr0 | −0xAA3C61 |
+| store_rax_rdi | −0xAA3EEE |
+| tss_array | +0x2E8AFE0 |
+| idt | +0x2E88300 |
+
+All of levels 2/3 and the session client v5.1 remain **pending live
+validation** — the next console window runs level 2 (gated), then
+level 3, before any real session work.

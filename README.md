@@ -50,14 +50,23 @@ hanging the console on a bad assumption.
 
 | Tool | Status | Purpose |
 |---|---|---|
-| [`tools/stub_verify.py`](tools/stub_verify.py) | **Validated green on-console (2026-10-12)** | Level 1: userland-only full protocol check |
-| [`tools/stub_verify2.py`](tools/stub_verify2.py) | Written; first console run pending | Level 2: + ring-0 entry + EFER + restore + exit |
-| [`tools/stub_verify3.py`](tools/stub_verify3.py) | Written; first console run pending | Level 3: + CR0 read + sanity check |
+| [`tools/stub_verify.py`](tools/stub_verify.py) | **Validated green on-console (2026-10-12)** | Level 1: userland-only full protocol check (the regression gate) |
+| [`tools/stub_verify2.py`](tools/stub_verify2.py) | Hardened; first live ring-0 run pending | Level 2: gated ring-0 EFER read + validated IDT/TSS restore (kernel-text `store_rax_rdi` only, pinned 12.02 deltas) |
+| [`tools/stub_verify3.py`](tools/stub_verify3.py) | Ported; first live run pending | Level 3: level-2 pattern + CR0 read + sanity check |
+| [`tools/r0gdb_session.py`](tools/r0gdb_session.py) | v5.1, ported; pending live validation | The production ring-0 session client (computed-port discovery, staged return frame, SMEP-safe restore) |
+
+Levels 2/3 and the session client refuse ring-0 work until the live
+offset deltas match the pinned **12.02** table and the operator gates
+(`--ring0`, `--verified-store-gadget`, `--recovery-plan-confirmed`) are
+supplied. The ring-0 restore path uses ONLY the kernel-text
+`store_rax_rdi` gadget — the old userland write-slot stepped rip at
+payload memory at CPL0, the live-confirmed SMEP #PF panic mode.
 
 Required environment: `PS5_HOST` (console address — never hardcoded in
 this repo), `R0GDB_ELF` (path to the exact `payload-elfldr-sdk.elf`
-build under test), `R0GDB_SEND_ELF` (path to `send_elf.py`). The
-working copies with the payload and private tree layout live in the
+build under test), `R0GDB_SEND_ELF` (path to `send_elf.py`),
+`R0GDB_OFFSET_LIST` (session client only: path to `offset_list.txt`).
+The working copies with the payload and private tree layout live in the
 lab; these are the sanitized, published baselines.
 
 ## Quick facts (unchanged)
