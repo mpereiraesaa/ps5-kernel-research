@@ -530,6 +530,13 @@ un-restored IDT/TSS state. That is what killed the console tonight
 (ARP failed; owner power cycle required). Never wrap these scripts
 in a timeout.
 
+**Stub source maintenance moved in-repo (2026-10-12)**: the
+`gdb_stub/` + `prosper0gdb/` sources are now canonically maintained
+in this repo under [`r0gdb/`](../r0gdb/) (the lab payload tree is the
+build sandbox only — edit here, sync, build there). The deadlock fix
+above will land there as PRs with review, replacing the unversioned
+mtime-archaeology workflow that made tonight's edits invisible.
+
 Unrelated transient during the same window: four stub ports
 (1234–1237) opened and died on their own around the failed level-1
 attempt, with no sends from any agent — attributed to console-side
