@@ -21,8 +21,13 @@ RIPs, one instruction per round, full register capture):
   trap return (#PF, vector 14, not gated by the stub → kernel panic),
   while the identical mechanism against kernel text executed
   perfectly in the same session. Instruction fetch at CPL0 from a
-  user page = SMEP violation ⇒ SMEP set. (Consistent with the dump's
-  `0x45da0` candidate: SMEP|SMAP|OSXSAVE.)
+  user page = SMEP violation ⇒ SMEP set (SMEP is CR4 bit 20 per
+  SDM/ps5-wiki; the earlier dump-scan labeled SMEP/SMAP as bits 7/8
+  — those are PGE/PSE-adjacent — so the pre-live `0x45da0`
+  "SMEP|SMAP|OSXSAVE" interpretation is retracted: that value decodes
+  as PAE|PGE|OSXMMEXCPT|UMIP|OSXSAVE plus reserved bits, and was
+  boot-specific garbage anyway, per the later live read of `0x1dec`
+  there. The behavioral SMEP proof stands regardless.)
 - **CR4.FSGSBASE = 0** — userland `rdfsbase`/`rdgsbase` raise #UD
   while CPUID.7.0:EBX[0]=1 (Zen 2 hardware supports it)
 - Remaining CR4 bits: unknown until the kernel-text gadget read

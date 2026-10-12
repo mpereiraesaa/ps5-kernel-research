@@ -536,3 +536,39 @@ console phase** — a successful QA text read plus a byte-scan delivers
 both CR4 gadgets (read + write), after which the ring-0 machinery
 becomes the CR4 engine. The GPUVM route (gpuvm_read v3) remains the
 alternative. Full context: docs/09-live-kernel-state-and-fsgsbase.md.
+
+## 2026-10-12 — New route: HCALL 0x0f STARTUP_MP resume-window AP launch
+
+[public-consensus] ps5-wiki hcall table: `0x0f STARTUP_MP` and `0x10
+DISABLE_STARTUP_MP` (03.00.00.33+) — the disable call's existence implies
+an availability window. [owner-inference, encoded in
+ps5-sim-lab/hvemu/resume_window.py (PR #2)]: resume reinitializes HV
+state (startup_mp bitmap cleared, new vcore_t with cur_npt=0 — root 0 =
+host view, root 1 = GameOS); the BSP transitions per-vcore on its first
+GameOS text fetch (modeled 0x0150d6); parked APs stay on root 0; if
+HCALL 0x0f is invocable between resumectx and acpi_wakeup_cpus with
+guest-supplied RIP+CR3, the launched AP might run on root 0 = the host
+view: kernel text readable, NPT protections absent — strictly better
+than every Phase-B text-read route (one shot also enables CR4 writes).
+
+Five falsification knobs (window-reopen W, wake-close C, CPL check K,
+arg validation V, AP root R). The falsification ladder, cheapest first:
+
+- **E1 (no rest cycle)**: userland `VMMCALL` with a harmless hcall
+  (0x00 GET_MESSAGE_CONF) — discriminates hcall reachability from CPL3
+  (K) and the HV's error behavior.
+- **E2 (no rest cycle)**: hcall 0x0f at runtime with safe args
+  (rip = RWX marker spin page, cr3 = our own process CR3 via
+  proc→vmspace→pmap→pm_cr3) — the marker counter discriminates C
+  (window closed at runtime?) with zero harmful AP behavior.
+- **E3 (rest cycle, owner-operated)**: if C holds (window closed at
+  runtime), the invocation must fire inside the window from kernel
+  context — candidate invocation points: extended IDT-gate patching
+  (the proven r0gdb IDT/data-write class) on a vector that fires during
+  resume, or a resume-path data hook. Design gated on E1/E2 results.
+
+Also 2026-10-12: CR4 bit-position correction — the earlier dump scan
+labeled SMEP/SMAP as bits 7/8 (those are PGE/PSE); real SMEP/SMAP are
+bits 20/21. The live behavioral SMEP proof stands; the `0x45da0`
+"SMEP|SMAP" dump interpretation is retracted (boot-specific garbage
+per the live 0x1dec read anyway). r0gdb_session.py's CR4 decode fixed.
