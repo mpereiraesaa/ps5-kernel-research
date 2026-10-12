@@ -143,32 +143,118 @@ verified — confirming the full write primitive.
 | FreeBSD 11's kernel-side FSGSBASE machinery: initializecpu() gates CR4.FSGSBASE on cpu_stdext_feature & CPUID_STDEXT_FSGSBASE; set_pcb_flags() gates the pcb-save path on the same flag; cpu_switch.S saves pcb_fsbase/gsbase via rdfsbase when the flag is set. If Sony's kernel retains this, setting the flag + CR4 bit activates the full compatibility machinery via a single kernel data write | public-consensus (FreeBSD 11 source) |
 | The elfldr (ps5-payload-dev) spawn host is SceSpZeroConf (NPXS40112); Syscore serializes spawns during game launches; the klog msgbuf is small and churns fast | verified-on-console |
 
-## The ACPI text region on 12.02 [verified-on-dump]
+## Code pointers in the ACPI text range on 12.02 [inference]
 
 From the 134 MiB kernel-data dump, only 3 text pointers exist in the
 ACPI region [ktext+0x380000, ktext+0x400000):
 
 | kdata location | ktext target | Context |
 |---|---|---|
-| kdata+0x01991b8 | ktext+0x396390 | kobj device method (position ~4 in a driver method table) |
-| kdata+0x0199bd8 | ktext+0x3b3b60 | kobj device method (position ~6 in a driver method table) |
+| kdata+0x01991b8 | ktext+0x396390 | `pcib` kobj method, entry 31 of 31 |
+| kdata+0x0199bd8 | ktext+0x3b3b60 | `pci` kobj method, entry 51 of 59 |
 | kdata+0x2060cd8 | ktext+0x3f9b9f | debug/trace (not useful) |
+
+[inference] The first two targets occupy function fields in alternating
+descriptor/function records. Kobj class records point to the containing
+arrays and to name strings `pcib` and `pci`; each array ends at a
+null/null entry. The `pcib` array is kdata+[0x198fd0,0x1991d0), and its
+class record is at kdata+0xdc6308; the `pci` array is
+kdata+[0x1998b0,0x199c70), and its class record is at kdata+0xdc7328.
+These half-open array ranges include the null/null terminator. This
+corrects the earlier rough position estimates and identifies these
+targets as PCI bus-class methods, not ACPI sleep/wakeup callbacks. The
+attribution would be falsified if the dump contents are invalid or if
+the target firmware uses a different kobj record layout.
+
+The structural match uses FreeBSD's `struct kobj_method` descriptor / function
+pair and `struct kobj_class` name / methods fields ([FreeBSD 11.0
+`sys/sys/kobj.h`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/sys/kobj.h#L43-L64)).
 
 ACPI table data:
 - **FADT** at kdata+0x7604000 (signature "FACP", length 268)
 - **FACS at phys 0x9bf60** (from FADT X_FIRMWARE_CTRL)
-- The FACS **wake vector** (at +0x0C or +0x18) would give the exact
-  kernel resume entry point — one alias-engine read of phys 0x9b000
-  page + offset 0xf60
-- ACPI strings found in kernel data: "acpi_wakeup: failed to resume
-  AP #%d", "acpi_wakeup_event", "acpi_sleep_event", "power_resume",
-  "power_suspend"
-- No aligned kernel data pointers to the event strings exist (the
-  eventhandler lists are not in the dump window)
+- ACPI/power-related strings found in kernel data include
+  "acpi_wakeup: failed to resume AP #%d", "acpi_wakeup_event",
+  "acpi_sleep_event", and the `power_resume`/`power_suspend` names
+  (including `ws_mgmt_*` strings noted below).
+- The FACS read at phys 0x9bf60 was all zero; it provides no wake vector
+  for locating the resume entry point.
 
-The ps5-linux-loader's HOOK_ACPI_WAKEUP_MACHDEP across firmwares:
-3.00→0x390E73, 4.00→0x391203, 5.00→0x3A7613, 6.00→0x3A75E3. Our 12.02
-anchors at ktext+0x396390 and 0x3b3b60 bracket this region.
+### Power/ACPI name anchors and source call path
+
+[inference] The offsets below are byte offsets into the 12.02
+kernel-data dump, not kernel-text function offsets. The listed bytes
+identify the strings or substrings shown in the table; this
+classification would be falsified if the dump identity or byte contents
+do not match. A data-only dump cannot supply code cross-references to
+these names, and the absence of pointers to the strings in `.data` says
+nothing about references from `.text`.
+
+| kdata offset | String | Public-source role |
+|---|---|---|
+| `+0x49fca2` | `acpi_system_eventhandler_sleep` | function-name trace string |
+| `+0x3b353b` | `acpi_system_eventhandler_wakeup` | function-name trace string |
+| `+0x4821b9` | `acpi_sleep_event` | event-handler registration name |
+| `+0x444015` | `acpi_wakeup_event` | event-handler registration name |
+| `+0x3735b7` | `acpi_timer_suspend_handler` | timer callback name |
+| `+0x3a525f` | `acpi_timer_resume_handler` | timer callback name |
+| `+0x3aa120` | `power_suspend_early` | power event name |
+| `+0x399a65` | substring in `ws_mgmt_power_suspend` | not a standalone event name |
+| `+0x48c6aa` | `power_suspend` | standalone power event name |
+| `+0x37b4ee` | substring in `ws_mgmt_power_resume` | not a standalone event name |
+| `+0x4395ef` | `power_resume` | standalone power event name |
+
+[public-consensus] FreeBSD 11's `acpi_EnterSleepState` invokes
+`power_suspend_early`, stops processes, invokes `power_suspend`, then
+calls `acpi_sleep_machdep` with interrupts disabled. On return it calls
+`acpi_wakeup_machdep` in the disabled-interrupt path and again after
+restoring interrupts; after process resume it invokes `power_resume`.
+The machine-dependent wake path calls `acpi_wakeup_cpus` before
+`restart_cpus`. The ACPI sleep event handler requests the sleep state;
+the base wake event handler is a no-op. The ACPI timer registers a
+`power_suspend` callback and may register a `power_resume` callback.
+See FreeBSD 11 [`acpi.c`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/dev/acpica/acpi.c),
+[`acpi_wakeup.c`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/x86/acpica/acpi_wakeup.c),
+and [`acpi_timer.c`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/dev/acpica/acpi_timer.c).
+
+```text
+power_suspend_early → stop_all_proc → power_suspend
+  → acpi_sleep_machdep
+  → acpi_wakeup_machdep (interrupts disabled; acpi_wakeup_cpus)
+  → acpi_wakeup_machdep (interrupts enabled)
+  → resume_all_proc → power_resume
+```
+
+[inference] Under this source model, `power_resume` is a late resume
+marker: it occurs after `acpi_wakeup_cpus` and `resume_all_proc`. The
+`power_suspend` callbacks are pre-sleep. Neither event name identifies
+the early machine-dependent wake path by itself. Also, the named ACPI
+`acpi_sleep_event` callback is a request route; the source does not show
+that every platform's Rest Mode path enters through that event.
+
+[inference] This gives a source-based ordering hypothesis for the PS5
+names, not their 12.02 function addresses or proof that Sony retained
+the same control flow. A 12.02 text cross-reference or trace showing a
+different caller/order would falsify the model.
+
+[public-consensus] Correction to the earlier firmware attribution:
+`HOOK_ACPI_WAKEUP_MACHDEP` is used by the public loader's 3.00–4.51
+`hv_defeat_0304` path. That code patches a call at `ktext + hook_offset`
+to its kernel code cave. The 5.00+ offset entries mark this hook as
+unused, and the 5.00–6.02 route uses a different mechanism. Thus the
+previous claim that the `0x3A75E3`–`0x3A7613` values were 5.00–6.50
+hook offsets was incorrect: those values belong to 4.50/4.51 and
+4.00/4.02/4.03 entries in the public offset table. See the
+[`hv_defeat_0304` call site](https://github.com/ps5-linux/ps5-linux-loader/blob/main/source/hv_defeat_0304.c#L10-L33)
+and [firmware offset table](https://github.com/ps5-linux/ps5-linux-loader/blob/main/source/offsets.c#L101-L219),
+which marks the field unused in the 5.00 profile ([`off_0500`](https://github.com/ps5-linux/ps5-linux-loader/blob/main/source/offsets.c#L2119-L2165)).
+
+[inference] This older public hook supports the semantic placement of
+`acpi_wakeup_machdep` in a resume path, but it does not locate the
+function or a patch point on 12.02. The 12.02 strings above do not locate
+code, and the separate pointers at ktext+0x396390 and ktext+0x3b3b60
+were resolved as `pcib` and `pci` kobj methods. A same-firmware text
+cross-reference would be needed to refine the 12.02 address.
 
 ## The public HV-defeat lineage (for context)
 
@@ -183,18 +269,16 @@ Three generations, all superseded on 5.00+ by our resume-window route:
 Our route (12.02): #DB at acpi_sleep_machdep+0x18e → ROP chain →
 HCALL 0x0f → AP on root 0 → VMCB write.
 
-## Immediate next steps
+## Next research steps
 
-1. **FACS wake vector read**: alias-engine read of phys 0x9bf60
-   (one page) → the exact `acpi_wakeup` address on 12.02
-2. **acpi_sleep_machdep derivation**: from the wake vector, use
-   FreeBSD 11 source layout to compute the function and the +0x18e
-   breakpoint offset
-3. **Carrier page staging**: alias-engine write to phys 0x3ffff000
-4. **The resume breakpoint chain**: r0gdb session arms DR0, owner
-   cycles rest mode, breakpoint fires, ROP invokes the hcall
-5. **The AP payload**: position-independent, walks pcpus, writes
-   markers (or patches NESTED_CR3) on all 16 VMCBs
+1. Treat the FreeBSD 11 call order as a comparison model only; identify
+   any PS5-specific divergence from same-firmware evidence.
+2. To assign 12.02 text locations, obtain a reproducible same-firmware
+   code cross-reference for the existing `.data` name anchors. The
+   present data dump and cross-firmware offsets do not resolve one.
+3. Keep any live validation separate from this static analysis; the
+   repository's console-experiment policy requires explicit owner
+   approval and a recovery plan before a risky probe.
 
 ## Repository map
 
@@ -221,8 +305,41 @@ vector at this address. The PS5 resume goes through the hypervisor,
 not through a BIOS ACPI wake. This approach is dead.
 
 Alternatives for locating `acpi_sleep_machdep`:
-1. The kobj method table positions (ktext+0x396390 and ktext+0x3b3b60
-   are ACPI device methods — identify which is suspend/resume by
-   position in the method table)
-2. FreeBSD 11 source layout relative to known text anchors
-3. The "acpi_wakeup: failed to resume AP" string's printf xref
+1. The kobj table lead is resolved: ktext+0x396390 belongs to the
+   `pcib` class and ktext+0x3b3b60 to the `pci` class, so these are not
+   the ACPI sleep/resume callbacks. Continue from the power/ACPI call
+   path anchors or other same-firmware evidence.
+2. Cross-reference the `acpi_wakeup: failed to resume AP` string from
+   same-firmware text when an attributable disassembly is available.
+3. Compare the public loader's function identification against its
+   documented firmware versions; do not transfer its text offsets to
+   12.02 without an independent match.
+
+### r0gdb stub "failures" — root cause: zombie port confusion (2026-10-12)
+
+**Every observed stub death was connecting to a zombie process on a
+previously-used port, not to the live stub.** Proven by stub_repro v7:
+the COMPLETE r0gdb code (real dbg.c, real gdbstub_main_loop, real GDB
+protocol) works perfectly when connected to the correct port:
+
+```
+connected to port 21000 → send '+' → handler fires → GDB responds:
++$T05#B9 (SIGTRAP stop reply)
+```
+
+**The debugging journey** (all ruled out or fixed):
+1. ~~+48 mcontext offset~~ — correct for PS5 (verified by sigframe_dump)
+2. ~~sysarch GS base = 0~~ — fixed (NO_SYSARCH_GSBASE + if(mc->mc_gsbase))
+3. ~~SIGPIPE from stdout~~ — fixed (blocked in main)
+4. ~~SIGTRAP sigaction~~ — works fine (proven by stub_repro v5)
+5. ~~gdbstub_main_loop crash~~ — works (proven by stub_repro v7)
+6. **Zombie port confusion** — the ACTUAL root cause
+
+**Fixes retained** (all correct, even if not the root cause):
+- SIGPIPE blocked in main (adapter)
+- NO_SYSARCH_GSBASE compiled out for userland builds
+- if(mc->mc_gsbase) defensive guard for ring-0 builds (other agent)
+
+**NOOP addition**: connecting to zombie ports on 1234 while the live
+stub is on a higher port produces ConnectionResetError that looks
+exactly like a crash. Always verify the port is OUR process.

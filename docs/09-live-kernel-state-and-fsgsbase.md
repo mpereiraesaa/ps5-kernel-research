@@ -311,16 +311,30 @@ ROP invokes the hcall → AP launches at the carrier page.
 
 ## 2026-10-12 — ACPI text region mapping from the dump
 
-### Text pointers in the ACPI range [verified-on-dump]
+### Code pointers in the ACPI text range [inference]
 
 Only 3 text pointers in [ktext+0x380000, ktext+0x400000) across the
 entire 134 MiB dump (scanned at every 4-byte alignment):
 
 | kdata location | ktext target | Context |
 |---|---|---|
-| kdata+0x01991b8 | ktext+0x396390 | kobj device method (pos ~4) |
-| kdata+0x0199bd8 | ktext+0x3b3b60 | kobj device method (pos ~6) |
+| kdata+0x01991b8 | ktext+0x396390 | `pcib` kobj method, entry 31 of 31 |
+| kdata+0x0199bd8 | ktext+0x3b3b60 | `pci` kobj method, entry 51 of 59 |
 | kdata+0x2060cd8 | ktext+0x3f9b9f | debug/trace context |
+
+[inference] The first two targets are function fields in alternating
+descriptor/function records. Their containing arrays are referenced by
+kobj class records whose name strings are `pcib` and `pci`; the arrays
+end at null/null entries. The `pcib` array starts at kdata+0x198fd0 and
+its class record is at kdata+0xdc6308; the `pci` array starts at
+kdata+0x1998b0 and its class record is at kdata+0xdc7328. The method
+array boundaries are respectively kdata+[0x198fd0,0x1991d0) and
+kdata+[0x1998b0,0x199c70), including each null/null terminator. This
+corrects the earlier rough position estimates and identifies these
+targets as PCI bus-class methods, not ACPI sleep/wakeup callbacks. The
+attribution would be falsified if the dump contents are invalid or the
+target firmware's kobj records do not use the FreeBSD-compatible layout
+used for this structural match.
 
 ### ACPI tables [verified-on-dump]
 
