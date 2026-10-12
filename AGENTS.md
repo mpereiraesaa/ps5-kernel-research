@@ -30,6 +30,11 @@ statement is wrong (as happened with the "XOM moved from PTE to NPT"
 model — see `docs/03-evolution-pre761.md`), fix the doc and record the
 correction rather than quietly reinterpreting.
 
+**Before proposing a mechanism, read
+`docs/11-debunked-theories-and-corrections.md`** — the register of
+theories we already falsified (and why), so the same mistakes are not
+repeated. Add new falsifications there in the same PR.
+
 ## Contribution workflow
 
 - Topic branches + pull requests only; never push directly to `main`.

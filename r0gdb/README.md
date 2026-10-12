@@ -79,11 +79,11 @@ snapshot, and `r0gdb_loop` does not execute stale register state.
 
 These are source changes [verified-in-tree]: packet assembly is in
 `gdb_stub/dbg.c:75-160`, parser error handling is at `dbg.c:662-668`,
-the signal mask and session lock are at `dbg.c:1340-1386`, and callers
+the signal mask and session lock are at `dbg.c:1387-1470`, and callers
 are at `dbg.c:1155-1188`, `gdb_stub/ring0.c:170-181`, and
 `prosper0gdb/r0gdb.c:468-480`. The original signal context is restored
 on parser failure at `dbg.c:1108-1110`. Signal actions use restart
-semantics at `dbg.c:1437-1449` and `prosper0gdb/r0gdb.c:764-768`.
+semantics at `dbg.c:1403`/`dbg.c:1538` and `prosper0gdb/r0gdb.c:900`.
 The change has not been built or run on a console. Keep level 2 and
 full ring-0 sessions gated until the documented local build and
 graduated validation ladder pass.
@@ -101,3 +101,25 @@ plan until the automatic restore path is proven on-console. The SDK
 payload cross-build passed; no console run was performed. See the
 incident record in
 [`../docs/10-hcall-resume-window-and-noops.md`](../docs/10-hcall-resume-window-and-noops.md).
+
+## Instrumentation: fault-ucontext capture + `qDiagF4` (2026-10-13)
+
+To settle the GS/TLS freeze theory against evidence rather than inference,
+the stub now captures the raw fault `ucontext` it is delivered on
+(`gdb_stub/dbg.c:1128-1134`, buffer at `dbg.c:50`) and exposes it via a
+non-invasive `qDiagF4` query that hex-dumps the capture + signum + length
+(`dbg.c:856-884`). The payload side prints `[D9]` (saved GS base, its
+valid flag, live FS/GS bases) at load (`prosper0gdb/sdk-build/main.c`), and
+exposes `r0gdb_saved_gsbase()`/`_valid()`/`r0gdb_read_fsbase()`/
+`r0gdb_read_gsbase()` (`prosper0gdb/r0gdb.c:596-608`). The clients decode
+the capture with a self-locating `__mcontext` scanner (`tools/stub_verify.py`
+`analyze_fault_frame`, `--diag-f4`; `tools/experiment_exit.py` prints the
+entry-frame verdict).
+
+On-console result (build sha `cbd34cbd…`, 2026-10-13): the ring-0 entry
+fault frame carries `mc_flags=0x5` — `_MC_HASSEGS` set, **`_MC_HASBASES`
+clear** — with `mc_fsbase==mc_gsbase==0`. Per FreeBSD `set_mcontext`
+semantics, sigreturn only restores FS/GS base when `_MC_HASBASES` is set,
+so the ring-0 entry's sigreturn does **not** clobber the GS base from
+`mc_gsbase=0`. This falsifies the GS-base clobber link of the #70 fix
+[verified-on-console]; see docs/10 for the full record.

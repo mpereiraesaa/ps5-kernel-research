@@ -1190,3 +1190,60 @@ cycle), not another ring-0 session.
   byte-level protocol log of ring-0 session #2 (stages A-F, the park,
   and the 60 s stall after the user-page gadget step): the raw record
   behind the EFER/CR0 reads and the SMEP derivation in PR #41.
+
+## 2026-10-13 — experiment 1 on the #70 build: freeze recurs; GS theory falsified
+
+- **Payload**: `payload-elfldr-sdk.elf`, sha256
+  `cbd34cbd5dd5465e09f1415bde33b62944e41805503d285fecd6983316a14f02`
+  (the #70 GS-restore/never-spin build + the GS/TLS instrumentation:
+  fault-ucontext capture, `qDiagF4`, `[D9]`).
+- **Delivery**: elfldr TCP 9021; clients from the repo
+  (`tools/stub_verify.py`, `tools/experiment_exit.py`).
+- **FW**: 12.02 (`0x12020000`).
+
+### Expected
+
+- Level 1 green on the new build (constants re-pinned; `START_RIP_OFF`
+  re-derived to 0x551).
+- If #70 fixed the freeze: experiment 1 returns via the staged frame and
+  the console survives. If not: the freeze recurs (park).
+- Instrumentation: the entry fault frame's `mc_flags` shows whether
+  `_MC_HASBASES` is set (whether sigreturn restores FS/GS base at all).
+
+### Observed [verified-on-console]
+
+- **Level 1: PASSED** — `base=0x200000000`, `kdata=0xffffffff8b150000`,
+  VERIFY bytes at `base+0x228c0` match the ELF (0x551 anchor correct),
+  M write/read/restore OK.
+- **Ring-0 entry worked** — synthetic stop, kernel-stack
+  `rsp=0xffffff801aee4838`, `rip=0x0` (the T05 synthetic stop).
+- **Entry fault frame** (`qDiagF4`, 0x600 bytes): `signum=0`,
+  `mc_flags=0x5`, `mc_fsbase=0x0`, `mc_gsbase=0x0`, `cs=0x33`,
+  `ss=0x2b`. `mc_flags=0x5` = bit0 (`_MC_HASSEGS`) set, bit2 (outside
+  `_MC_FLAG_MASK=0x3`, i.e. reserved/unused here) set, and bit1
+  (**`_MC_HASBASES`**) **clear**.
+- **The freeze recurred** — the packet after the synthetic-stop `g`
+  (a second `g`) got no reply; the client parked at ~131 s. Same
+  signature as the 2026-10-12 runs.
+
+### Interpretation [verified-on-console + inference]
+
+- FreeBSD `set_mcontext` only restores `mc_fsbase`/`mc_gsbase` when
+  `_MC_HASBASES` is set (`machine/ucontext.h`). It is clear here, so
+  the ring-0 entry's sigreturn does **not** clobber the GS base from
+  `mc_gsbase=0`. The GS-clobber link of the #70 theory is **falsified**
+  [verified-on-console]. With `fsbase==gsbase==0`, the "wrong TLS
+  register" variant is moot.
+- #70(a) (GS restore) is inert on this path; #70(b) (park instead of
+  spin) is client-indistinguishable from the old spin. The freeze is a
+  genuine hang that is neither, and remains unexplained [inference].
+- Next: handler-entry/park counters (F4 extension) to test whether a
+  nested signal occurs at the freeze or the hang is a plain packet-read
+  deadlock; re-examine `gdbstub_session_lock` reentrancy in the entry
+  handler context and `r0gdb_cleanup`'s `run_in_kernel` MSR step.
+
+### Recovery state
+
+- Session parked over the patched IDT/TSS window (ring-0 entry ran);
+  owner power-cycle pending/performed. Client terminated after the
+  console was unreachable (safe: socket already dead).

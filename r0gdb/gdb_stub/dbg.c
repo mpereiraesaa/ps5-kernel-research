@@ -39,6 +39,17 @@ static int errno = 1;
 #define PAGE_SIZE 4096ull
 #endif
 
+/* --- instrumentation: capture the faulting signal frame ----------------
+ * Every debugger signal records the raw ucontext it was delivered on, so a
+ * client can read mc_flags/mc_fsbase/mc_gsbase (the F4 query). This is the
+ * only place that information exists: the handler overwrites the register
+ * slots (not mc_flags/mc_fsbase/mc_gsbase) inside the same ucontext, so the
+ * capture also proves which uc_mcontext offset arithmetic is correct.
+ * Last-writer-wins; the first debugger stop (the ring-0 entry) is the one
+ * the GS-restore theory cares about. */
+unsigned char gdb_last_uc_capture[0x600];
+int gdb_last_uc_signum;
+
 static inline void cpu_relax(void)
 {
     asm volatile("pause");
@@ -312,6 +323,7 @@ static const char* commands[] = {
     "k",
     "m",
     "qAttached",
+    "qDiagF4",
 #ifdef __PS4__
     "qOffsets",
 #endif
@@ -373,6 +385,7 @@ enum
     CMD_K,
     CMD_M_READ,
     CMD_Q_ATTACHED,
+    CMD_Q_DIAG_F4,
 #ifdef __PS4__
     CMD_Q_OFFSETS,
 #endif
@@ -840,6 +853,35 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
             serve_string(o, "payload.elf", 11, 1);
             break;
 #endif
+        case CMD_Q_DIAG_F4:
+        {
+            /* Instrumentation query: hex-dump the captured fault ucontext
+             * (frame magic 4e42 'BN' word) + signum + captured length, so a
+             * client can locate mc_flags/mc_fsbase/mc_gsbase by self-relative
+             * offsets and settle the FS-vs-GS TLS and _MC_HASBASES questions
+             * without a console run. Pure memory reads only. */
+            skip_to_end(o);
+            start_packet(o);
+            PKT_PUTS(o, "F4:4e42:");
+            char nb[2];
+            for(int i = 1; i >= 0; i--)
+                nb[1-i] = int2hex((gdb_last_uc_signum >> (4*i)) & 15);
+            pkt_puts(o, nb, 2);
+            char lp[4];
+            unsigned long long cap = (unsigned long long)sizeof(gdb_last_uc_capture);
+            for(int i = 3; i >= 0; i--)
+                lp[3-i] = int2hex((cap >> (4*i)) & 15);
+            pkt_puts(o, lp, 4);
+            char b[2];
+            for(size_t i = 0; i < sizeof(gdb_last_uc_capture); i++)
+            {
+                b[0] = int2hex(gdb_last_uc_capture[i] >> 4);
+                b[1] = int2hex(gdb_last_uc_capture[i] & 15);
+                pkt_puts(o, b, 2);
+            }
+            end_packet(o);
+            break;
+        }
         case CMD_Q_OFFSETS:
         {
             skip_to_end(o);
@@ -1080,6 +1122,16 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
         return;
     }
     ucontext_t* uc = (ucontext_t*)o_uc;
+    {
+        /* Capture the raw signal frame for the F4 query (see the globals
+         * above). Bounded to the local capture size. */
+        size_t n = sizeof(*uc) < sizeof(gdb_last_uc_capture)
+                 ? sizeof(*uc) : sizeof(gdb_last_uc_capture);
+        const unsigned char* s = (const unsigned char*)uc;
+        for(size_t i = 0; i < n; i++)
+            gdb_last_uc_capture[i] = s[i];
+        gdb_last_uc_signum = signum;
+    }
 #ifdef __PS4__
     mcontext_t* mc = (mcontext_t*)(((char*)&uc->uc_mcontext)+48); // wtf??
 #ifndef NO_SYSARCH_GSBASE

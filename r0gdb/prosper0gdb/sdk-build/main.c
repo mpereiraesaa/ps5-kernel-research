@@ -200,6 +200,18 @@ int main(int argc, char **argv)
 
     bind_probe();
 
+    /* [D9] GS/TLS diagnostic: the value save_user_gsbase() captured, whether
+     * it is usable (valid), and the live FS/GS bases. If valid=0 the GS
+     * restore in r0gdb() is a silent no-op and the GS-corruption theory's
+     * precondition never held; if FS and GS differ, the errno TLS register
+     * matters and restoring the wrong one would not fix anything. */
+    printf("[D9] gsbase_saved=0x%llx valid=%d fsbase=0x%llx gsbase=0x%llx\n",
+           (unsigned long long)r0gdb_saved_gsbase(),
+           r0gdb_saved_gsbase_valid(),
+           (unsigned long long)r0gdb_read_fsbase(),
+           (unsigned long long)r0gdb_read_gsbase());
+    fflush(stdout);
+
     printf("[D8] dbg_enter: binding first free port from 1234\n");
     fflush(stdout);
     dbg_enter();
