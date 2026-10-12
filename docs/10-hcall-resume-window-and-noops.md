@@ -211,3 +211,18 @@ HCALL 0x0f → AP on root 0 → VMCB write.
 | `09-live-kernel-state-and-fsgsbase.md` | Live kernel state + FSGSBASE analysis + HV lineage survey |
 | `10-hcall-resume-window-and-noops.md` | This document |
 | `evidence-logs/` | Raw protocol logs |
+
+### NOOP: FACS wake vector (2026-10-12)
+
+The FACS at phys 0x9bf60 (from FADT X_FIRMWARE_CTRL) reads as **all
+zeros** via the alias engine (no fault, page readable, just empty).
+The PS5's firmware does not populate a traditional ACPI FACS wake
+vector at this address. The PS5 resume goes through the hypervisor,
+not through a BIOS ACPI wake. This approach is dead.
+
+Alternatives for locating `acpi_sleep_machdep`:
+1. The kobj method table positions (ktext+0x396390 and ktext+0x3b3b60
+   are ACPI device methods — identify which is suspend/resume by
+   position in the method table)
+2. FreeBSD 11 source layout relative to known text anchors
+3. The "acpi_wakeup: failed to resume AP" string's printf xref
