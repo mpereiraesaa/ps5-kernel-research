@@ -13,16 +13,20 @@ import re
 from pathlib import Path
 
 
-STAGES = ("B0", "B1", "B2", "F1", "A1P", "A1R", "A2", "F2",
-          "D1S", "D1O", "D2")
+STAGES = ("B0", "B1", "R0", "B2", "R1", "F1", "A1P", "A1R",
+          "Q1", "A2", "R2", "F2", "D1S", "D1O", "Q2", "D2")
 B1_PARTS = ("image", "big", "journal")
 JOURNAL_STAGES = ("A1P", "A1R", "D1S", "D1O")
-USER_STAGES = ("B0", "B1", "B2", "A2", "D2")
+CONTROL_STAGES = ("B0", "B1", "R0", "B2", "R1", "Q1", "A2",
+                  "R2", "Q2", "D2")
+HANDOFF_STAGES = ("R0", "R1", "Q1", "R2", "Q2")
 FRAME_BYTES = 0x28
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
     "A1P": "journal", "A1R": "journal", "A2": "user",
     "F2": "frame", "D1S": "journal", "D1O": "journal", "D2": "user",
+    "R0": "observer", "R1": "observer", "Q1": "observer",
+    "R2": "observer", "Q2": "observer",
 }
 RECORD = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH2\s+(.+)$")
 HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
@@ -31,7 +35,8 @@ SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
 
 def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 ist_count: int | None, frame_preseed: dict | None,
-                journal_preseed: dict | None) -> tuple[str | None, int | None]:
+                journal_preseed: dict | None, state: dict,
+                seen: dict) -> tuple[str | None, int | None]:
     def number(key: str) -> int:
         value = fields.get(key, "")
         if not HEX.fullmatch(value):
@@ -91,6 +96,20 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                     addresses.append(address)
                 if len(set(addresses)) != len(addresses):
                     raise ValueError("journal preseed addresses reused")
+        elif stage == "R0":
+            if baseline is None or "B1" not in seen:
+                raise ValueError("B0/B1 missing before idle observer READY")
+            observer_cpu = int(fields.get("observer_cpu", "-1"))
+            if not 0 <= observer_cpu < 16 or observer_cpu == cpu:
+                raise ValueError("invalid or selected observer CPU")
+            if sha("build_sha") != baseline["build_sha"]:
+                raise ValueError("observer build differs from B0")
+            if (number("gate_lo"), number("gate_hi"), number("ist6")) != (
+                    baseline["gate_lo"], baseline["gate_hi"],
+                    baseline["ist6"]):
+                raise ValueError("idle observer native state differs from B0")
+            if fields.get("pipe_ready") != "1" or fields.get("idle") != "1":
+                raise ValueError("observer pipe or idle state absent")
         elif stage == "B2":
             if baseline is None:
                 raise ValueError("B0 baseline missing for gate comparison")
@@ -122,6 +141,27 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             if len(set(canaries)) != len(canaries):
                 raise ValueError("pretrigger frame canaries not distinct")
             return None, count
+        elif stage == "R1":
+            if "R0" not in seen or state.get("pretrigger") is None or (
+                    journal_preseed is None or frame_preseed is None):
+                raise ValueError("R0/B1/B2 missing before first observer sample")
+            if int(fields.get("observer_cpu", "-1")) != state["observer_cpu"]:
+                raise ValueError("observer CPU differs from R0")
+            pretrigger = state["pretrigger"]
+            if any(number(key) != pretrigger[key] for key in
+                   ("gate_lo", "gate_hi", "ist6")):
+                raise ValueError("first observer gate or IST differs from B2")
+            if (number("f1_slot") != baseline["f1_slot"] or
+                    number("f2_slot") != baseline["f2_slot"]):
+                raise ValueError("first observer frame slot differs from B0")
+            for frame in ("F1", "F2"):
+                if [number(f"{frame.lower()}_can{i}") for i in range(5)] != (
+                        frame_preseed[frame]):
+                    raise ValueError("first observer canaries differ from B2")
+            for name, (address, before) in journal_preseed.items():
+                if (number(f"{name.lower()}_addr"),
+                        number(f"{name.lower()}_before")) != (address, before):
+                    raise ValueError("first observer journal differs from B1")
         elif stage in ("F1", "F2"):
             if baseline is None:
                 raise ValueError("B0 baseline missing for frame address")
@@ -158,6 +198,47 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("selected IST6 does not point to dispatch frame")
             if number("armed_actual") == 0:
                 raise ValueError("arm-return state is zero")
+        elif stage == "Q1":
+            if "R1" not in seen:
+                raise ValueError("first observer READY missing before quiesce")
+            if int(fields.get("observer_cpu", "-1")) != state["observer_cpu"]:
+                raise ValueError("observer CPU differs from R0")
+            if (fields.get("reason") != "arm_return" or
+                    fields.get("idle") != "1" or
+                    fields.get("inflight") != "0" or
+                    int(fields.get("samples", "0")) < 1):
+                raise ValueError("first observer quiescence not verified")
+        elif stage == "R2":
+            if "Q1" not in seen or "A2" not in seen or (
+                    state.get("pretrigger") is None or
+                    journal_preseed is None or frame_preseed is None):
+                raise ValueError("Q1/A2 missing before second observer sample")
+            if int(fields.get("observer_cpu", "-1")) != state["observer_cpu"]:
+                raise ValueError("observer CPU differs from R0")
+            pretrigger = state["pretrigger"]
+            if (number("gate_lo") != pretrigger["gate_lo"] or
+                    number("gate_hi") != pretrigger["gate_hi"] or
+                    number("ist6") != state["arm_return_ist"]):
+                raise ValueError("second observer gate or IST differs")
+            if number("f2_slot") != baseline["f2_slot"] or (
+                    [number(f"f2_can{i}") for i in range(5)] !=
+                    frame_preseed["F2"]):
+                raise ValueError("second observer frame differs from B2")
+            for name in ("D1S", "D1O"):
+                address, before = journal_preseed[name]
+                if (number(f"{name.lower()}_addr"),
+                        number(f"{name.lower()}_before")) != (address, before):
+                    raise ValueError("dispatch journal changed before second trigger")
+        elif stage == "Q2":
+            if "R2" not in seen:
+                raise ValueError("second observer READY missing before quiesce")
+            if int(fields.get("observer_cpu", "-1")) != state["observer_cpu"]:
+                raise ValueError("observer CPU differs from R0")
+            if (fields.get("reason") != "syscall_return" or
+                    fields.get("idle") != "1" or
+                    fields.get("inflight") != "0" or
+                    int(fields.get("samples", "0")) < 1):
+                raise ValueError("second observer quiescence not verified")
         elif stage == "D2":
             if baseline is None:
                 raise ValueError("B0 baseline missing for restoration comparison")
@@ -186,6 +267,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     ist_count = None
     frame_preseed = None
     journal_preseed = None
+    state = {}
     for line in raw.decode("utf-8", errors="replace").splitlines():
         if "\tMARK\tKH1 " in line:
             rejected.append({"reason": "KH1 lacks required raw evidence"})
@@ -213,7 +295,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
             rejected.append({"seq": int(seq), "stage": stage, "reason": "duplicate"})
             continue
         reason, count = _raw_fields(stage, fields, baseline, ist_count,
-                                    frame_preseed, journal_preseed)
+                                    frame_preseed, journal_preseed, state, seen)
         if reason:
             rejected.append({"seq": int(seq), "stage": stage, "reason": reason})
             continue
@@ -228,6 +310,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
             b1_regions.append((start, end))
         if stage == "B0":
             baseline = {"cpu": int(fields["cpu"]),
+                        "build_sha": fields["build_sha"].lower(),
                         "gate_lo": int(fields["gate_lo"], 16),
                         "gate_hi": int(fields["gate_hi"], 16),
                         "ist6": int(fields["ist6"], 16),
@@ -239,6 +322,15 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
             frame_preseed = {name.upper(): [int(fields[f"{name}_can{i}"], 16)
                                             for i in range(5)]
                              for name in ("f1", "f2")}
+            state["pretrigger"] = {
+                "gate_lo": int(fields["gate_lo"], 16),
+                "gate_hi": int(fields["gate_hi"], 16),
+                "ist6": int(fields["ist6_actual"], 16),
+            }
+        if stage == "R0":
+            state["observer_cpu"] = int(fields["observer_cpu"])
+        if stage == "A2":
+            state["arm_return_ist"] = int(fields["ist_actual"], 16)
         if stage == "B1":
             b1_parts[fields["part"]] = int(seq)
             if fields["part"] == "journal":
@@ -253,12 +345,14 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
 
     ordered = sorted(seen, key=seen.get)
     # Observer reports can arrive later than the corresponding kernel write.
-    # Only records made on the user-mode control path support a causal order
+    # User and handshaken observer control reports support a causal order
     # check. A skipped stage remains a coverage gap, not a failed stage.
     out_of_order = ordered != sorted(ordered, key=STAGES.index)
-    user_order = [stage for stage in ordered if stage in USER_STAGES]
-    causal_order_conflict = user_order != sorted(user_order, key=USER_STAGES.index)
-    first_missing = next((stage for stage in STAGES if stage not in seen), None)
+    control_order = [stage for stage in ordered if stage in CONTROL_STAGES]
+    causal_order_conflict = control_order != sorted(
+        control_order, key=CONTROL_STAGES.index)
+    missing = [stage for stage in STAGES if stage not in seen]
+    first_missing = missing[0] if missing else None
     later = (list(stage for stage in STAGES[STAGES.index(first_missing) + 1:]
                   if stage in seen) if first_missing else [])
 
@@ -272,7 +366,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                      else "incomplete")
 
     if causal_order_conflict:
-        interpretation = "user-mode control records contradict the required stage order"
+        interpretation = "handshaken control records contradict the required stage order"
     elif out_of_order:
         interpretation = ("observer report order differs from phase order; "
                           "asynchronous sampling does not prove execution-order reversal")
@@ -287,7 +381,13 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         "b1_parts": b1_parts,
         "b1_missing_parts": [part for part in B1_PARTS if part not in b1_parts],
         "first_missing_direct_evidence": first_missing,
+        "missing_direct_evidence": missing,
         "later_direct_evidence": later,
+        "handoff_records_missing": [stage for stage in HANDOFF_STAGES
+                                    if stage not in seen],
+        "handoff_record_set_complete": (
+            all(stage in seen for stage in HANDOFF_STAGES)
+            and not causal_order_conflict),
         "out_of_order": out_of_order,
         "causal_order_conflict": causal_order_conflict,
         "rejected": rejected,
