@@ -37,8 +37,23 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 21 | Successful all-CPU IST4/gate setup and Kstuff offsets imply the minimal `INT1` → `justreturn` probe will return | **FALSIFIED AS A RUN PREDICTION** — the setup-only build restored cleanly, but the live one-shot closed without a return marker and left gate/IST4 patched. The failing instruction and cause remain unknown. | [verified-on-console] `16` live one-shot run |
 | 22 | An immediate CPL0→CPL3 `iretq` frame is an adequate first khook probe because the architecture permits it | **UNSUPPORTED EXPERIMENT DESIGN** — the reviewed working implementations use staged kernel continuation before returning to user mode; our direct frame had no such precedent, and the console power-off did not identify the failing step. Architectural legality did not establish this 12.02 path. | [verified-on-console] `16` pretrigger handshake; [public-consensus] Kstuff `kelf.asm`, Byepervisor `khook.c` |
 | 23 | Kstuff's 12.02 `cpu_switch` entry is a verified replacement for Byepervisor's `DBREG_RESUME`, and the 13.60 gadget starts by loading DR0 from `[rdi+0x78]` | **WRONG ENTRY CONTRACT** — `cpu_switch` is only a same-region anchor. In the 13.60 donor, `DBREG_RESUME` starts at `mov dr0,rax`; the preceding RAX load is skipped, because the arm chain supplies DR0 in RAX. The proposed 12.02 address remains a byte-unverified candidate. | [verified-on-dump] 13.60 `kernel-text.bin+0x2529d4..0x252a32`; [public-consensus] Byepervisor `khook.c`; [inference] `16` cross-dump candidate |
+| 24 | A read-only audit ELF is a safe way to collect a frame after a live #DB probe stops returning, if the console still answers ping | **UNSUPPORTED RECOVERY ASSUMPTION** — after the Kstuff-style probe emitted `[K1]` without a return marker, ping and elfldr initially worked; the follow-up audit ELF timed out, and the console then stopped answering. This does not prove the audit caused the outage, but read-only intent did not make loading new code safe while shared gate/IST4 state was unknown. | [verified-on-console] `16` full-continuation run; [inference] possible persistent changed gate |
 
 ## Detail on the load-bearing ones
+
+### #24 — Post-stall auditing must be pre-armed [inference]
+
+The audit's kernel-memory operations were reads, but sending it still
+started another ELF while the first payload might have left the shared
+#DB gate and all IST4 slots redirected. The live probe closed without
+restoration evidence; the subsequent audit had no output and the PS5
+became unreachable. The causal instruction is unknown, so the
+correction is to the **safety assumption**, not a finding that the
+audit killed the machine. A future frame/marker observer must be
+running before the trigger and able to report without loading another
+ELF into this uncertain state. A captured gate restoration before the
+audit, or a fault trace showing the outage began independently, would
+falsify the proposed link between patched state and audit risk.
 
 ### #23 — Region correspondence did not establish a gadget [inference]
 

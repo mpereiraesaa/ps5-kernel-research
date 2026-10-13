@@ -1299,18 +1299,47 @@ changing it. [inference] Zero bytes alone do not prove this scratch is
 unowned; a live change or concurrent owner would falsify the cave
 assumption.
 
-**Console plan approved in principle by the owner on 2026-10-13:**
+**Console plan approved by the owner on 2026-10-13:**
 read-only baseline first; then setup-only, expecting `[K1]`, restored
 `[K1r]`, and `[K2]` without #DB. Only after clean setup and a fresh
 baseline, the live ELF would expect `[K2] frame=MATCH marker=MATCH` and
-restored gate/IST4/scratch. If elfldr stalls while the PS5 remains
-reachable, the separate read-only audit reports each CPU's hardware
-frame and marker; a marker alone locates progress through the kernel
-copy, not through the return. A changed shared gate and all-CPU IST4
+restored gate/IST4/scratch. The separate read-only audit reports each
+CPU's hardware frame and marker only while elfldr remains usable; a
+marker alone locates progress through the kernel copy, not through the
+return. A changed shared gate and all-CPU IST4
 slots can still panic or leave the machine unsafe. Recovery is a hard
 power cycle, followed by read-only native-gate/IST4/scratch audit and
-UI check. Actual observations and recovery state remain **pending**;
-record them here after each approved run.
+UI check.
+
+**Actual observations, 2026-10-13:** [verified-on-console] The initial
+read-only audit reported native #DB target `+0x3188b0`, IST4, zero
+staged slots, zero nonzero scratch bytes, and no marker. The setup-only
+ELF emitted `[K1]`, `[K1r]`, and `[K2]`; a second read-only audit gave
+the same clean baseline. The live ELF then emitted `[K1]` only. Its
+elfldr connection closed about 0.4 seconds later without `[K1r]` or
+`[K2]`; three pings and a port-9021 check immediately afterward
+succeeded. A follow-up attempt to send the read-only audit over elfldr
+timed out after 25 seconds with no audit marker. The next three pings
+failed and port 9021 no longer accepted connections. The PC-side
+`ps5log/1` record contains the live staging marker but no return/BYE.
+No hardware frame or scratch marker was captured, so neither the
+Kstuff-style chain nor any particular instruction was proved to run.
+[inference] The changed gate/IST4 state may have persisted when the
+first connection closed; a read-only audit payload can still execute
+code while that shared gate is changed. The observations do **not**
+establish whether the audit attempt caused the later outage or whether
+the original live fault progressed independently. Falsifier: an
+independent pre-armed observer or fault capture showing the gate had
+already been restored, or showing a different causal sequence.
+
+**Recovery state:** [verified-on-console] The owner hard power-cycled
+the PS5 and confirmed the UI works normally. A post-reboot ping replied,
+but elfldr port 9021 was not listening; the native gate, IST4 slots,
+and scratch have therefore not been re-audited after reboot. No ELF was
+sent after recovery. For any redesigned probe, the frame/marker observer
+must already be running before the live trigger; do not rely on loading
+a new audit ELF into an uncertain changed-gate state. This supersedes
+the post-stall audit part of the plan above.
 
 ### Frame staging isolation run
 
