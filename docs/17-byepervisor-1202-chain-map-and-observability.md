@@ -745,9 +745,30 @@ Compiling this audit ELF validates none of those contracts.
    The checker outputs SHA-256 for the 16 arm and dispatch targets as
    little-endian qwords for comparison with B2/A2 `ist_image_sha`, plus the
    selected A2 expected top.
-   This comparison still needs a retained same-attempt B2/A2 record; the
-   checker does not perform it. A passing result reports
-   `ownership_verified: false`: it proves only disjoint geometry. [inference]
+   [verified-in-tree] `tools/kh2_layout_check.py` now accepts a retained
+   KH2 `ps5log/1` file and optional same-run manifest:
+
+   ```sh
+   python3 tools/kh2_layout_check.py candidate.json \
+     --log retained-run.log --manifest retained-run.json
+   ```
+
+   It joins only classifier-accepted B0, three B1 parts, B2, and A2 to the
+   candidate. It compares selected CPU and frame slots; B1 span bases/sizes,
+   context and journal addresses; B2/A2 full IST image hashes, selected
+   pointers, count, and A2 armed-word address. A mismatched manifest hash,
+   ambiguous sequence, rejected classifier record, or capture error causes a
+   nonzero exit. `partial_observed_fields_match` lists missing records as
+   coverage gaps, not failed execution. `no_comparable_records` also exits
+   nonzero. The PR #97 `[K1]` console marker is from a different log format
+   and cannot be joined as a KH2 B0/B1/B2/A2 report. The join checks what a
+   retained producer *reported*, not independent memory ownership or code
+   execution; an unobserved stage remains unlocated. It does not compare the
+   gate/IST **field addresses**, because those are absent from KH2 records,
+   or authenticate the source build behind a reported `build_sha`.
+   A passing result still reports
+   `ownership_verified: false`: it establishes disjoint geometry and agreement
+   with the accepted reported fields only. [inference]
    A real 12.02 candidate must still obtain independently supported scratch,
    gate, and IST ownership plus readback; a later allocation or native-state
    observation contradicting that ownership would falsify the candidate even

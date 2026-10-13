@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Check proposed KH2 address intervals before any console experiment.
+"""Check proposed KH2 address intervals and optional retained log fields.
 
-This checks geometry only. It cannot establish kernel-data ownership, firmware
-instruction bytes, whether the writes occur, or whether #DB is delivered.
+This checks geometry and reported source-plan consistency only. It cannot
+establish kernel-data ownership, firmware instruction bytes, whether writes
+occurred, or whether #DB was delivered.
 """
 
 import argparse
 import hashlib
 import json
 from pathlib import Path
+
+from khook_trace_classify import RECORD, classify
 
 LIMIT = 1 << 64
 
@@ -160,16 +163,135 @@ def check(plan):
             "scope": "interval geometry only; no FW 12.02 byte or runtime proof"}
 
 
+def compare_log(plan, raw, manifest=None, geometry=None):
+    """Compare only classifier-accepted, unambiguous KH2 report fields."""
+    geometry = check(plan) if geometry is None else geometry
+    if not geometry["geometry_valid"]:
+        raise ValueError("cannot compare a log with an invalid layout")
+    if manifest is not None and not isinstance(manifest, dict):
+        raise ValueError("manifest must be a JSON object")
+    classification = classify(raw, manifest)
+    records = {}
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        match = RECORD.match(line)
+        if match:
+            seq, _, payload = match.groups()
+            records.setdefault(int(seq), []).append(dict(
+                token.split("=", 1) for token in payload.split()
+                if token.count("=") == 1))
+
+    expected = {
+        "B0": {
+            "cpu": number(plan["selected_cpu"]),
+            "f1_slot": number(plan["frame_slots"][0]),
+            "f2_slot": number(plan["frame_slots"][1]),
+        },
+        "B2": {
+            "ist_count": 16,
+            "ist_image_sha": geometry["expected_b2_ist_image_sha"],
+            "ist6_actual": number(plan["ist_targets"]["arm"][number(plan["selected_cpu"])]),
+        },
+        "A2": {
+            "ist_count": 16,
+            "ist_before_sha": geometry["expected_b2_ist_image_sha"],
+            "ist_image_sha": geometry["expected_a2_ist_image_sha"],
+            "ist_actual": number(plan["ist_targets"]["dispatch"][number(plan["selected_cpu"])]),
+            "armed_addr": number(plan["journal_qwords"][4]),
+        },
+    }
+    for part in ("image", "big", "journal"):
+        expected[f"B1.{part}"] = {
+            "addr": number(plan["b1"][part]["base"]),
+            "bytes": number(plan["b1"][part]["size"]),
+        }
+    expected["B1.image"].update(zip(
+        ("rbp_addr", "rip_addr", "rsp_addr", "dr7_addr"),
+        map(number, plan["context_qwords"])))
+    expected["B1.journal"].update(zip(
+        ("a1p_addr", "a1r_addr", "d1s_addr", "d1o_addr"),
+        map(number, plan["journal_qwords"][:4])))
+
+    accepted = {stage: seq for stage, seq in classification["observed"].items()
+                if stage in ("B0", "B2", "A2")}
+    accepted.update({f"B1.{part}": seq for part, seq in
+                     classification["b1_parts"].items()})
+    mismatches = []
+    comparison_errors = []
+    compared_fields = []
+    if classification["integrity"] == "mismatch":
+        comparison_errors.append("manifest SHA-256 differs from supplied log")
+    else:
+        for stage, seq in accepted.items():
+            matches = records.get(seq, [])
+            if len(matches) != 1:
+                comparison_errors.append(f"{stage}: ambiguous or missing raw sequence {seq}")
+                continue
+            fields = matches[0]
+            if (fields.get("stage") != stage.split(".")[0] or
+                    (stage.startswith("B1.") and fields.get("part") != stage.split(".")[1])):
+                comparison_errors.append(f"{stage}: raw sequence {seq} names another stage")
+                continue
+            for key, wanted in expected[stage].items():
+                value = fields.get(key)
+                try:
+                    actual = (value.lower() if key.endswith("sha") else
+                              int(value, 10 if key in ("cpu", "bytes", "ist_count") else 16))
+                except (AttributeError, TypeError, ValueError):
+                    comparison_errors.append(f"{stage}.{key}: accepted field cannot be read")
+                    continue
+                compared_fields.append(f"{stage}.{key}")
+                if actual != wanted:
+                    mismatches.append({"field": f"{stage}.{key}",
+                                       "expected": wanted if isinstance(wanted, str) else hex(wanted),
+                                       "observed": value, "seq": seq})
+    if comparison_errors:
+        status = "comparison_error"
+    elif mismatches:
+        status = "mismatch"
+    elif classification["rejected"] or classification["capture_errors"] or classification["causal_order_conflict"]:
+        status = "classifier_rejected_or_capture_error"
+    elif not compared_fields:
+        status = "no_comparable_records"
+    elif any(stage not in accepted for stage in expected):
+        status = "partial_observed_fields_match"
+    else:
+        status = "observed_fields_match"
+    return {
+        "comparison_status": status,
+        "compared_fields": compared_fields,
+        "missing_layout_records": [stage for stage in expected if stage not in accepted],
+        "mismatches": mismatches,
+        "comparison_errors": comparison_errors,
+        "classifier_rejected": classification["rejected"],
+        "capture_errors": classification["capture_errors"],
+        "causal_order_conflict": classification["causal_order_conflict"],
+        "transport": classification["transport"],
+        "integrity": classification["integrity"],
+        "scope": "accepted log fields versus source plan; no 12.02 ownership or execution proof",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plan", type=Path, help="JSON candidate address plan")
+    parser.add_argument("--log", type=Path, help="retained ps5log/1 KH2 run")
+    parser.add_argument("--manifest", type=Path, help="optional same-run ps5log/1 manifest")
     args = parser.parse_args()
+    if args.manifest and not args.log:
+        parser.error("--manifest requires --log")
     try:
-        result = check(json.loads(args.plan.read_text()))
+        plan = json.loads(args.plan.read_text())
+        result = check(plan)
+        if args.log and result["geometry_valid"]:
+            manifest = json.loads(args.manifest.read_text()) if args.manifest else None
+            result["log_comparison"] = compare_log(plan, args.log.read_bytes(), manifest, result)
     except (IndexError, KeyError, TypeError, ValueError) as exc:
         parser.error(f"invalid plan: {exc}")
     print(json.dumps(result, indent=2))
-    if not result["geometry_valid"]:
+    if not result["geometry_valid"] or (args.log and
+            result["log_comparison"]["comparison_status"] in
+            ("comparison_error", "mismatch", "classifier_rejected_or_capture_error",
+             "no_comparable_records")):
         raise SystemExit(1)
 
 
