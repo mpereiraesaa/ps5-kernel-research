@@ -284,6 +284,30 @@ current build would falsify this source reading; none is present in
 bytes remain unavailable. Building and classifying it offline do not approve
 a console run.
 
+**Source-layout cross-check.** [verified-in-tree]
+`tools/fullchain_layout_check.py` reads the isolated C source and public
+Kstuff `ps5-kstuff/structs.inc` rather than assuming the two register-frame
+layouts agree. Run it with those two paths, for example:
+
+```text
+python3 tools/fullchain_layout_check.py \
+  /home/manuel/personal/ing_pereira/engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c \
+  /home/manuel/personal/ing_pereira/engineering/third_party/kstuff-lite/ps5-kstuff/structs.inc
+```
+
+It checks eight register offsets, the `F−0x28` hardware frame, the
+`+0xe8` entry-iret landing, both pop-all frames, the copy `pop rbp; ret`
+handoff, slot bounds and overlap, and the staged/observer canary formula.
+The current prearmed source passes geometry with 16 disjoint `0x500` slots
+(`0x5000` total) and **80 distinct canary words**. The unchanged PR #97
+`fullchain_allcpu.c` has the same source geometry but only **20 distinct
+values among 80 canary words**: bitwise OR with `cpu<<8` cannot encode all
+16 CPUs because the base constant already has bits set in that byte
+(`11` #26). Each slot still has a distinct address and five different
+word canaries; the collision limits value-only CPU attribution. This
+checker does **not** inspect the ELF's actual instructions, 12.02 gadget
+bytes, runtime scratch ownership, or exception delivery.
+
 **Pre-armed observer contract for a later two-transaction build [inference].** The
 separate-pipe calibration in `16` observed a pinned worker reading the
 gate/scratch and sending a PC record; the later pretrigger handshake

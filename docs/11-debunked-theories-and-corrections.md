@@ -39,8 +39,20 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 23 | Kstuff's 12.02 `cpu_switch` entry is a verified replacement for Byepervisor's `DBREG_RESUME`, and the 13.60 gadget starts by loading DR0 from `[rdi+0x78]` | **WRONG ENTRY CONTRACT** — `cpu_switch` is only a same-region anchor. In the 13.60 donor, `DBREG_RESUME` starts at `mov dr0,rax`; the preceding RAX load is skipped, because the arm chain supplies DR0 in RAX. The proposed 12.02 address remains a byte-unverified candidate. | [verified-on-dump] 13.60 `kernel-text.bin+0x2529d4..0x252a32`; [public-consensus] Byepervisor `khook.c`; [inference] `16` cross-dump candidate |
 | 24 | A read-only audit ELF is a safe way to collect a frame after a live #DB probe stops returning, if the console still answers ping | **UNSUPPORTED RECOVERY ASSUMPTION** — after the Kstuff-style probe emitted `[K1]` without a return marker, ping and elfldr initially worked; the follow-up audit ELF timed out, and the console then stopped answering. This does not prove the audit caused the outage, but read-only intent did not make loading new code safe while shared gate/IST4 state was unknown. | [verified-on-console] `16` full-continuation run; [inference] possible persistent changed gate |
 | 25 | The tested 12.02 scratch span is only `0x2000`, so it is too small for the `0x4000` 11.60 image | **OUTDATED CAPACITY CLAIM** — PR #97's setup-only run staged, read back, and restored `16 × 0x500 = 0x5000` bytes. The byte count can fit the reference image in isolation, but the current 16 CPU slots consume the same span; overlaying both at one base collides. Runtime ownership remains unproved. | [verified-on-console] `16` §“Full Kstuff-style continuation probe”; [verified-in-tree] `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:15-19,278-325`; [public-consensus] `5299395/include/khook.h:30-37` |
+| 26 | Bitwise OR of the frame-canary base with `cpu<<8` makes all 16 CPU canary values distinct | **FALSE** — the base already has bits set in that byte. The PR #97 source produces 20 unique values across 80 CPU/word combinations, although per-CPU slot addresses remain disjoint. The isolated prearmed variant uses addition and produces 80 distinct values. | [verified-in-tree] `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:287-290`, `fullchain_prearmed.c:195-196,483-484`; `tools/fullchain_layout_check.py` |
 
 ## Detail on the load-bearing ones
+
+### #26 — Slot address, not the old canary value, names the CPU [verified-in-tree]
+
+PR #97 staged separate addresses for all 16 CPUs, but its OR expression
+collapses four CPU tags into each set of five word values. The observer must
+therefore attribute a changed frame by its sampled **slot address**, not by
+the old value alone. This does not explain the PR #97 shutdown: no frame was
+captured. The separate prearmed source uses addition in both staging and
+comparison loops; the host-side checker reports 80 distinct values there.
+A source edit or a disassembly showing a different canary expression in the
+tested ELF would falsify the source-to-binary application of this result.
 
 ### #25 — Capacity and layout are separate questions [verified-in-tree]
 
