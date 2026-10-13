@@ -102,11 +102,11 @@ own firmware. There is no held 12.02 ktext image in this audit.
 
 | Required semantic / phase | 11.60 `ktext+` | 12.02 evidence and verdict |
 |---|---:|---|
-| `PIVOT_ADD_RSP28_RET` for both #DB entries | `0x2a0ede` | **Candidate** `ktext+0x2ac2de`, inferred from 13.60 pivot's position near `cpu_switch` (`16`, cross-dump gadget table). 12.02 bytes and stack consumption missing. Kstuff's `add rsp,0xe8; iretq` at `+0x2b3626` is a different contract. |
+| `PIVOT_ADD_RSP28_RET` for both #DB entries | `0x2a0ede` | **Candidate** `ktext+0x2ac2de`: the `cpu_switch−0x22` relation appears in the published 13.00, 13.20, and 13.60 tables (`16`, cross-firmware local-anchor consistency). 12.02 bytes and stack consumption remain missing. Kstuff's `add rsp,0xe8; iretq` at `+0x2b3626` is a different contract. |
 | `IRETQ` for arm and dispatch returns | `0x2ac22d` | **Table address** `doreti_iret` at `+0x2b362d` (`12_02.h:12`); 12.02 bytes not read. |
 | `RET_TRAMP` | `0x338d2b` | **Table address** `nop_ret` at `+0x2b0b26` (`12_02.h:17-18`); exact 12.02 bytes not read. |
 | `POP_RAX`, `POP_RCX`, `POP_RDI` for arm/context/store | `0x338d2a`, `0x339712`, `0x289e0a` | **Unknown** individually; `pop_all_iret` is not a drop-in replacement because it consumes a different frame. |
-| `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78` from the 13.60 donor's local relation to Kstuff `mov_cr3_rax_mov_ds` (`16`). [verified-on-dump] The 13.60 donor entry is `mov dr0,rax`; the preceding load from `[rdi+0x78]` is outside the gadget, and the arm chain supplies DR0 in RAX (`11` #23). The 12.02 entry, remaining debug-register loads, and continuation stack are unverified. `cpu_switch` alone does not prove this tail. |
+| `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78`: the `mov_cr3_rax_mov_ds+0xe1` relation appears in the published 13.00, 13.20, and 13.60 tables (`16`). [verified-on-dump] The 13.60 donor entry is `mov dr0,rax`; the preceding load from `[rdi+0x78]` is outside the gadget, and the arm chain supplies DR0 in RAX (`11` #23). The 12.02 entry, remaining debug-register loads, and continuation stack are unverified. `cpu_switch` alone does not prove this tail. |
 | `STORE_RDI8_RCX` to write `IST+8` in arm continuation | `0x3cc4af` | **Unknown** equivalent. |
 | `POP_RSP` for dispatch stub and resume tail | `0x33974d` | **Unknown**. |
 | `MOV_RAX_RSI`, `MOV_RAX_RDI`, `ST_RCX_RAX`, `ST_RCX_RDX` for register save | `0x958504`, `0xc5e5da`, `0x3620bf`, `0x8a2725` | **Unknown** as a set. `store_rax_rdi` at 12.02 `+0x2ac112` is a different register pairing; any substitution needs a new register-liveness proof. |

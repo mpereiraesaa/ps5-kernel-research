@@ -479,6 +479,33 @@ Before relying on either in a chain, verify the complete sequence,
 entry point, side effects, and stack consumption from 12.02 bytes. Do
 not add these candidates to `offsets/12_02.h` as verified gadgets yet.
 
+#### Cross-firmware local-anchor consistency
+
+[public-consensus] The published [Kstuff 13.00/13.20/13.60 offset
+headers](https://github.com/EchoStretch/kstuff-lite/tree/48cd2c4ce62aa9ca0c2cc014c1e512f276ae7c17/prosper0gdb/offsets)
+and [Byepervisor gadget
+headers](https://github.com/PS5Dev/Byepervisor-Reborn/tree/ea04f7132b837087f552c57261cb800481a3a910/include/offsets)
+give a second address-only check on the two projections. First derive
+each firmware's `kdata−ktext` coordinate gap by equating Kstuff's
+`doreti_iret` with Byepervisor's `IRETQ`; then translate the two Kstuff
+anchors to `ktext+` offsets:
+
+| Firmware | Derived gap | Pivot minus `cpu_switch` | DR tail minus `mov_cr3_rax_mov_ds` |
+|---|---:|---:|---:|
+| 13.00 and 13.20 | `0xcb0000` | `-0x22` | `+0xe1` |
+| 13.60 | `0xcc0000` | `-0x22` | `+0xe1` |
+| 12.02 projection | dump-derived `0xd50000` | `-0x22` gives `+0x2ac2de` | `+0xe1` gives `+0x2acb78` |
+
+[inference] These two relative positions persisted across the three
+published 13.xx tables even though the 13.60 region moved `+0x40` in
+text coordinates. This strengthens the *location* rationale for the
+12.02 candidates; it does not establish that the relations survived
+the 13.00-to-12.02 relink, that the entry bytes match, or that the
+complete gadget contracts are safe. A 12.02 text disassembly with a
+different local offset or instruction sequence would falsify either
+projection. The 13.00 and 13.20 rows share identical published values,
+so they are corroborating versions, not separate byte audits.
+
 #### Kstuff return-stub disassembly in the 13.60 donor
 
 [verified-on-dump] Converting Kstuff's 13.60 `doreti_iret` coordinate
