@@ -982,8 +982,13 @@ all 16 frames were staged and read back. The PC received the matching
 `ps5log/1` staged marker. Elfldr timed out after 25 seconds without
 `[J2]` or BYE; three subsequent pings succeeded, so the console did
 not power off. The owner confirmed that the UI was responsive. The
-approved hard power-cycle recovery is pending before another run because
-restoration of the gate and IST4 slots was not observed.
+approved hard power-cycle recovery was requested because restoration of
+the gate and IST4 slots was not observed. The owner restarted elfldr
+without a power cycle and explicitly authorized proceeding. A new
+read-only audit before the next write found the expected native #DB
+target (`+0x3188b0`), IST4=4, zero IST4 pointers into the staged slots,
+and zero nonzero scratch bytes. This establishes the measured pre-run
+state, though it does not identify where the first payload stopped.
 No `INT1` instruction exists in this setup-only ELF, and the live ELF
 was not sent. [inference] One candidate for the payload-thread hang is
 the first build's single 8192-byte `kernel_copyin` during scratch
@@ -992,9 +997,37 @@ this through a pipe `write` (`ps5-payload-sdk/crt/kernel.c:463-493`),
 and this call is larger than every 512-byte staging write that completed.
 There was no marker between gate/IST4 restoration and that write, so
 the location remains unproven. The revised build restores scratch in
-512-byte chunks and emits `[J1r]` only after gate/IST4 restoration;
-failure before `[J1r]` would falsify the proposed location. Its actual
-console result is pending.
+512-byte chunks and emits `[J1r]` only after gate/IST4 restoration.
+
+**Read-only audit and revised setup-only run (2026-10-13):**
+[verified-on-console] the read-only audit ELF SHA-256
+`ff0e29c14ea31a4d9adbe177a11ef91641603152e00ed614f27941b3b43db6be`
+reported the baseline values above. The revised setup-only ELF SHA-256
+`a8a5bf464f81ab7b8c38d02ead8f60593402a71700d7c8fa8677a65b04e6bf0e`
+printed `[J1]`, `[J1r] shared #DB gate and all IST4 slots restored`,
+and `[J2] ... originals restored; no #DB`. Its PC `ps5log/1` session
+recorded both staged and clean setup-only markers with BYE. The console
+answered two subsequent pings. This validates the patch/readback/restore
+sequence in that run; it does not validate #DB delivery or the
+`justreturn` continuation. Recovery state: normal payload exit; no
+power cycle was required for the setup-only run.
+
+**Live one-shot run (2026-10-13):** [verified-on-console] the live ELF
+SHA-256 `b75794ed0624071662c6a5432996c451821c04e77b2d94d6ac8d1b52216a0c22`
+printed only `[J1]` after frame staging. The elfldr connection closed
+about 0.3 seconds later without `[J1r]`, `[J2]`, or a PC `ps5log/1` BYE.
+The console answered three pings. A second run of the same read-only
+audit showed the #DB gate at `+0x2b3626` (the staged target), all 16
+IST4 pointers at their staged frame addresses, and 836 nonzero scratch
+bytes. Thus restoration did not run before the payload connection closed.
+[inference] The one-shot path failed at or after the gate/IST4 patch,
+possibly during #DB delivery or the first kernel return; an observed
+pre-`INT1` failure or a captured hardware frame showing no #DB would
+falsify the delivery inference. This run **does not prove** that the
+12.02 `justreturn` offset or the frame geometry is wrong. Recovery
+state: shared gate/IST4 left patched; owner instructed to hard
+power-cycle. Normal UI after recovery is pending confirmation. Do not
+send another payload while that state persists.
 
 ### Frame staging isolation run
 

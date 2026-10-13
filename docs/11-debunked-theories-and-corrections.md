@@ -34,8 +34,24 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 18 | The 13.60 IDT/TSS are at data-file offsets `0x2234300`/`0x2236fe0`, and matched syscalls imply `+0x6a340`/`+0x6a328` 12.02 code shifts | **WRONG COORDINATES** — the data-file offsets are `0x2ef4300`/`0x2ef6fe0`; the declared 735 sysent pairs yield `+0xadd70`/`+0xadd58` under dump-specific text bases. The old offsets subtracted the `0xcc0000` text size twice. | [verified-on-dump] `16` cross-dump audit |
 | 19 | The 12.02 dump's shared v1/v9/v13/v179 `add_rsp_iret` target proves Sony's native dismiss-stub layout | **WRONG BASELINE** — the owner confirms kstuff was running during the dump. A later live read-only audit with no kstuff running reported four distinct targets and IST0 for v9/v13/v179. Neither snapshot alone proves pristine firmware state. | [verified-on-console] `16` gate-state audit; [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:12-14` |
 | 20 | The #DB chain can run on #GP with an otherwise identical entry frame | **WRONG FRAME ASSUMPTION** — #GP supplies an error code; #DB does not. No 12.02 #GP chain or return has been validated. | [public-consensus] [AMD64 APM Vol. 2 §§8.2.2, 8.2.14](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2); [verified-in-tree] `docs/16-byepervisor-12-02-port.md:117-120` |
+| 21 | Successful all-CPU IST4/gate setup and Kstuff offsets imply the minimal `INT1` → `justreturn` probe will return | **FALSIFIED AS A RUN PREDICTION** — the setup-only build restored cleanly, but the live one-shot closed without a return marker and left gate/IST4 patched. The failing instruction and cause remain unknown. | [verified-on-console] `16` live one-shot run |
 
 ## Detail on the load-bearing ones
+
+### #21 — Setup-only success did not predict a live return [verified-on-console]
+
+The revised setup-only build staged all 16 frames, changed and read back
+the IST4 slots and #DB gate, then restored them with explicit markers.
+The subsequent live `INT1` build reached its staging marker but closed
+without a return or restoration marker. A read-only audit found the
+changed gate and all 16 staged IST4 values still present (`16`, live
+one-shot run). The earlier setup result establishes only that the data
+writes and restoration path can complete without intentional #DB. It
+does not establish that #DB was delivered on the patched stack or that
+the staged kernel return is valid. [inference] The live failure occurred
+at or after patching; a marker or captured frame placing failure before
+the `INT1` instruction would narrow this further. Do not treat the
+working Kstuff offsets as validation of this smaller frame layout.
 
 ### #20 — #GP and #DB entry frames differ [public-consensus]
 
