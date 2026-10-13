@@ -31,6 +31,7 @@ SOURCES = {
 RECORD = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH2\s+(.+)$")
 CAPTURE_ERROR = re.compile(r"^(\d+)\t(\d+)\tERR\tKH2E\s+(.+)$")
 WRITE_BRACKET = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH2W\s+(.+)$")
+READ_BRACKET = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH2R\s+(.+)$")
 HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
 SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
 WRITE_REGIONS = {
@@ -38,6 +39,13 @@ WRITE_REGIONS = {
     "B2": {"gate", "ist6", "context"},
     "A2": {"ist6", "armed"},
     "D2": {"gate", "ist6", "image", "big", "journal", "scratch"},
+}
+READ_REGIONS = {
+    "B0": {"gate", "ist6", "scratch"},
+    "B1": {"image", "big", "journal"},
+    "B2": {"gate", "ist6", "context", "frame"},
+    "A2": {"ist6", "armed"},
+    "D2": {"gate", "ist6", "scratch", "image", "big", "journal"},
 }
 
 
@@ -315,6 +323,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     capture_errors = []
     write_attempts = []
     pending_writes = {}
+    read_attempts = []
+    pending_reads = {}
     b1_parts = {}
     b1_regions = []
     baseline = None
@@ -323,6 +333,47 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     journal_preseed = None
     state = {}
     for line in raw.decode("utf-8", errors="replace").splitlines():
+        read_match = READ_BRACKET.match(line)
+        if read_match:
+            seq, _, payload = read_match.groups()
+            tokens = payload.split()
+            pairs = [token.split("=", 1) for token in tokens]
+            fields = dict(pairs) if all(len(pair) == 2 for pair in pairs) else {}
+            try:
+                stage, region = fields["stage"], fields["region"]
+                cpu, length = int(fields["cpu"]), int(fields["bytes"])
+                address, bracket_state = fields["addr"], fields["state"]
+                if (set(fields) != {"stage", "cpu", "region", "addr", "bytes", "state"}
+                        or len(fields) != len(pairs) or
+                        region not in READ_REGIONS.get(stage, set()) or
+                        not 0 <= cpu < 16 or
+                        (baseline is not None and cpu != baseline["cpu"]) or
+                        not HEX.fullmatch(address) or
+                        not 0 < length <= 0x500 or
+                        bracket_state not in ("begin", "done")):
+                    raise ValueError
+            except (KeyError, ValueError):
+                rejected.append({"seq": int(seq),
+                                 "reason": "malformed KH2R read bracket"})
+            else:
+                key = stage, cpu, region, int(address, 16), length
+                if bracket_state == "begin":
+                    if key in pending_reads:
+                        rejected.append({"seq": int(seq),
+                                         "reason": "duplicate KH2R begin"})
+                    else:
+                        attempt = {"seq": int(seq), "stage": stage, "cpu": cpu,
+                                   "region": region, "addr": address,
+                                   "bytes": length, "result": "open"}
+                        read_attempts.append(attempt)
+                        pending_reads[key] = attempt
+                elif key not in pending_reads:
+                    rejected.append({"seq": int(seq),
+                                     "reason": "KH2R done without begin"})
+                else:
+                    attempt = pending_reads.pop(key)
+                    attempt.update(result="done", end_seq=int(seq))
+            continue
         bracket_match = WRITE_BRACKET.match(line)
         if bracket_match:
             seq, _, payload = bracket_match.groups()
@@ -405,6 +456,13 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                                 key[3] == int(address, 16)]
                     if len(matching) == 1:
                         attempt = pending_writes.pop(matching[0])
+                        attempt.update(result="error", end_seq=int(seq))
+                elif operation == "read":
+                    matching = [key for key in pending_reads
+                                if key[:3] == (stage, cpu, region) and
+                                key[3] == int(address, 16)]
+                    if len(matching) == 1:
+                        attempt = pending_reads.pop(matching[0])
                         attempt.update(result="error", end_seq=int(seq))
             continue
         if "\tMARK\tKH1 " in line:
@@ -538,6 +596,10 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         "open_write_attempts": [attempt for attempt in write_attempts
                                 if attempt["result"] == "open"],
         "last_write_attempt": write_attempts[-1] if write_attempts else None,
+        "read_attempts": read_attempts,
+        "open_read_attempts": [attempt for attempt in read_attempts
+                               if attempt["result"] == "open"],
+        "last_read_attempt": read_attempts[-1] if read_attempts else None,
         "out_of_order": out_of_order,
         "causal_order_conflict": causal_order_conflict,
         "rejected": rejected,
