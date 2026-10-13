@@ -8,7 +8,7 @@ crossing from compromised-kernel context to a root-0 (host-view) AP
 that disables nested paging on all 16 VMCBs. The route is now
 **public-working on 13.xx** (Byepervisor-Reborn, 2026-10) and we are
 porting it to 12.02 — see
-[`docs/11-byepervisor-12-02-port.md`](docs/11-byepervisor-12-02-port.md)
+[`docs/16-byepervisor-12-02-port.md`](docs/16-byepervisor-12-02-port.md)
 (the port plan: the field/gadget mapping, our FACS #GP trigger, the
 phases). All other routes (QA-flags text read, GPUVM DMA, CR4 gadget
 hunting, TMR, the r0gdb-stepping launch chain) are **superseded** or
@@ -32,7 +32,7 @@ and the FSGSBASE enable in one shot.
 | Document | Status | Contents |
 |---|---|---|
 | [`10-hcall-resume-window-and-noops.md`](docs/10-hcall-resume-window-and-noops.md) | **★ ACTIVE** | The resume-window route + the NOOP catalog |
-| [`11-byepervisor-12-02-port.md`](docs/11-byepervisor-12-02-port.md) | **★ ACTIVE (implementation)** | The Byepervisor-Reborn port plan for 12.02: field/gadget mapping, our FACS #GP trigger, the phases |
+| [`16-byepervisor-12-02-port.md`](docs/16-byepervisor-12-02-port.md) | **★ ACTIVE (implementation)** | The Byepervisor-Reborn port plan for 12.02: field/gadget mapping, our FACS #GP trigger, the phases |
 | [`11-debunked-theories-and-corrections.md`](docs/11-debunked-theories-and-corrections.md) | Active (register) | Every theory we got wrong, and why — so we don't repeat mistakes |
 | [`12-acpi-static-anchor-corrections.md`](docs/12-acpi-static-anchor-corrections.md) | Active (register) | Resume-route anchors we mis-derived (FACS address, `+0x18e` breakpoint, string-pointer scan; superseded mechanism in `15`) |
 | [`13-ring0-freeze-instrumentation.md`](docs/13-ring0-freeze-instrumentation.md) | Active (instrumentation) | The freeze capture set (F5 + klog), the 3 remaining hypotheses, and the falsifiable test |
