@@ -145,13 +145,32 @@ def _fc1_records(pc_text: str) -> dict:
                  and r["level"] == "ERR"]
     read_fail_before_gate = bool(ready and not gate_report and any(
         r["seq"] > ready["seq"] for r in read_fail))
+
+    def valid_sample(record):
+        fields = record["fields"]
+        sample = fields.get("sample")
+        version = ready["fields"].get("build") if ready else None
+        if sample is None:
+            if version == "prearmed-v2":
+                issues.append("prearmed-v2 frame or marker lacks sample mode")
+                return False
+            return True
+        if sample not in ("targeted", "sweep") or (
+                sample == "targeted" and ready and
+                fields.get("cpu") != ready["fields"].get("trigger_cpu")):
+            issues.append("invalid FC1 sample mode or targeted CPU")
+            return False
+        return True
+
     frames = [r for r in records if r["phase"] == "FRAME"
               and r["level"] == "MARK"
               and all(re.fullmatch(r"0x[0-9a-fA-F]+", r["fields"].get(k, ""))
-                      for k in ("rip", "cs", "flags", "rsp", "ss"))]
+                      for k in ("rip", "cs", "flags", "rsp", "ss"))
+              and valid_sample(r)]
     markers = [r for r in records if r["phase"] == "MARKER"
                and r["level"] == "MARK"
-               and r["fields"].get("value") == "0x4b53545546464348"]
+               and r["fields"].get("value") == "0x4b53545546464348"
+               and valid_sample(r)]
     if any(r["phase"] in ("FRAME", "MARKER") and
            (not gate or r["seq"] <= gate["seq"]) for r in records):
         issues.append("frame or marker without preceding verified gate")

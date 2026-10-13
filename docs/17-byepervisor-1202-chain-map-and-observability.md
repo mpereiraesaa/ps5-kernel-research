@@ -228,9 +228,9 @@ available logs do not establish what caused the outage.
 
 **Isolated prearmed Kstuff variant, built offline and not run.**
 [verified-in-tree] Our separate local source
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-249,526-627`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-262,550-652`
 builds `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
-`522ba85be24e213ad22ab2ed1d1c667b6f54f82280c5d2bddaec51449672d489`.
+`39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
 main thread stages IST4 or changes the gate. After the main thread writes and
@@ -240,12 +240,17 @@ qwords, expected qwords, matched count, and first mismatch. The trigger waits
 for that PC send and acknowledgment. While armed, the worker reads all 16
 preseeded five-word frames and copy markers, sending each first change as
 `FC1 FRAME` or `FC1 MARKER`; successful return joins it before the main
-thread resumes SDK kernel R/W operations. A timeout or unsafe teardown parks.
+thread resumes SDK kernel R/W operations. In this second offline build the
+worker first reads the selected CPU's `0x500`-byte slot and reports it, then
+sweeps all 16 slots. Each frame/marker record includes `sample=targeted` or
+`sample=sweep`. This reduces the selected frame's first-read latency relative
+to a five-page sweep; it cannot guarantee a sample before an immediate
+shutdown. A timeout or unsafe teardown parks.
 
 [verified-in-tree] The `FC1` local sequence begins at 1; its stages are
 `READY`, `GATE_VERIFIED`, zero or more `FRAME`/`MARKER` records, and
 `QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
-`build=prearmed-v1`, and selected/observer CPU numbers. The exact ELF SHA is
+`build=prearmed-v2`, and selected/observer CPU numbers. The exact ELF SHA is
 recorded above, while `ps5log/1`'s `HELLO` boot token identifies the PC
 session; the version tag is not an ELF hash. `tools/khook_trace_classify.py`
 preserves raw `FC1` fields and sequence issues. With `--pc-same-run`, a
@@ -262,10 +267,12 @@ failed observer on return using synthetic transcripts.
 `[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
 asserted. A disagreement yields `conflicting_probe_cpu_records` before any
 gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
+For `prearmed-v2` it requires the sample mode and rejects a `targeted`
+record naming a CPU other than the trigger CPU; v1 records remain readable.
 
 [verified-in-tree] The worker also emits `FC1 READ_FAIL` if its private-pipe
 read fails and emits an `ERR`-level `GATE_VERIFIED` with raw values if the
-gate or an IST4 pointer differs (`fullchain_prearmed.c:147-179,226-233`).
+gate or an IST4 pointer differs (`fullchain_prearmed.c:181-213,250-256`).
 The host classifier reports these separately as
 `observer_read_failed_after_main_patch_phase` and
 `observer_gate_or_ist_mismatch_after_main_readback` when linked to the same
@@ -273,18 +280,19 @@ run. Both mean the main thread reached the observer handoff after its own
 patch readback; neither proves `ICEBP` executed. A later `READ_FAIL` during
 scratch sampling is retained as a signal without erasing a preceding
 positive gate/frame/marker record. The classifier flags a copy marker with
-no corresponding frame report for raw review. [inference] Because the worker
-reads five scratch pages sequentially, one sample can combine a pretrap
-frame page with a later marker page; a second sample showing the changed
-frame would resolve that sampling ambiguity. This does not justify calling
-the missing frame a failed #DB delivery.
+no corresponding frame report for raw review. [inference] The targeted
+`0x500` read is not guaranteed to be atomic across a page boundary, and the
+later sweep reads five pages sequentially. A sample can therefore combine a
+pretrap frame with a later marker; a second sample showing the changed frame
+would resolve that sampling ambiguity. This does not justify calling the
+missing frame a failed #DB delivery.
 
 [inference] This is still a risky one-`ICEBP` diagnostic, not the 11.60
 two-transaction port. Its second `pop_all_iret` frame does not restore an
 incidental CPU's original GPRs, and the observer itself runs during the
 shared-gate window. A byte-level all-register save/restore path in the
 current build would falsify this source reading; none is present in
-`fullchain_prearmed.c:478-510` or `fullchain_icebp.S:9-27`. The 12.02 gadget
+`fullchain_prearmed.c:502-534` or `fullchain_icebp.S:9-27`. The 12.02 gadget
 bytes remain unavailable. Building and classifying it offline do not approve
 a console run.
 
@@ -313,11 +321,13 @@ checker does **not** inspect the ELF's actual instructions, 12.02 gadget
 bytes, runtime scratch ownership, or exception delivery.
 
 [inference] A read-only `llvm-objdump` check of the exact prearmed ELF above
-found `fullchain_icebp` at ELF `.text+0x2160`, its literal trap byte `f1`
-at `+0x216d`, and `fullchain_after_icebp` at `+0x216e`. In `main`, the
+found `fullchain_icebp` at ELF `.text+0x2270`, its literal trap byte `f1`
+at `+0x227d`, and `fullchain_after_icebp` at `+0x227e`. In `main`, the
 emitted call at `+0xf6d` targets that wrapper, followed by `stop_observer`
-at `+0xf73` and `restore_all` at `+0xf91`. The worker has three emitted
-`observer_channel_read` call sites. This corroborates the selected source
+at `+0xf73` and `restore_all` at `+0xf91`. The worker has four emitted
+`observer_channel_read` call sites: the targeted `0x500` read at `+0x1cab`
+precedes `report_slot` at `+0x1d03`, then the page-sweep read at `+0x1d5f`
+precedes the sweep report at `+0x1df5`. This corroborates the selected source
 path and intended postreturn ordering in this build; it does not prove
 any instruction after `ICEBP` executed on the console. A different
 disassembly for the recorded SHA-256 would falsify this binary reading.
