@@ -43,8 +43,21 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 27 | The KH2 observer's PC report order proves the order of kernel frame and journal writes | **WRONG CAUSAL READING** — independent sampling and sending can lag the writes or scan addresses in a different order. A reversed pair of `F*`/`A1*`/`D1*` reports is an arrival-order difference, not an execution-order reversal. Only the ordered user-mode control records support the narrower causal check. | [verified-in-tree] `tools/khook_trace_classify.py` `classify`, `engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-262`; [inference] asynchronous sampling can reorder reports |
 | 28 | The 11.60 khook's arm, dispatch, handler, and frame are five disjoint physical B1 writes, and gate readback alone is its final preparation step | **WRONG STAGING MODEL** — the first `0x500` image contains arm/dispatch/frame material; the big chain is a separate write. After installation, `kh_trigger` still patches saved RBP and arm RIP/RSP before TF. A closer port needs a final context readback to bound this preparation gap. | [public-consensus] `5299395/khook.c:390-478`; [verified-in-tree] `docs/17-byepervisor-1202-chain-map-and-observability.md` KH2 contract |
 | 29 | A KH2 frame or journal report proves a change merely because its own `before` and `after` values differ | **UNLINKED BASELINE** — a later report can supply any canary or `before` word. B2 must read the frame canaries before triggering, and B1 must read the journal preseed; later reports must match those earlier samples before claiming a change. | [verified-in-tree] `tools/khook_trace_classify.py` `_raw_fields` and `classify`, `tests/test_khook_trace_classify.py`; [inference] same-attempt baseline linkage is required for a change claim |
+| 30 | The 12.02 `sysent[24].sy_call` pointer identifies the `getuid` body, so its `+0xe` instruction is a usable test hook | **ENTRY/BODY CONFLATION** — 13.60 `sy_call` names a jump entry at `ktext+0x265330`, while its getuid body is `ktext+0x2a8d60`. 12.02 data locates only its entry at `ktext+0x3130a0`; no 12.02 text is held to resolve the body or instruction boundary. The old `746` sysent count was also wrong; the 13.60 declared count is 735. | [verified-on-dump] `kernel-dump-1360-boot1791893784/kernel-data.bin+0x1b6e50`, `kernel-text.bin+0x265330`, `kernel-data-only-1202/kernel-data.bin+0x1af4d0`; [verified-in-tree] `tools/sysent_trampoline_map.py:15-77`, `docs/16-byepervisor-12-02-port.md` §“getuid table entry versus hook body” |
 
 ## Detail on the load-bearing ones
+
+### #30 — A syscall table entry need not be the hook body [inference]
+
+The 13.60 donor supplies both data and text, so the offline resolver can
+follow its `getuid` table entry to the body. The 12.02 holding supplies only
+data: its table entry and neighboring pointer spacing identify a corresponding
+`sy_call` slot, but reveal nothing about bytes at that entry. A future 12.02
+text image showing a direct jump to a body with a validated `+0xe` hook
+instruction would resolve this gap and falsify the narrower claim that the
+hook cannot yet be mapped. It would not make the table entry itself equal to
+the body. The correction prevents a data-only address from being promoted
+to an instruction-verified breakpoint.
 
 ### #29 — A change needs an independently recorded before value [inference]
 
