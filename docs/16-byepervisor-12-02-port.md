@@ -89,7 +89,7 @@ match is missing.
 
 | Their gadget | Semantics | Our 12.02 coverage |
 |---|---|---|
-| `DBREG_RESUME` | resumectx tail (loads DR0-7) | ✓ **`cpu_switch`** — our table's "function whose tail restores DR0/1/2/3/6/7" |
+| `DBREG_RESUME` | resumectx tail (loads DR0–3/6/7, then restores a context and pivots) | **candidate only** — `cpu_switch` anchors the same code region but is not the gadget entry; see the cross-dump audit and chain contract below |
 | `REP_MOVSB` | rep movsb; ret | ✓ close — `rep_movsb_pop_rbp_ret` (adapts with a frame qword) |
 | `RET_TRAMP` | ret | ✓ `nop_ret` |
 | `IRETQ` | iretq | ✓ `doreti_iret` / `pop_all_iret` family |
@@ -437,7 +437,7 @@ sit at these local offsets from the anchors:
 | Byepervisor gadget | 13.60 text offset | Local anchor relation | 12.02 candidate | Assessment |
 |---|---:|---|---:|---|
 | `PIVOT_ADD_RSP28_RET` | `0x25213e` | `cpu_switch - 0x22`; 13.60 dump bytes at `kernel-text.bin+0x25213e` decode as `add rsp,0x28; rep ret` | `0x2ac2de` | [inference] low-confidence adjacency candidate; the gadget is in the preceding code block, so its distance from `cpu_switch` may change |
-| `DBREG_RESUME` | `0x2529d8` | `mov_cr3_rax_mov_ds + 0xe1`; 13.60 dump bytes at `kernel-text.bin+0x2529d8` decode as the DR-register restore tail beginning with `mov rax,[rdi+0x78]; mov dr0,rax` | `0x2acb78` | [inference] strong same-region candidate; 12.02 bytes must confirm the tail and entry contract |
+| `DBREG_RESUME` | `0x2529d8` | `mov_cr3_rax_mov_ds + 0xe1`; 13.60 dump bytes at `kernel-text.bin+0x2529d8` begin with `mov dr0,rax`. The preceding `mov rax,[rdi+0x78]` is **outside** the gadget entry. The chain supplies DR0 in RAX. | `0x2acb78` | [inference] strong same-region candidate; 12.02 bytes must confirm the tail and entry contract |
 | `IRETQ` | `0x257b3d` | exact match to Kstuff `doreti_iret` | `0x2b362d` | [verified-in-tree] address present in `offsets/12_02.h:12`; 12.02 instruction bytes and frame compatibility remain unverified |
 
 The first two are candidate addresses only. Their falsifier is a 12.02
@@ -819,12 +819,13 @@ engine as “proven” would repeat a claim already corrected above.
   `frame-observer pretrigger sampled cpu=9 canary=MATCH` 0.001487 seconds
   later. It received no changed-frame or return marker. The session was
   finalized on server shutdown with two records, no gaps, and no BYE.
-  Three subsequent pings failed.
-- **Recovery state:** the owner hard power-cycled the PS5 and confirmed
-  normal operation. Network reachability returned after startup; a later
-  two-ping check passed.
+  Three subsequent pings failed. **Owner correction:** the console powered
+  off during this attempt; this was not merely an unresponsive console.
+- **Recovery state:** the owner brought the PS5 back up and confirmed normal
+  operation. Network reachability returned after startup; a later two-ping
+  check passed.
 - **Interpretation:** [verified-on-console] in this run the PC received a
-  post-patch canary read before the freeze, so the worker and PC channel
+  post-patch canary read before the power-off, so the worker and PC channel
   were active while the changed gate/IST4 were installed. [inference] the
   main thread had completed both patch readbacks before setting the
   observer phase that allowed this read; a different control-flow order
@@ -833,7 +834,512 @@ engine as “proven” would repeat a claim already corrected above.
   it does not prove the main thread reached TF/NOP. An unrelated #DB during
   the changed-gate window, a failure at the intended trigger, or failure
   later in handler/return processing remain possible. No exception frame
-  was captured and patched-stack delivery remains unvalidated.
+  was captured and patched-stack delivery remains unvalidated. [inference]
+  A fatal exception or panic is more consistent with power-off than a
+  payload thread simply spinning; a console-side record of an orderly
+  shutdown or external power loss would falsify that interpretation. The
+  power-off does not by itself identify NPT.
+
+#### Comparison with Kstuff's kernel-execution path
+
+[public-consensus] Kstuff's installed #DB path uses the same
+`add_rsp_iret` gate target and an IST4 pointer to
+`noerrc_iret_frame+40`; see its
+[`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm#L158-L164)
+and [IDT/TSS installation](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/main.c#L1542-L1562).
+Its `iret_rip` field is 232 bytes into `noerrc_iret_frame`
+([`structs.inc`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/structs.inc#L16-L20)).
+Thus, with `F = noerrc_iret_frame+40`, the `add rsp,0xe8` entry
+lands at `F+0xc0 = noerrc_iret_frame+232`. [inference] This matches
+the one-shot probe's **initial stack arithmetic**. A different
+compiled IST4 pointer or frame layout in the working 1.11 build would
+falsify the comparison.
+
+[verified-on-console] The owner reports that installed Kstuff 1.11 works
+on this 12.02 console. [public-consensus] Its public 12.02 table defines
+`add_rsp_iret = doreti_iret - 7`
+([`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h#L12-L14)).
+[inference] Provided the installed build uses that table and #DB path,
+the offset is operationally supported **in Kstuff's own frame context**;
+an offset typo is a weaker explanation for this probe's power-off than
+its different entry/return state. An inspection of the installed build
+showing another offset or entry path would falsify this inference. The
+working payload does not byte-verify 12.02 text or prove this probe
+reached the target.
+
+[public-consensus] Kstuff installs a prepared #DB IST4 frame for every
+CPU ([`main.c`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/main.c#L1542-L1562));
+the handshake probe changed only its pinned CPU's IST4. [inference]
+Another CPU taking #DB while the shared gate was changed could therefore
+enter that target with a different stack. An exception record showing
+that only the patched CPU entered #DB would falsify this possibility for
+the observed power-off.
+
+The continuation differs. [public-consensus] Kstuff's first frame at
+that landing point has `RIP=justreturn`, kernel `CS=0x20`, flags `2`,
+and a kernel-side continuation stack; it then uses more staged frames,
+register/GS handling, and a later return
+([`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm#L245-L295)).
+Our probe staged a direct userland return at `F+0xc0`
+(`RIP=ist4_evidence_resumed`, `CS=0x43`, flags `0x202`, user RSP,
+`SS=0x3b`), with no `justreturn`/kernel continuation. [inference]
+This was chosen to reduce gadget dependencies, but the reviewed working
+sources did not validate an immediate first return to userland. The
+architecture permits a CPL0→CPL3 `iretq`; that fact did not establish
+that this 12.02 frame, delivery path, and hypervisor state were valid.
+Byepervisor's
+[`khook.c`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/main/khook.c#L358-L386)
+also returns to user mode via `iretq`, but **after** a staged arm chain;
+its dispatch path builds a separate register-preserving resume tail.
+This corrects the overbroad idea that no public payload has a
+kernel-to-user return, while preserving the narrower gap: no reviewed
+working source validated our immediate first-frame return.
+The powered-off handshake probe staged Kstuff's gate target and first
+stack displacement, without proving that either executed, and **did not
+test the kernel-mode continuation
+that works in installed Kstuff**. A compiled probe frame showing a
+kernel `justreturn` first return would falsify this distinction.
+Earlier minchain/r0gdb attempts exercised parts of Kstuff's separate
+`run_in_kernel`/INT9 bootstrap; none completed a verified
+call/return and restoration on this console (the correction above).
+
+[public-consensus] A long-mode `iretq` can return from CPL0 to CPL3 by
+loading the saved user RIP, CS, RFLAGS, RSP, and SS; that privilege
+transition is not itself an NPT violation. AMD's
+[architecture manual](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2)
+describes the `iretq` frame and separately specifies that SMEP blocks an
+instruction fetch from a user page **while still at CPL0–2**. [inference]
+If the intended user TF/NOP caused this #DB, returning to its adjacent
+user code through a valid CPL3 frame would not be rejected merely for
+crossing from kernel to user mode. An exception record showing a denied
+fetch at the return RIP would falsify that inference. Frame/selector
+errors, a page permission or translation fault, and a secondary exception
+while the gate/IST4 patch is active remain possible. The pretrigger marker
+does not establish that the probe reached `iretq`, and the missing return
+marker does not identify NPT as the cause.
+
+#### Scope of a Kstuff-shaped follow-up
+
+[public-consensus] Kstuff's `noerrc_iret_frame` does not stop at the first
+`RIP=justreturn` frame. Its next staged entries use `justreturn_pop`,
+`wrmsr_ret` to set GSBASE, `push_pop_all_iret` to capture registers, and
+`noerrc_entry` to preserve the interrupted frame before continuing
+([`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm#L245-L299)).
+Kstuff installs a separate frame pointer in every CPU's IST4 slot while
+using one shared #DB gate
+([`main.c`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/main.c#L1542-L1562)).
+
+[inference] Replacing the probe's direct user frame with only
+`RIP=justreturn`, or copying its current fixed user RIP/RSP frame to
+every CPU, would leave the continuation incomplete and could return an
+unrelated CPU to the probe's user thread. The public `noerrc` stack layout
+or a captured first return showing a different continuation would
+falsify this reading. A meaningful follow-up must stage a complete
+per-CPU entry/continuation/return path that preserves each interrupted
+context; only then can a changed shared gate be armed. This is a new
+console-risky build, not a reuse of the approved handshake ELF.
+
+[inference] There is a smaller **no-op return** candidate than Kstuff's
+full KELF handoff: make the first staged `iretq` enter `justreturn` with
+kernel RSP pointing at the five words the CPU pushed at `IST4−0x28`.
+The public FreeBSD 11
+[`justreturn` handler](https://www.mail-archive.com/svn-src-all@freebsd.org/msg141708.html)
+preserves its scratch registers, acknowledges the interrupt, and jumps to
+`doreti_iret`, which would consume that saved hardware frame and resume
+the interrupted context. Kstuff's subsequent GS/CR3/register chain is
+needed for its UELF handoff; this candidate performs no such handoff.
+12.02 `justreturn` bytes have not been read, so a disassembly showing a
+different control flow or a captured post-`justreturn` stack differing
+from the hardware frame would falsify this candidate.
+
+The separate offline build `byepervisor_probe_1202_justreturn_allcpu.c`
+stages 16 disjoint 0x200-byte frame regions across two zero-checked
+candidate scratch pages, saves/writes each CPU's IST4 as a qword, and
+changes the shared #DB gate last. Its first return frame uses Kstuff's
+12.02 `justreturn` offset `ktext+0x2b3400`, kernel `CS=0x20`, flags `2`,
+and RSP=`IST4−0x28`; the existing `add_rsp_iret` target is
+`ktext+0x2b3626`. [inference] `INT1`/ICEBP supplies a one-shot #DB with
+TF clear in the saved frame, avoiding the repeated trap a TF/NOP would
+cause on this no-op return path. Intel's
+[instruction reference](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf)
+documents `INT1` as a #DB trap with no gate-DPL check. A live #DB that
+does not arrive through the patched gate or returns with TF set would
+falsify the expected trigger behavior on this console.
+
+- **FW/build identity:** first setup-only ELF SHA-256
+  `4eb15b696d04fe2be690dc192d4d86698dd8a145e883777b4df883b6b44a7b24`;
+  revised setup-only ELF SHA-256
+  `a8a5bf464f81ab7b8c38d02ead8f60593402a71700d7c8fa8677a65b04e6bf0e`;
+  revised live INT1 ELF SHA-256
+  `b75794ed0624071662c6a5432996c451821c04e77b2d94d6ac8d1b52216a0c22`.
+  Both are local payload-tree artifacts and are excluded from this notes repo.
+- **Expected setup-only observation:** all 16 staged frames, IST4 writes,
+  and the changed gate read back, then originals and scratch restore;
+  no intentional #DB. A failed guard exits without arming.
+- **Expected live observation:** one `INT1`, return through kernel
+  `justreturn` and the saved hardware frame, then gate/IST4/scratch
+  restoration and a `MATCH` on saved RIP/CS/RSP/SS and clear TF.
+- **Risk/recovery:** the shared gate and all 16 IST4 slots change briefly.
+  An incidental #DB during staging, a wrong 12.02 `justreturn` contract,
+  or a bad frame can panic or power off the console. Hard power-cycle,
+  then confirm normal UI and network operation. The owner approved
+  proceeding with a Kstuff-shaped one-shot and this recovery class on
+  2026-10-13. The changed `INT1` trigger and both exact builds are
+  recorded here before the live console run.
+
+**First setup-only run (2026-10-13):** [verified-on-console] the first
+setup-only ELF printed `[J1] fw=12.02 cpu=15 all_cpu_frames=16 ...` after
+all 16 frames were staged and read back. The PC received the matching
+`ps5log/1` staged marker. Elfldr timed out after 25 seconds without
+`[J2]` or BYE; three subsequent pings succeeded, so the console did
+not power off. The owner confirmed that the UI was responsive. The
+approved hard power-cycle recovery was requested because restoration of
+the gate and IST4 slots was not observed. The owner restarted elfldr
+without a power cycle and explicitly authorized proceeding. A new
+read-only audit before the next write found the expected native #DB
+target (`+0x3188b0`), IST4=4, zero IST4 pointers into the staged slots,
+and zero nonzero scratch bytes. This establishes the measured pre-run
+state, though it does not identify where the first payload stopped.
+No `INT1` instruction exists in this setup-only ELF, and the live ELF
+was not sent. [inference] One candidate for the payload-thread hang is
+the first build's single 8192-byte `kernel_copyin` during scratch
+restoration, after restoring the gate/IST4 slots; the SDK implements
+this through a pipe `write` (`ps5-payload-sdk/crt/kernel.c:463-493`),
+and this call is larger than every 512-byte staging write that completed.
+There was no marker between gate/IST4 restoration and that write, so
+the location remains unproven. The revised build restores scratch in
+512-byte chunks and emits `[J1r]` only after gate/IST4 restoration.
+
+**Read-only audit and revised setup-only run (2026-10-13):**
+[verified-on-console] the read-only audit ELF SHA-256
+`ff0e29c14ea31a4d9adbe177a11ef91641603152e00ed614f27941b3b43db6be`
+reported the baseline values above. The revised setup-only ELF SHA-256
+`a8a5bf464f81ab7b8c38d02ead8f60593402a71700d7c8fa8677a65b04e6bf0e`
+printed `[J1]`, `[J1r] shared #DB gate and all IST4 slots restored`,
+and `[J2] ... originals restored; no #DB`. Its PC `ps5log/1` session
+recorded both staged and clean setup-only markers with BYE. The console
+answered two subsequent pings. This validates the patch/readback/restore
+sequence in that run; it does not validate #DB delivery or the
+`justreturn` continuation. Recovery state: normal payload exit; no
+power cycle was required for the setup-only run.
+
+**Live one-shot run (2026-10-13):** [verified-on-console] the live ELF
+SHA-256 `b75794ed0624071662c6a5432996c451821c04e77b2d94d6ac8d1b52216a0c22`
+printed only `[J1]` after frame staging. The elfldr connection closed
+about 0.3 seconds later without `[J1r]`, `[J2]`, or a PC `ps5log/1` BYE.
+The console answered three pings. A second run of the same read-only
+audit showed the #DB gate at `+0x2b3626` (the staged target), all 16
+IST4 pointers at their staged frame addresses, and 836 nonzero scratch
+bytes. Thus restoration did not run before the payload connection closed.
+[inference] The one-shot path failed at or after the gate/IST4 patch,
+possibly during #DB delivery or the first kernel return; an observed
+pre-`INT1` failure or a captured hardware frame showing no #DB would
+falsify the delivery inference. This run **does not prove** that the
+12.02 `justreturn` offset or the frame geometry is wrong. Recovery
+state: shared gate/IST4 left patched; owner instructed to hard
+power-cycle. The owner then reported the console ready. A read-only
+audit ELF with the same SHA-256 reported the native #DB target
+`+0x3188b0`, IST4=4, zero staged IST4 pointers, and zero nonzero scratch
+bytes; the console answered two pings. The specific physical recovery
+action and UI state were not separately reported. No further kernel
+write or exception trigger was sent after the failed live run.
+
+**Proposed discriminator after recovery (not run):** a rebuilt read-only
+audit ELF SHA-256
+`f2c9d641b00f537129be8fe6664997a5ce713c60faf10517eb2eea16c6a3f3b2`
+compares each staged CPU's five words at `IST4−0x28` with the canaries
+written before the live trigger. It makes no IDT/TSS/scratch writes and
+does not trigger an exception. [inference] If the same live ELF is run
+again and leaves the gate/IST4 patched while the console remains
+reachable, a changed hardware-frame slot would support #DB delivery on
+that CPU; unchanged canaries would falsify delivery to those staged
+slots in that run. The audit cannot establish that the first `iretq`
+executed or that `justreturn` returned. The proposed live repeat would
+reuse SHA-256 `b75794ed0624071662c6a5432996c451821c04e77b2d94d6ac8d1b52216a0c22`;
+its expected outcome is either `[J2] ... frame=MATCH` or a failed
+return with a readable staged frame. Its known risk is another
+unrestored shared gate/all-CPU IST4 state, with possible console panic.
+Recovery is a hard power cycle followed by a read-only baseline audit.
+This repeat requires fresh owner approval before sending. On clarification,
+the owner asked whether it used a **complete kernel continuation and return
+path**. It does not: the proposed repeat reuses the minimal `justreturn`
+→ hardware-frame return. The repeat is deferred. A full-chain
+probe would be a different build with its own reviewed frame sequence,
+build identity, expected observations, and recovery plan.
+
+**Staged `ret` continuation candidate (built offline, deferred):**
+[inference] A smaller explicit ROP return path can avoid the unverified
+`justreturn` call/EOI behavior without claiming to reproduce Kstuff's
+full KELF handoff. The `add_rsp_iret` entry still needs a five-word
+kernel `iretq` frame. Set its RIP to Kstuff's 12.02 `nop_ret`
+(`ktext+0x2b0b26`), CS=`0x20`, flags=`2`, RSP=`F−0x30`, SS=`0`, where
+`F` is that CPU's IST4 value. At `F−0x30`, stage Kstuff's
+`doreti_iret` (`ktext+0x2b362d`). The hardware's five-word #DB frame
+starts at `F−0x28`. The intended sequence is:
+
+`add_rsp_iret` → `iretq` → `nop_ret` → `ret` → `doreti_iret` →
+`iretq` through the CPU-saved frame.
+
+[public-consensus] Kstuff's
+[`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h#L12-L18)
+defines `add_rsp_iret`, `doreti_iret`, and `nop_ret` (the last from
+`wrmsr_ret+2`). The same header defines `justreturn` separately
+([`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h#L62-L69)).
+[public-consensus] In 64-bit mode, `iretq` pops RSP/SS even on a
+same-privilege return
+([AMD64 APM Vol. 2](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2));
+this is what lets the first frame select `F−0x30` as the ROP stack.
+The proposed two-gadget chain makes no deliberate register, GSBASE,
+or CR3 changes, so its intended no-op return can consume the original
+hardware frame. It is **not** Kstuff's full register/GS/CR3 continuation
+or Byepervisor's context-preserving dispatch/return chain. Adding a
+`ret` before `iretq` does not supply the state handling those working
+paths perform. It must not be presented as a public-validated khook
+return path. The 12.02 gadget bytes have not been read. A disassembly showing
+another epilogue or a captured frame that does not land at `F−0x28`
+would falsify the proposed geometry.
+
+The separate local build uses all 16 staged IST4 frames and changes the
+shared #DB gate last, as above. Setup-only ELF SHA-256
+`1709f16c0040de299b1d961126f02733c8f93e35acb0be86666793f7867ec71d`;
+live `INT1` ELF SHA-256
+`cb1440429c62643d65326384883f733c8f47ea51b3dbf285a47f3bbd9198c5a0`.
+Both artifacts are outside this notes repo. Expected setup-only result:
+`[J1r]` and `[J2]` with no #DB. Expected live result: `[J2] ...
+frame=MATCH` and restored gate/IST4/scratch; if it fails while the
+console remains reachable, use the read-only frame audit above before
+recovery. The changed shared gate and all 16 IST4 slots can again leave
+the console in an unsafe state or panic it. Recovery: hard power cycle,
+then read-only baseline audit and UI check. No new ELF was sent; this
+is a separate console-risky experiment requiring owner approval. The
+owner emphasized that Byepervisor's user return occurs **only after**
+its staged chain; this minimal two-gadget run is deferred pending a
+reviewed context-preserving chain or independent evidence that its
+shorter path is safe.
+
+### Full-chain contract before another #DB trigger (offline review)
+
+[public-consensus] Byepervisor's [`kh_install` and `kh_trigger`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/main/khook.c)
+use **two different #DB deliveries**. The first is a user-thread,
+TF/NOP arm pass. The same gate pivot lands on `arm_chain`, which sets
+DR0/DR7 through the `resumectx` tail, changes that CPU's IST pointer to
+`disp_chain`, and only then executes a staged `iretq` back to the
+triggering user thread. The later kernel breakpoint lands on
+`disp_chain`: the CPU writes its five-word frame at `F−0x28`, the
+`add rsp,0x28; ret` gate target skips the frame, and the dispatch stub
+pivots to `big_chain`. That chain saves selected registers into its own
+later restore slots, runs the handler, changes the saved return RIP or
+registers as requested, disarms DR7 in one-shot mode, and pivots back
+to an `iretq` qword immediately before the **same hardware frame**.
+An arm-pass success would not validate the later breakpoint pass.
+
+The reference's register preservation is **selective**, not an all-GPR
+snapshot: [public-consensus] `khook.c` saves/restores RDI, RSI, and RDX
+in `big_chain`; other gadgets also change RAX and RCX, and the caller's
+contract must permit those changes. [inference] A benign 12.02 return
+probe needs an explicit live-register contract, or a full trapframe
+capture/restore, before it can claim to preserve its caller. A
+post-return comparison of the agreed registers with their pretrigger
+values would falsify a claimed preservation contract. A console-alive
+marker alone would not prove it.
+
+| Stage required for a faithful one-shot dispatch | 12.02 evidence | Blocking question |
+|---|---|---|
+| #DB gate and per-CPU frame at `F−0x28` | [verified-on-console] changed gate/IST4 values were readable and restorable in setup-only runs; live delivery was not observed | Did #DB actually enter on a prepared CPU's IST4 stack? |
+| Skip the hardware frame and `ret` to the dispatch stub | [inference] `ktext+0x2ac2de` from a 13.60 adjacency; 12.02 bytes unknown | Is the complete `add rsp,0x28; ret` sequence present, with the same stack effect? |
+| Pivot to an isolated, per-CPU big chain | [public-consensus] 13.60 `POP_RSP`/dispatch layout in `khook.c`; no byte-confirmed 12.02 `pop rsp; ret` | Which 12.02 instruction implements this pivot without clobbering the frame? |
+| Save the live registers that later gadgets overwrite | [public-consensus] reference uses `mov rax,rsi/rdi`, stores through RCX, and self-modified restore slots | What are the 12.02 byte-confirmed store/pop/move gadgets and the exact register liveness contract? |
+| Perform a benign kernel continuation, then restore registers | [public-consensus] reference `big_chain` places handler work between save and restore; the earlier two-gadget proposal omitted this stage | What harmless operation gives an observable marker **after** dispatch without requiring console logging from the exception path? |
+| Return through the original hardware frame | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:12-14` names `doreti_iret`; [inference] frame placement and 12.02 instruction bytes remain unconfirmed | Does RSP point at the captured frame before `iretq`, and does the return restore the intended context? |
+| Restore gate, IST4, and scratch after user return | [verified-on-console] setup-only restoration passed; live post-return restoration never ran | Did the return marker arrive, and did the read-back match the saved state? |
+
+The narrowest **full-dispatch** candidate uses one userland `ICEBP`
+(`#DB`) and no hardware breakpoint. [inference] This removes the
+reference's DR7 arm pass from *this* diagnostic while retaining its
+dispatch, live-register save, benign handler, restore, and hardware-frame
+return. It would establish that dispatch class only; it would say
+nothing about arming a kernel breakpoint or the S3 trigger.
+
+The proposed stack contract, with one independent scratch area per
+CPU, is:
+
+1. `F` is the staged IST4 top. The CPU writes the five-word #DB frame
+   at `F−0x28`; the gate target skips to `F` and returns into a
+   dispatch `pop rsp; ret` at `F`, whose next qword selects that CPU's
+   big chain. [inference] A different frame size or pivot stack effect
+   would falsify this layout.
+2. The big chain uses the reference's RDI/RSI/RDX save sequence, writing
+   the live values into its later restore-immediate slots. Its benign
+   handler writes one fixed marker to a separate scratch qword. An
+   independent observer can read the hardware frame and marker even
+   if userland never reaches the return marker. [inference] A changed
+   frame with no handler marker would localize failure to dispatch or
+   earlier big-chain steps; a handler marker with no return marker
+   would localize it to restore/pivot/`iretq` or later user execution.
+3. The chain pops the saved RDI/RSI/RDX, then `pop rsp` selects
+   `F−0x30`, containing one `iretq` gadget. That `ret` leaves RSP at
+   `F−0x28`, so `iretq` consumes the CPU's original frame. The
+   trigger wrapper must declare every other changed caller-saved
+   register (at least RAX/RCX/R8 for this chain) as clobbered; the
+   existing `justreturn_allcpu.c` inline `ICEBP` wrapper does not
+   declare those clobbers and cannot be reused unchanged. [inference]
+   A mismatch in the saved registers, frame, or post-return kernel
+   state would falsify the proposed preservation/return contract.
+
+This is a **design**, not a ready ELF. The required `add rsp,0x28; ret`,
+`pop rsp; ret`, save/store, marker-store, and restore-pop entries still
+need exact 12.02 addresses and byte-level semantics. All-CPU stack
+preparation is needed while the shared gate is changed, even though the
+triggering thread is pinned. The next artifact can be a staged-chain
+builder only after those entries are supported; using guessed offsets
+would repeat the failed live-probe pattern in `11` #21–#22.
+
+[verified-on-dump] The 13.60 donor resolves a subtle arm-chain entry
+contract: its `DBREG_RESUME` address `+0x2529d8` starts at `mov dr0,rax`.
+The preceding load from `[rdi+0x78]` is at `+0x2529d4` and is skipped;
+the reference arm chain deliberately pops its hook address into RAX.
+The tail subsequently loads DR1/2/3/6/7 and restores R15–R12, RBP,
+RSP, and RBX from the context before returning. [inference] The 12.02
+candidate `+0x2acb78` cannot be used merely because `cpu_switch` has
+the expected region offset; a 12.02 instruction read must confirm the
+entry and the full context/RSP side effects. A differing sequence or
+layout would falsify that candidate.
+
+[verified-in-tree] A nearest-anchor scan of Kstuff's
+`r0gdb/prosper0gdb/offsets/13_60.h:12-76` against Byepervisor's
+`include/offsets/13_60.h:26-49` places `POP_RSP` at least `0x8de8`
+bytes from its nearest named text offset; `MOV_RAX_RSI` is at least
+`0xe89b` away and `MOV_RAX_RDI`
+at least `0x1bd66` away. [inference] These gaps are too broad to turn
+the earlier local `cpu_switch` displacement into a defensible 12.02
+address for the dispatch/save gadgets. The missing gadget list above
+remains missing; a local 12.02 disassembly or independent same-function
+anchor would falsify this *lack of derivation* for any one gadget.
+
+[verified-on-dump] The 13.60 Kstuff `push_pop_all_iret` target is a
+jump thunk into a trap entry that reserves `0xe8` bytes, saves GPRs,
+reads state MSRs, calls the kernel trap routine, and jumps into the
+return path. Its `pop_all_iret` counterpart loads GPRs from a complete
+trapframe, conditionally swaps GS for a user return, then executes
+`iretq`. [public-consensus] Kstuff's
+[`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm)
+builds that full frame and its GSBASE/continuation handoff; its
+[`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h)
+names the 12.02 entries. [inference] Neither entry substitutes for
+Byepervisor's isolated save/restore gadgets: `push_pop_all_iret` calls
+the real trap handler, while `pop_all_iret` expects a populated full
+frame. A 12.02 disassembly and an independently justified full-frame
+layout would be needed to use them in a new chain.
+
+**Next construction gate:** derive and byte-check the 12.02 dispatch
+pivot, stack pivot, and save/restore gadget sequences, then specify the
+exact register and hardware-frame images for the chosen trigger. Until
+those contracts are reviewable, the two-gadget ELF remains deferred and
+there is no **Byepervisor-dispatch** ELF to send. The Kstuff-family
+alternative below has a separate contract. The shared #DB gate still presents
+the observed all-CPU risk even if only one thread is pinned; any new
+trigger needs prepared stacks for every CPU that can take #DB, a
+reviewed expected marker/observer plan, fresh owner approval, and the
+hard-power-cycle plus read-only baseline recovery plan.
+
+#### Alternative full continuation using Kstuff's 12.02 gadget family
+
+[public-consensus] Kstuff's
+[`kelf.asm` `memcpy` macro](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm)
+uses `pop_all_iret` with a populated register frame to enter
+`rep_movsb_pop_rbp_ret` and continue from its `pop rbp; ret` epilogue.
+Its [12.02 table](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h)
+names `add_rsp_iret`, `pop_all_iret`, `rep_movsb_pop_rbp_ret`, and
+`doreti_iret`; these yield text-relative offsets `0x2b3626`,
+`0x2b35ce`, `0x2efbba`, and `0x2b362d` with the dump-derived
+`kdata−ktext=0xd50000`. [verified-on-dump] The 13.60 donor decodes the
+corresponding `rep_movsb_pop_rbp_ret` entry as `rep movsb; pop rbp; ret`
+and `pop_all_iret` as full-GPR loads followed by a conditional `swapgs`
+and `iretq`. The exact 12.02 bytes are still unknown. This approach
+uses Kstuff's documented chain primitives instead of projecting
+Byepervisor's missing individual pop/store gadgets onto 12.02.
+
+[inference] A one-shot diagnostic can stage, for each of 16 CPUs, a
+five-word hardware-frame canary at `F−0x28`, a first kernel `iretq`
+frame at `F+0xc0`, two complete register frames, and a source/destination
+scratch marker. The intended sequence is:
+
+`#DB → add_rsp_iret → pop_all_iret → rep_movsb_pop_rbp_ret`
+`→ pop_all_iret → doreti_iret → original #DB hardware frame → user wrapper`.
+
+The first populated frame gives `rep movsb` kernel-data source,
+destination, and count 8. Its kernel RFLAGS value 2 clears DF and IF.
+The copy writes a fixed marker; `pop rbp; ret` enters the second
+`pop_all_iret` frame. That frame gives `doreti_iret` a kernel CS and
+RSP=`F−0x28`, so the final `iretq` consumes the CPU frame. A separate
+assembly wrapper saves all six ABI callee-saved GPRs on the **user**
+stack before `ICEBP`, then restores them after return; the kernel
+chain's second register image may set caller-saved GPRs to known
+values. The original CPU frame restores user RIP/RSP/RFLAGS/CS/SS.
+Falsifiers are a changed hardware frame without the marker, a marker
+without a return marker, register/frame mismatch, or another gate/IST
+state after cleanup. This validates a Kstuff-style continuation and
+return; it would **not** validate Byepervisor's unverified 12.02
+`add rsp,0x28; ret` dispatch pivot or DR7 arm pass.
+
+The isolated local source (outside this notes repo) now builds three
+FW 12.02 ELFs: setup-only SHA-256
+`074ec7dfa2feeff63cee4a096bf00590afe209e76bca4b688e1e55a2d838e99a`,
+live SHA-256
+`c057f484e66d137a14ddc041e02776da28193c1d9a741b32e27f6b0772fb7aff`,
+and read-only audit SHA-256
+`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`.
+Build success is an offline fact; **none has been sent** as of this note.
+Each CPU gets a `0x500`-byte disjoint slot (`0x5000` total), within a
+zero run in the 12.02 data dump; the payload refuses nonzero live
+scratch. It also refuses a non-native #DB gate, an unexpected IST4
+user, wrong kernel CS, failed single-CPU affinity, or a readback
+mismatch. The gate is shared, so all 16 IST4 slots are prepared before
+changing it. [inference] Zero bytes alone do not prove this scratch is
+unowned; a live change or concurrent owner would falsify the cave
+assumption.
+
+**Console plan approved by the owner on 2026-10-13:**
+read-only baseline first; then setup-only, expecting `[K1]`, restored
+`[K1r]`, and `[K2]` without #DB. Only after clean setup and a fresh
+baseline, the live ELF would expect `[K2] frame=MATCH marker=MATCH` and
+restored gate/IST4/scratch. The separate read-only audit reports each
+CPU's hardware frame and marker only while elfldr remains usable; a
+marker alone locates progress through the kernel copy, not through the
+return. A changed shared gate and all-CPU IST4
+slots can still panic or leave the machine unsafe. Recovery is a hard
+power cycle, followed by read-only native-gate/IST4/scratch audit and
+UI check.
+
+**Actual observations, 2026-10-13:** [verified-on-console] The initial
+read-only audit reported native #DB target `+0x3188b0`, IST4, zero
+staged slots, zero nonzero scratch bytes, and no marker. The setup-only
+ELF emitted `[K1]`, `[K1r]`, and `[K2]`; a second read-only audit gave
+the same clean baseline. The live ELF then emitted `[K1]` only. Its
+elfldr connection closed about 0.4 seconds later without `[K1r]` or
+`[K2]`; three pings and a port-9021 check immediately afterward
+succeeded. A follow-up attempt to send the read-only audit over elfldr
+timed out after 25 seconds with no audit marker. The next three pings
+failed and port 9021 no longer accepted connections. The PC-side
+`ps5log/1` record contains the live staging marker but no return/BYE.
+No hardware frame or scratch marker was captured, so neither the
+Kstuff-style chain nor any particular instruction was proved to run.
+[inference] The changed gate/IST4 state may have persisted when the
+first connection closed; a read-only audit payload can still execute
+code while that shared gate is changed. The observations do **not**
+establish whether the audit attempt caused the later outage or whether
+the original live fault progressed independently. Falsifier: an
+independent pre-armed observer or fault capture showing the gate had
+already been restored, or showing a different causal sequence.
+
+**Recovery state:** [verified-on-console] The owner hard power-cycled
+the PS5 and confirmed the UI works normally. A post-reboot ping replied,
+but elfldr port 9021 was not listening; the native gate, IST4 slots,
+and scratch have therefore not been re-audited after reboot. No ELF was
+sent after recovery. For any redesigned probe, the frame/marker observer
+must already be running before the live trigger; do not rely on loading
+a new audit ELF into an uncertain changed-gate state. This supersedes
+the post-stall audit part of the plan above.
 
 ### Frame staging isolation run
 

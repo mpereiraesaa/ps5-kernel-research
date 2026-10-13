@@ -34,8 +34,74 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 18 | The 13.60 IDT/TSS are at data-file offsets `0x2234300`/`0x2236fe0`, and matched syscalls imply `+0x6a340`/`+0x6a328` 12.02 code shifts | **WRONG COORDINATES** — the data-file offsets are `0x2ef4300`/`0x2ef6fe0`; the declared 735 sysent pairs yield `+0xadd70`/`+0xadd58` under dump-specific text bases. The old offsets subtracted the `0xcc0000` text size twice. | [verified-on-dump] `16` cross-dump audit |
 | 19 | The 12.02 dump's shared v1/v9/v13/v179 `add_rsp_iret` target proves Sony's native dismiss-stub layout | **WRONG BASELINE** — the owner confirms kstuff was running during the dump. A later live read-only audit with no kstuff running reported four distinct targets and IST0 for v9/v13/v179. Neither snapshot alone proves pristine firmware state. | [verified-on-console] `16` gate-state audit; [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:12-14` |
 | 20 | The #DB chain can run on #GP with an otherwise identical entry frame | **WRONG FRAME ASSUMPTION** — #GP supplies an error code; #DB does not. No 12.02 #GP chain or return has been validated. | [public-consensus] [AMD64 APM Vol. 2 §§8.2.2, 8.2.14](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2); [verified-in-tree] `docs/16-byepervisor-12-02-port.md:117-120` |
+| 21 | Successful all-CPU IST4/gate setup and Kstuff offsets imply the minimal `INT1` → `justreturn` probe will return | **FALSIFIED AS A RUN PREDICTION** — the setup-only build restored cleanly, but the live one-shot closed without a return marker and left gate/IST4 patched. The failing instruction and cause remain unknown. | [verified-on-console] `16` live one-shot run |
+| 22 | An immediate CPL0→CPL3 `iretq` frame is an adequate first khook probe because the architecture permits it | **UNSUPPORTED EXPERIMENT DESIGN** — the reviewed working implementations use staged kernel continuation before returning to user mode; our direct frame had no such precedent, and the console power-off did not identify the failing step. Architectural legality did not establish this 12.02 path. | [verified-on-console] `16` pretrigger handshake; [public-consensus] Kstuff `kelf.asm`, Byepervisor `khook.c` |
+| 23 | Kstuff's 12.02 `cpu_switch` entry is a verified replacement for Byepervisor's `DBREG_RESUME`, and the 13.60 gadget starts by loading DR0 from `[rdi+0x78]` | **WRONG ENTRY CONTRACT** — `cpu_switch` is only a same-region anchor. In the 13.60 donor, `DBREG_RESUME` starts at `mov dr0,rax`; the preceding RAX load is skipped, because the arm chain supplies DR0 in RAX. The proposed 12.02 address remains a byte-unverified candidate. | [verified-on-dump] 13.60 `kernel-text.bin+0x2529d4..0x252a32`; [public-consensus] Byepervisor `khook.c`; [inference] `16` cross-dump candidate |
+| 24 | A read-only audit ELF is a safe way to collect a frame after a live #DB probe stops returning, if the console still answers ping | **UNSUPPORTED RECOVERY ASSUMPTION** — after the Kstuff-style probe emitted `[K1]` without a return marker, ping and elfldr initially worked; the follow-up audit ELF timed out, and the console then stopped answering. This does not prove the audit caused the outage, but read-only intent did not make loading new code safe while shared gate/IST4 state was unknown. | [verified-on-console] `16` full-continuation run; [inference] possible persistent changed gate |
 
 ## Detail on the load-bearing ones
+
+### #24 — Post-stall auditing must be pre-armed [inference]
+
+The audit's kernel-memory operations were reads, but sending it still
+started another ELF while the first payload might have left the shared
+#DB gate and all IST4 slots redirected. The live probe closed without
+restoration evidence; the subsequent audit had no output and the PS5
+became unreachable. The causal instruction is unknown, so the
+correction is to the **safety assumption**, not a finding that the
+audit killed the machine. A future frame/marker observer must be
+running before the trigger and able to report without loading another
+ELF into this uncertain state. A captured gate restoration before the
+audit, or a fault trace showing the outage began independently, would
+falsify the proposed link between patched state and audit risk.
+
+### #23 — Region correspondence did not establish a gadget [inference]
+
+The old gadget table in `16` marked `DBREG_RESUME` covered by
+`cpu_switch`. They are not interchangeable entry points. The 13.60
+donor's `+0x2529d8` is three bytes after the load from `[rdi+0x78]`;
+the first executed instruction writes the RAX supplied by the arm chain
+to DR0. It then reads other debug registers and resumes a context,
+including a stack pivot. This correction changes the 12.02 port
+requirement: identify the *exact* entry and complete side effects from
+12.02 bytes before placing it in a chain. A matching 12.02 disassembly
+would support the candidate; a different instruction boundary or
+context layout would falsify it. No console run tested this candidate.
+
+### #22 — Architectural legality was mistaken for an adequate probe [inference]
+
+The direct user-return frame was chosen to reduce gadget dependencies.
+That was a hypothesis, not a behavior established by the public payloads
+we were using. Kstuff's first `iretq` enters kernel `justreturn` and a
+longer continuation (`ps5-kstuff/kelf.asm:245-295`). Byepervisor's
+`khook.c:358-386` does contain a CPL0→CPL3 `iretq`, but it follows an
+arm chain that sets debug state and IST; its dispatch path also saves
+registers and builds a resume tail (`khook.c:250-292, 397-449`). Our
+first staged `iretq` instead targeted user code immediately. The
+handshake attempt powered off without a captured exception frame, so
+it does **not** prove that the immediate return itself failed. It proves
+that choosing that frame was not justified by the working examples.
+A later two-gadget `nop_ret` → `doreti_iret` candidate stages a return
+address but still omits the context handling in those examples; it is
+deferred (`16`).
+A captured trace showing the direct frame completed and a later,
+independent fault powered off the console would falsify a claim that
+the direct frame caused that run's failure.
+
+### #21 — Setup-only success did not predict a live return [verified-on-console]
+
+The revised setup-only build staged all 16 frames, changed and read back
+the IST4 slots and #DB gate, then restored them with explicit markers.
+The subsequent live `INT1` build reached its staging marker but closed
+without a return or restoration marker. A read-only audit found the
+changed gate and all 16 staged IST4 values still present (`16`, live
+one-shot run). The earlier setup result establishes only that the data
+writes and restoration path can complete without intentional #DB. It
+does not establish that #DB was delivered on the patched stack or that
+the staged kernel return is valid. [inference] The live failure occurred
+at or after patching; a marker or captured frame placing failure before
+the `INT1` instruction would narrow this further. Do not treat the
+working Kstuff offsets as validation of this smaller frame layout.
 
 ### #20 — #GP and #DB entry frames differ [public-consensus]
 
