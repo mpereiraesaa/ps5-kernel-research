@@ -123,3 +123,35 @@ semantics, sigreturn only restores FS/GS base when `_MC_HASBASES` is set,
 so the ring-0 entry's sigreturn does **not** clobber the GS base from
 `mc_gsbase=0`. This falsifies the GS-base clobber link of the #70 fix
 [verified-on-console]; see docs/10 for the full record.
+
+## Instrumentation: freeze discriminator + klog side channel (2026-10-13)
+
+The GS theory is falsified but the freeze remains unexplained, so a second
+instrumentation pass targets the freeze itself. Two independent channels,
+because the freeze is a *timeout on the RSP socket* and a query over that
+socket may never be read:
+
+- **`qDiagF5`** (`gdb_stub/dbg.c:1007`) — a fixed-layout counter block
+  (handler/nested/park/session-lock/packet/interrupter counts) + a 16-slot
+  event ring (`struct gdb_diag_evt`, `dbg.c:68`). Pure memory reads;
+  reentrant-safe.
+- **`[r0gdb-diag]` klog beacons** — emitted on state transitions (nested
+  signal, park, contended session lock, interrupter fire, cleanup
+  begin/OK/FAIL). `klog_printf` goes through the SDK crt's `__crt_syscall`
+  (bare `syscall`; no TLS/errno/locking) so it works even when the RSP
+  socket is wedged. No-op outside the SDK-crt build.
+
+Handler/lock/packet/interrupter counters are incremented at
+`dbg.c:1267` (handler), `dbg.c:1668` (session lock), `dbg.c:817`
+(packet wait) and `dbg.c:1229` (interrupter). The payload side emits loop
+and cleanup beacons (`prosper0gdb/r0gdb.c:524` cleanup, `:540` loop).
+Clients: `tools/stub_verify.py --diag-f5`, `Session.diag_f5()`,
+`decode_diag_f5()`, `analyze_freeze()`; `tools/experiment_exit.py` attempts
+one `qDiagF5` on the freeze path before parking.
+
+Build sha `a6a227ef…` (see `docs/13-ring0-freeze-instrumentation.md` for the
+full hypothesis table, the falsifiable test, and the symbol map). The BSS
+grew again, so the client symbol cluster shifted
+(`SYM_R0GDB 0x4C94 -> 0x695E`); both `tools/stub_verify.py` and
+`tools/r0gdb_session.py` are re-pinned. **No console run has been
+performed.**
