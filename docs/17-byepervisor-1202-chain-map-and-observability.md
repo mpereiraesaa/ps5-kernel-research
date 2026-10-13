@@ -276,11 +276,27 @@ records. It also exercised a wrong F1 canary, failed read with `KH2E`,
 failed send (including the `KH2E` path), and premature Q1. The C source SHA-256 is
 `8284e7b9a733a24ad14c3c8b8e5ab79cf74ee53de499138d615daee12f982914`.
 The sampler is **not a synchronized worker**: its Q records depend on a
-future main/worker return signal and ownership transfer, which it cannot
-verify on its own. No SDK adapter or 12.02 payload invokes it; a host
+main/worker return signal and ownership transfer, which it cannot
+verify on its own. The separate worker schedule below supplies those calls
+in a host mock. No SDK adapter or 12.02 payload invokes it; a host
 fixture does not establish a console event. Its C source cross-compiled to a
 PS5 SDK object, but was not linked into an ELF. The first changed frame sample
 may also be partial and needs raw frame review.
+
+**Host-only worker handoff scaffold:** `kh2_worker.c/.h` runs the sampler on a
+pthread. R0 completes before main owns B2; `begin_arm` returns only after
+R1 and one scan, `end_arm` waits for an in-flight scan and Q1 before main
+owns A2; the second pair similarly bounds R2, the test syscall, and Q2.
+`stop` runs the worker's close callback before D2. Its host check completed
+20 two-transaction mock schedules with 18-record classifier acceptance,
+observed no worker reads while main owned the inter-trap interval, blocked
+a mismatched R1, and reported an active read failure with `KH2E` and no Q1.
+The C source SHA-256 is
+`8d0123922018fc7e3e56539f6e6e2de6152064838e4fc054a2f2f2071b4ccf9f`;
+it cross-compiled as a PS5 SDK object. The `prepare`/`finish` callbacks are
+mocked, so this does not prove a distinct console CPU, real pipe ownership,
+logger serialization, or any #DB delivery. A timeout leaves ownership
+uncertain and cannot be treated as permission for another trigger.
 
 ### Two-transaction observer ownership schedule
 
@@ -315,8 +331,9 @@ The proposed KH2 contract now names R0/R1/Q1/R2/Q2 and the classifier
 checks their raw links and order. The host sampler can format them from mock
 data, but **no integrated 12.02 producer or worker emits them**, so this
 remains an offline log specification, not a verified ownership schedule.
-The worker's atomic acknowledgments and resource transfer still need a
-source-level implementation and host-side failure fixtures. An implementation
+The host-only worker implements the source-level handoff and failure
+fixtures, but the real CPU pin, pipe open/close, SDK reads, logger adapter,
+B0/B1/B2/A2/D2 emitters, and 12.02 chain remain unconnected. An implementation
 with a truly independent kernel read
 primitive and synchronized thread-safe logger would falsify the need for
 this exact ownership transfer, but not the need to capture both frames before

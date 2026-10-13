@@ -83,6 +83,23 @@ This code has no thread handoff, PS5 SDK adapter, or 12.02 chain integration;
 its phase guard checks call order only. `kh2_capture.c` also compiled as a
 PS5 SDK relocatable object; no payload link or console operation was performed.
 
+An offline pthread schedule at
+`engineering/payloads/byepervisor_probe_1202/kh2_worker.c/.h` now wraps that
+capture core. Its `begin_arm`/`end_arm` and
+`begin_dispatch`/`end_dispatch` calls model SDK/logger ownership between
+main and observer, requiring a worker read/sample acknowledgment before
+each trigger and quiescence before main resumes reads/logging. The host check
+`kh2_worker_host_test.py --notes-repo /path/to/ps5-kernel-research` ran 20
+mocked two-transaction handoffs, accepted each combined 18-record trace,
+and checked early-quiesce rejection, bad-R1 blocking, active read failure,
+and no reads in the main-owned interval. Source SHA-256: `kh2_worker.c`
+`8d0123922018fc7e3e56539f6e6e2de6152064838e4fc054a2f2f2071b4ccf9f`,
+`kh2_worker.h`
+`61606cbcaeb2003f1ab18ff46f58ea75a5ef5a7499a63173e757b7b67cd1b921`.
+The worker source cross-compiled as a PS5 SDK object. It still has no real
+pinned-CPU/pipe/log adapter or 12.02 chain integration, and no console run
+was performed.
+
 [inference] The local prearmed worker's `observer_channel_read` uses the
 inherited SDK `kernel_copyin` primitive to configure its separate pipe
 (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`),
