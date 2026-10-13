@@ -1026,8 +1026,30 @@ pre-`INT1` failure or a captured hardware frame showing no #DB would
 falsify the delivery inference. This run **does not prove** that the
 12.02 `justreturn` offset or the frame geometry is wrong. Recovery
 state: shared gate/IST4 left patched; owner instructed to hard
-power-cycle. Normal UI after recovery is pending confirmation. Do not
-send another payload while that state persists.
+power-cycle. The owner then reported the console ready. A read-only
+audit ELF with the same SHA-256 reported the native #DB target
+`+0x3188b0`, IST4=4, zero staged IST4 pointers, and zero nonzero scratch
+bytes; the console answered two pings. The specific physical recovery
+action and UI state were not separately reported. No further kernel
+write or exception trigger was sent after the failed live run.
+
+**Proposed discriminator after recovery (not run):** a rebuilt read-only
+audit ELF SHA-256
+`f2c9d641b00f537129be8fe6664997a5ce713c60faf10517eb2eea16c6a3f3b2`
+compares each staged CPU's five words at `IST4−0x28` with the canaries
+written before the live trigger. It makes no IDT/TSS/scratch writes and
+does not trigger an exception. [inference] If the same live ELF is run
+again and leaves the gate/IST4 patched while the console remains
+reachable, a changed hardware-frame slot would support #DB delivery on
+that CPU; unchanged canaries would falsify delivery to those staged
+slots in that run. The audit cannot establish that the first `iretq`
+executed or that `justreturn` returned. The proposed live repeat would
+reuse SHA-256 `b75794ed0624071662c6a5432996c451821c04e77b2d94d6ac8d1b52216a0c22`;
+its expected outcome is either `[J2] ... frame=MATCH` or a failed
+return with a readable staged frame. Its known risk is another
+unrestored shared gate/all-CPU IST4 state, with possible console panic.
+Recovery is a hard power cycle followed by a read-only baseline audit.
+This repeat requires fresh owner approval before sending.
 
 ### Frame staging isolation run
 
