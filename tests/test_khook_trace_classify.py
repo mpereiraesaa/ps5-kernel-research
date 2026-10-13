@@ -550,6 +550,66 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(classify(read_fail)["boundary"],
                          "observer_read_failed_pretrigger")
 
+    def test_prearmed_v5_patch_phase_prefix_locates_last_readback(self):
+        def line(number, level, message):
+            return (f"{number}\t{number * 1000}\t{level}\t{message}\n").encode()
+
+        ready = line(2, "MARK", "FC1 seq=1 phase=READY fw=12.02 "
+                     "build=prearmed-v5 trigger_cpu=3 observer_cpu=7")
+        patch_messages = (["FCM phase=IST4_BEGIN"] +
+                          [f"FCM phase=IST4_DONE slot={slot}" for slot in range(16)] +
+                          ["FCM phase=GATE_BEGIN", "FCM phase=GATE_DONE"])
+        patch = [line(3 + index, "MARK", message +
+                      " fw=12.02 build=prearmed-v5 cpu=3")
+                 for index, message in enumerate(patch_messages)]
+        gate = line(22, "MARK", "FC1 seq=2 phase=GATE_VERIFIED cpu=3 "
+                    "gate_lo=0x111 gate_hi=0x222 expected_lo=0x111 "
+                    "expected_hi=0x222 ist4_matched=16 first_bad_cpu=-1 "
+                    "first_bad_ist=0x0")
+        baseline = line(23, "MARK", "FC1 seq=3 phase=PRETRIGGER cpu=3 "
+                        "frame_matched=5 marker_before=0x0 "
+                        "can0=0x4a524652414d4800 can1=0x4a524652414d4801 "
+                        "can2=0x4a524652414d4802 can3=0x4a524652414d4803 "
+                        "can4=0x4a524652414d4804")
+        trigger = line(24, "MARK", "FCM phase=TRIGGER_BEGIN fw=12.02 "
+                       "build=prearmed-v5 cpu=3 pretrigger=1")
+
+        def classify(patch_prefix, suffix=b"", linked=True):
+            return classify_kstuff_fullchain(
+                self.LIVE_STAGE,
+                pc=self.PC_STAGE + ready + b"".join(patch_prefix) + suffix,
+                pc_same_run_verified=linked)
+
+        cases = ((1, "ist4_patch_started_first_write_or_later_unproven"),
+                 (9, "ist4_patch_progress_gate_or_later_unproven"),
+                 (17, "ist4_patch_progress_gate_or_later_unproven"),
+                 (18, "gate_write_or_readback_unproven"),
+                 (19, "gate_readback_observer_or_later_unproven"))
+        for count, expected in cases:
+            with self.subTest(count=count):
+                result = classify(patch[:count])
+                self.assertEqual(result["boundary"], expected)
+                if count == 9:
+                    self.assertEqual(result["signals"]["fc1"]["ist4_last_done"], 7)
+        self.assertEqual(classify(patch, gate)["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+        self.assertEqual(classify(patch, gate + baseline + trigger)["boundary"],
+                         "trigger_call_reached_db_delivery_or_later_unproven")
+        incomplete = classify(patch[:9], gate + baseline + trigger)
+        self.assertEqual(incomplete["boundary"],
+                         "pretrigger_baseline_verified_trigger_or_later_unproven")
+        self.assertFalse(incomplete["signals"]["fc1"]["trigger_begin"])
+        duplicate = classify(patch + patch[-1:], gate + baseline + trigger)
+        self.assertEqual(duplicate["boundary"],
+                         "pretrigger_baseline_verified_trigger_or_later_unproven")
+        self.assertFalse(duplicate["signals"]["fc1"]["patch_complete"])
+        self.assertEqual(classify(patch[:9] + patch[10:])[
+            "signals"]["fc1"]["ist4_last_done"], 7)
+        self.assertEqual(classify(patch[:9] + patch[10:])["boundary"],
+                         "ist4_patch_progress_gate_or_later_unproven")
+        self.assertEqual(classify(patch, linked=False)["boundary"],
+                         "prepatch_staging_seen_gate_patch_or_later_unproven")
+
     def test_prearmed_gate_mismatch_and_nonselected_frame(self):
         bad_gate = self.FC1.replace(b"gate_lo=0x111", b"gate_lo=0x112")
         result = classify_kstuff_fullchain(
