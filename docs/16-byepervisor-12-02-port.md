@@ -664,6 +664,42 @@ engine as “proven” would repeat a claim already corrected above.
   its last completed instruction. This run does **not** establish
   exception delivery or IST4 frame use.
 
+### Separate kernel-read channel calibration (2026-10-13)
+
+- **FW/build and approval:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_observer_channel.elf`, SHA-256
+  `2566975ee18bdad09d468996417a1620ae35e56f99de35fba5cf6d5cd01ec0ae`.
+  The owner explicitly approved sending the rebuilt observer ELF. The
+  recovery plan for a freeze or an unsafe pipe restore was a hard power
+  cycle; the payload was designed to park on a failed restore or thread join.
+- **Expected:** allocate a second pipe object, take SDK reference reads of
+  the live vector-1 gate and scratch, pin the trigger thread and observer
+  worker to two different permitted CPUs, take the same reads through the
+  second pipe, log the worker result independently to `ps5log/1`, compare
+  the reference reads before/after, and restore/verify the pipe object and
+  original affinity. No IDT/IST/scratch writes or #DB trigger were in
+  this calibration build.
+- **Actual:** elfldr returned `[O1]` with reserved CPU 9 and observer CPU
+  11, then `[O2] trigger CPU pin=YES; observer/SDK match=YES; references
+  stable=YES; worker log send=YES; affinity restore=YES; pipe restore=YES`.
+  The PC `ps5log/1` server recorded three ordered markers: worker sample
+  `rc=0`, stable references/read match, and private-pipe restore. Its
+  manifest reported `clean=true`, `records=3`, and no sequence gaps. Two
+  post-run pings succeeded.
+- **Recovery state:** the payload exited normally and the console remained
+  reachable; no hard power cycle was needed. Other console services were
+  not checked.
+- **Interpretation:** [verified-on-console] a worker on another CPU read
+  these two kernel-data regions through a separate pipe and delivered its
+  result to the PC in this calibration run. [verified-in-tree] The SDK
+  `kernel_copyout`/`kernel_copyin` path configures a pipe via the inherited
+  socket pair (`ps5-payload-sdk/crt/kernel.c:462-528`). [inference] The
+  observer's per-sample setup still depends on that inherited primitive,
+  so a later trigger must serialize SDK kernel reads/writes against the
+  observer; overlapping them would falsify the assumed isolation. This run
+  did not trigger #DB and did not capture an exception frame, so it leaves
+  the four live-path boundaries below unvalidated.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
