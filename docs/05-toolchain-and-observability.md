@@ -105,6 +105,13 @@ below now supplies linkable pinned-CPU/pipe/log functions, but there is no
 
 The local `kh2_main_capture.c/.h` adds B0/B1/B2/A2/D2 readback production
 through supplied kernel-read, SHA-256, and log callbacks. Its supplied write
+callback and read callback now use at most `0x500` bytes per attempt. Each
+main-thread read emits `KH2R begin` before the callback and `KH2R done`
+after it returns success; a returned error emits `KH2E operation=read`.
+A failed `begin` send prevents that read. These markers name an unresolved
+address if a read or following log send does not finish, subject to PC
+transport retention. The extra sends can lengthen the patched-gate window;
+their runtime cost has not been measured on a console. The supplied write
 callback stages B1 in `0x500`-byte calls and requires all 16 IST6 writes
 before the B2 gate write, followed by four context writes. A failed callback
 emits `KH2E operation=write` with its attempted address and blocks the
@@ -116,8 +123,8 @@ Every B1/B2/A2/D2 callback is bracketed by `KH2W begin` and `done` log
 attempts. The producer waits for `begin` send to return before the write;
 its failure stops the write. A missing `done` cannot by itself prove where
 the console stopped because PC retention is separate from a send return.
-It captures each B1 span's prewrite hash, verifies the staged/readback bytes, and later
-checks **all three** restored span hashes at D2 alongside the B0 scratch
+It captures each B1 span's prewrite hash, verifies the staged/readback bytes,
+and later checks **all three** restored span hashes at D2 alongside the B0 scratch
 baseline (`11` #33). The image B1 record now bounds all four later context
 qword writes, and A2 requires its armed-state address inside the B1 journal
 span, away from marker words (`11` #34). A2 also reads all 16 IST6 qwords,
@@ -125,16 +132,18 @@ links its arm-image hash to B2, and reports the first CPU with a pointer
 mismatch before permitting the second trigger. The main host check rejects both
 out-of-span cases. `kh2_main_host_test.py` combined seven native main
 milestones with 11 records from a separate worker mock into a classifier-accepted
-transcript with 18 KH2 milestones and 94 write brackets; an un-restored journal and a changed nonselected IST6
+transcript with 18 KH2 milestones, 94 write brackets, and 170 read brackets.
+An un-restored journal and a changed nonselected IST6
 pointer were rejected at D2 and A2 respectively. Injected B1/B2/A2/D2 write
 failures produced `KH2E` without their success records, and retries were
 rejected. The host check paired 47 write attempts in a complete transcript
-and rejected a failed `begin` send before any callback write. This verifies
-format and baseline linkage across two mock processes, not a same-attempt
+and 85 main-thread read attempts; it rejected failed `begin` sends before
+either callback type ran. This verifies format and baseline linkage across
+two mock processes, not a same-attempt
 console trace. Source SHA-256: `kh2_main_capture.c`
-`94fe0dda2617965c46c7bce7421d9d2971241f49faf62e78041582363e2e3e86`,
+`3221546631da6b0c0b1e12a3db207d370277fa4ca3752d89badaaf134b60f60f`,
 `kh2_main_capture.h`
-`ee26d66351d411607ab64a074f05c61e56829497543e0db09b9d60f49431120d`.
+`2f12899acee861dcce6c2b843091980808e9316b2f276b3aac00e5455d2f4536`.
 The C source cross-compiled as a PS5 SDK object. No 12.02 payload invokes
 this producer.
 
@@ -159,12 +168,12 @@ in **one host process** over one mutex-protected mock memory image and
 ordered log. Its callbacks reject a read, send, or main staging write by
 the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
 notes checkout with `--notes-repo`, classified 20 complete attempts with
-18 KH2 milestones and 94 `KH2W` bracket lines each. No callback-owner
+18 KH2 milestones, 94 `KH2W` lines, and 170 `KH2R` lines each. No callback-owner
 violation or stage-order conflict occurred; a journal left changed
 was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
-`03194c459116c5fcbf09cbe83c93be4a91d6453dbd29362f478748c3c798311c`,
+`18779bc053e5317d8c387515560905b5dcb50390bd929f75d471e48d6a2f6180`,
 `kh2_integrated_host_test.py`
-`9af8c72df0019cf51c788b4bc191915513efb9ac6c46b372007b473b676b0f68`.
+`e734ad3d94437c4e12852a758128399b3e7aa9a43bc72830dadcdc1fcbcb74ac`.
 The two mock kernel events set frame/journal bytes directly; they are not
 hardware traps or a PS5 SDK/log transport test.
 

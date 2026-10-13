@@ -222,12 +222,25 @@ same pattern. A retained same-attempt `done` would falsify the claim that
 this particular callback stayed in flight. `done` means the callback
 returned success, not that the kernel bytes were read back; the KH2 stage
 record still carries that later evidence.
+[inference] The main-thread `kernel_copyout` path has the same returned-error
+blind spot. Its off-tree producer now emits `KH2R stage=… cpu=… region=…
+addr=… bytes=… state=begin|done` around each B0/B1/B2/A2/D2 read callback,
+in chunks no larger than `0x500`. The classifier reports
+`open_read_attempts` separately from KH2 milestones, and the layout checker
+maps the reported range to a candidate gate, IST6 CPU, frame, context word,
+or staged span when the full range fits. A retained open read narrows an
+unobserved interval; a missing `done` can also mean the following log send
+failed or its PC record was lost. A retained `done` would falsify the claim
+that this callback remained in flight. The host run paired 85 main reads;
+its added 170 log lines may change timing while the shared gate is patched.
+A larger 12.02 span would emit more lines.
+No console timing or PS5 read callback was exercised in this offline check.
 [inference] A callback may have changed part of a span before returning an
 error; a same-attempt read of the entire original span would falsify a
 partial-change claim for that event. The logger's send result is not a
 durable PC acknowledgment (`engineering/projects/logging_server/client/ps5log.h:734-749`).
-[verified-in-tree] `tools/khook_trace_classify.py:326-409,535-540` and
-`tools/kh2_layout_check.py:176-219,280-287,321-342` define the host-side
+[verified-in-tree] `tools/khook_trace_classify.py:336-470,593-602` and
+`tools/kh2_layout_check.py:176-226,287-299,333-358` define the host-side
 distinction; their focused tests exercise it.
 
 [inference] A later frame report cannot establish a canary replacement by
@@ -371,7 +384,7 @@ CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected
 B1/B2/A2/D2 write failures emitted retained `KH2E` without the
 corresponding success record. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`94fe0dda2617965c46c7bce7421d9d2971241f49faf62e78041582363e2e3e86`;
+`3221546631da6b0c0b1e12a3db207d370277fa4ca3752d89badaaf134b60f60f`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
@@ -398,8 +411,8 @@ transport integrity.
 main emitter and pthread worker against one mock memory image and one log,
 with callback ownership checks through both transactions, including A2
 and D2 writes. The host test
-completed 20 ordered transcripts with 18 KH2 milestones and 94 `KH2W`
-bracket lines each; an un-restored journal caused
+completed 20 ordered transcripts with 18 KH2 milestones, 94 `KH2W` lines,
+and 170 `KH2R` lines each; an un-restored journal caused
 D2 rejection. The source hashes and test name are in `05`. The two
 frame/journal changes are simulated mock writes, so the passing transcripts
 establish callback ordering and record linkage, not a #DB, an SDK pipe

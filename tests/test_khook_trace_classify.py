@@ -125,6 +125,25 @@ def classify_records(*payloads):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_read_brackets_expose_unresolved_callback_without_claiming_b0(self):
+        begin = ("1\t1000\tMARK\tKH2R stage=B0 cpu=3 region=gate "
+                 "addr=0x500 bytes=16 state=begin\n")
+        result = classify(begin.encode())
+        self.assertEqual(result["first_missing_direct_evidence"], "B0")
+        self.assertEqual(result["open_read_attempts"][0]["addr"], "0x500")
+        self.assertEqual(result["observed"], {})
+        done = ("2\t2000\tMARK\tKH2R stage=B0 cpu=3 region=gate "
+                "addr=0x500 bytes=16 state=done\n")
+        completed = classify((begin + done).encode())
+        self.assertEqual(completed["open_read_attempts"], [])
+        self.assertEqual(completed["last_read_attempt"]["result"], "done")
+        failed = classify((begin + "2\t2000\tERR\tKH2E stage=B0 cpu=3 "
+                           "operation=read region=gate addr=0x500\n").encode())
+        self.assertEqual(failed["read_attempts"][0]["result"], "error")
+        orphan = classify(done.encode())
+        self.assertIn("KH2R done without begin",
+                      [item["reason"] for item in orphan["rejected"]])
+
     def test_write_brackets_expose_open_callback_without_claiming_execution(self):
         prefix = f"1\t1000\tMARK\t{record('B0')}\n"
         begin = ("2\t2000\tMARK\tKH2W stage=B1 cpu=3 region=image "

@@ -174,7 +174,7 @@ def check(plan):
 
 
 def locate_write_error(plan, error):
-    """Map a reported failed write address to the candidate plan."""
+    """Map a reported I/O address and optional byte count to the plan."""
     address = number(error["addr"])
     length = number(error["bytes"]) if "bytes" in error else 1
     stage, region = error["stage"], error["region"]
@@ -192,11 +192,11 @@ def locate_write_error(plan, error):
                     if start <= address and address + length <= start + landing_size:
                         location["landing_cpu"] = number(landing["cpu"])
                         break
-    elif stage in ("B2", "D2") and region == "gate":
+    elif stage in ("B0", "B2", "D2") and region == "gate":
         base = number(plan["gate"]["base"])
         if address in (base, base + 8) and address + length <= base + 16:
             location.update(plan_match=True, word=(address - base) // 8)
-    elif stage in ("B2", "A2", "D2") and region == "ist6":
+    elif stage in ("B0", "B2", "A2", "D2") and region == "ist6":
         for cpu, item in enumerate(plan["ist_qwords"]):
             if address == number(item) and length <= 8 and (stage != "A2" or
                                             cpu == number(plan["selected_cpu"])):
@@ -208,10 +208,17 @@ def locate_write_error(plan, error):
                 location.update(plan_match=True,
                                 context=("rbp", "rip", "rsp", "dr7")[index])
                 break
+    elif stage == "B2" and region == "frame":
+        for index, item in enumerate(plan["frame_slots"]):
+            base = number(item)
+            if base <= address and address + length <= base + 0x28:
+                location.update(plan_match=True, frame=index + 1,
+                                offset=hex(address - base))
+                break
     elif stage == "A2" and region == "armed":
         if address == number(plan["journal_qwords"][4]) and length <= 8:
             location["plan_match"] = True
-    elif stage == "D2" and region == "scratch" and "scratch" in plan:
+    elif stage in ("B0", "D2") and region == "scratch" and "scratch" in plan:
         scratch = plan["scratch"]
         base, size = number(scratch["base"]), number(scratch["size"])
         if base <= address and address + length <= base + size:
@@ -285,6 +292,11 @@ def compare_log(plan, raw, manifest=None, geometry=None):
     for location, attempt in zip(write_attempt_locations,
                                  classification["write_attempts"]):
         location.update(bytes=attempt["bytes"], result=attempt["result"])
+    read_attempt_locations = [locate_write_error(plan, attempt)
+                              for attempt in classification["read_attempts"]]
+    for location, attempt in zip(read_attempt_locations,
+                                 classification["read_attempts"]):
+        location.update(bytes=attempt["bytes"], result=attempt["result"])
     mismatches = []
     comparison_errors = []
     compared_fields = []
@@ -320,6 +332,7 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         status = "mismatch"
     elif (classification["rejected"] or classification["capture_errors"] or
           classification["open_write_attempts"] or
+          classification["open_read_attempts"] or
           classification["causal_order_conflict"]):
         status = "classifier_rejected_or_capture_error"
     elif not compared_fields:
@@ -340,6 +353,9 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         "write_attempt_locations": write_attempt_locations,
         "open_write_locations": [item for item in write_attempt_locations
                                  if item["result"] == "open"],
+        "read_attempt_locations": read_attempt_locations,
+        "open_read_locations": [item for item in read_attempt_locations
+                                if item["result"] == "open"],
         "causal_order_conflict": classification["causal_order_conflict"],
         "transport": classification["transport"],
         "integrity": classification["integrity"],
