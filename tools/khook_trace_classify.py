@@ -303,11 +303,13 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("B0 baseline missing for restoration comparison")
             if set(state.get("b1_before", {})) != set(B1_PARTS):
                 raise ValueError("B1 span baselines missing for restoration")
+            if ist_count is None:
+                raise ValueError("B2 IST count missing for restoration comparison")
             if fields.get("returned") != "1" or fields.get("gate_restored") != "1" or (
                     fields.get("scratch_restored") != "1"):
                 raise ValueError("return or restoration absent")
             restored = int(fields.get("ist_restored", "0"))
-            if restored < 1 or (ist_count is not None and restored != ist_count):
+            if restored != ist_count:
                 raise ValueError("IST restoration count differs")
             if ((number("gate_lo"), number("gate_hi"),
                  number("ist6"), sha("scratch_readback_sha")) !=
