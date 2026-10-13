@@ -1434,6 +1434,24 @@ the expected region offset; a 12.02 instruction read must confirm the
 entry and the full context/RSP side effects. A differing sequence or
 layout would falsify that candidate.
 
+[verified-on-dump] The 13.60 Kstuff `gpr2dr_1_start` at
+`ktext+0x252466` starts with DR0/DR1 stores, then reaches context MSR
+restoration after `+0x25248b`; `gpr2dr_2_start` at `+0x252559` stores
+DR6/DR7 and jumps back into `cpu_switch` at `+0x2522f7`. Neither entry
+has a local `ret`. [public-consensus] Kstuff's
+[`r0gdb_write_dbregs`](https://github.com/EchoStretch/kstuff-lite/blob/48cd2c4ce62aa9ca0c2cc014c1e512f276ae7c17/prosper0gdb/r0gdb.c#L536-L556)
+calls its single-step `run_in_kernel` nine times from the first entry,
+then sets RIP to the second and calls it three times; its
+[`r0run.asm`](https://github.com/EchoStretch/kstuff-lite/blob/48cd2c4ce62aa9ca0c2cc014c1e512f276ae7c17/prosper0gdb/r0run.asm#L15-L91)
+returns through the INT9/INT1 frame after each step. This skips the
+intervening MSR block rather than treating both names as a continuous
+ROP tail. [inference] The public 12.02 table's `gpr2dr_1_start` and
+`gpr2dr_2_start` are therefore useful **stepping addresses**, but do
+not supply a reviewed direct substitute for Byepervisor's arm
+`DBREG_RESUME`. A 12.02 text image showing a different self-contained
+return path, or a complete reviewed 12.02 `cpu_switch` context, would
+falsify this lack of a direct-chain contract (`11` #48).
+
 [verified-in-tree] A nearest-anchor scan of Kstuff's
 `r0gdb/prosper0gdb/offsets/13_60.h:12-76` against Byepervisor's
 `include/offsets/13_60.h:26-49` places `POP_RSP` at least `0x8de8`
