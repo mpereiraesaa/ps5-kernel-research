@@ -32,8 +32,23 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 16 | The resume trigger is a **#DB breakpoint** at `acpi_sleep_machdep+0x18e` | **WRONG KIND** — the public loader triggers via a kernel-data **`AcpiGbl_FACS` self-corruption → #GP** (IST6), no breakpoint; `+0x18e` also invalid (#14). | [verified-in-source] `15` §1 |
 | 17 | The public loader's `ACPIGBL_FACS` offsets can be used on 12.02 | **WRONG METHOD** — loader is a different link coordinate (`KERNEL_TEXT=…80210000`) and tops out at 7.61; transfer is invalid. Use the dump-derived `kdata+0x2cb4c80`. | [verified-on-dump] `15` §2–§3 |
 | 18 | The 13.60 IDT/TSS are at data-file offsets `0x2234300`/`0x2236fe0`, and matched syscalls imply `+0x6a340`/`+0x6a328` 12.02 code shifts | **WRONG COORDINATES** — the data-file offsets are `0x2ef4300`/`0x2ef6fe0`; the declared 735 sysent pairs yield `+0xadd70`/`+0xadd58` under dump-specific text bases. The old offsets subtracted the `0xcc0000` text size twice. | [verified-on-dump] `16` cross-dump audit |
+| 19 | The 12.02 dump's shared v1/v9/v13/v179 `add_rsp_iret` target proves Sony's native dismiss-stub layout | **WRONG BASELINE** — the owner confirms kstuff was running during the dump. A later live read-only audit with no kstuff running reported four distinct targets and IST0 for v9/v13/v179. Neither snapshot alone proves pristine firmware state. | [verified-on-console] `16` gate-state audit; [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:12-14` |
 
 ## Detail on the load-bearing ones
+
+### #19 — A patched dump is not a firmware gate baseline [verified-on-console]
+
+The owner confirms the 12.02 data dump was captured while kstuff was
+running. Its v1/v9/v13/v179 gate targets at `ktext+0x2b3626` match the
+12.02 `add_rsp_iret` offset (`r0gdb/prosper0gdb/offsets/12_02.h:12-14`).
+An earlier `idtdump` snapshot showed the same shared target, but that
+does not make it Sony's native #DB/#GP handler. With kstuff reported
+absent, the later read-only audit in `16` observed v1 at
+`ktext+0x3188b0`/IST4 and distinct v9/v13/v179 targets at IST0.
+These observations correct the original "Sony dismisses all four"
+claim. [inference] The earlier common target reflects a patched
+state; a clean boot with no earlier gate-changing payload that still
+shows all four gates at that common target would falsify this.
 
 ### #18 — Cross-dump coordinates must be checked against records [verified-on-dump]
 
