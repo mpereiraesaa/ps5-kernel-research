@@ -42,7 +42,12 @@ The proof used this sequence:
    ends at 0x40000000). The page survives S3 clean.
 2. **Arm #DB** at `acpi_sleep_machdep+0x18e` — the breakpoint fires
    in the resume window (after `resumectx`, before
-   `acpi_wakeup_cpus`).
+   `acpi_wakeup_cpus`). **CORRECTION (2026-10-13):** this offset is
+   unverified. `0x18e` (398 B) exceeds the compiled size of
+   `acpi_sleep_machdep` under the FreeBSD 11.0 source, so it cannot be
+   an instruction inside that function. The resume *window* is real;
+   the *instruction* must be re-derived from same-firmware evidence
+   before arming. See `11` #14 and `12` §2.
 3. The #DB's ROP chain invokes `HCALL 0x0f(core=15,
    RIP=0x3ffff000, CR3=0x68000)` from kernel context.
 4. Core 15 launches at 0x3ffff000 with CR3=0x68000. It never fetches
@@ -97,11 +102,14 @@ verified — confirming the full write primitive.
 - The VMCB write primitive from root 0 (16-core read-back-verify)
 - The firmware bios_mapping carrier page at 0x3ffff000
 - The #DB breakpoint at acpi_sleep_machdep+0x18e
+  (offset unverified — see `11` #14 / `12` §2)
 
 ### Still unknown
 
-- The exact address of `acpi_sleep_machdep` on 12.02 (best lead: the
-  FACS wake vector at phys 0x9bf60, readable via one alias read)
+- The exact address of `acpi_sleep_machdep` on 12.02. **CORRECTION
+  (2026-10-13):** the FACS is at phys **0x7fd6e000**, not 0x9bf60
+  (that is `PM1a_EVT_BLK`); the wake vector lead is untested, not dead.
+  See `12` §1.
 - Whether the VMMCALL intercept is actually enabled during the
   resume window (it's the hypothesis, not yet observed)
 
@@ -172,13 +180,14 @@ pair and `struct kobj_class` name / methods fields ([FreeBSD 11.0
 
 ACPI table data:
 - **FADT** at kdata+0x7604000 (signature "FACP", length 268)
-- **FACS at phys 0x9bf60** (from FADT X_FIRMWARE_CTRL)
+- **FACS at phys 0x7fd6e000** (from FADT `FIRMWARE_CTRL` at +0x24;
+  corrected 2026-10-13 — earlier 0x9bf60 was `PM1a_EVT_BLK`. See `12` §1.)
 - ACPI/power-related strings found in kernel data include
   "acpi_wakeup: failed to resume AP #%d", "acpi_wakeup_event",
   "acpi_sleep_event", and the `power_resume`/`power_suspend` names
   (including `ws_mgmt_*` strings noted below).
-- The FACS read at phys 0x9bf60 was all zero; it provides no wake vector
-  for locating the resume entry point.
+- ~~The FACS read at phys 0x9bf60 was all zero~~ **CORRECTED:** 0x9bf60
+  is not the FACS; the real FACS at 0x7fd6e000 is unread. See `12` §1.
 
 ### Power/ACPI name anchors and source call path
 
@@ -295,15 +304,25 @@ HCALL 0x0f → AP on root 0 → VMCB write.
 | `09-live-kernel-state-and-fsgsbase.md` | Live kernel state + FSGSBASE analysis + HV lineage survey |
 | `10-hcall-resume-window-and-noops.md` | This document |
 | `11-debunked-theories-and-corrections.md` | Register of debunked theories + corrections |
+| `12-acpi-static-anchor-corrections.md` | ACPI static-anchor corrections for this route (FACS, `+0x18e`, string scan) |
 | `evidence-logs/` | Raw protocol logs |
 
 ### NOOP: FACS wake vector (2026-10-12)
 
-The FACS at phys 0x9bf60 (from FADT X_FIRMWARE_CTRL) reads as **all
-zeros** via the alias engine (no fault, page readable, just empty).
-The PS5's firmware does not populate a traditional ACPI FACS wake
-vector at this address. The PS5 resume goes through the hypervisor,
-not through a BIOS ACPI wake. This approach is dead.
+**CORRECTION (2026-10-13) — this NOOP is invalid; it tested the wrong
+address.** The read at phys `0x9bf60` targeted the FADT's
+`PM1a_EVT_BLK` field (`+0x40`), **not** the FACS. The FACS pointer is
+`FIRMWARE_CTRL` at `+0x24` = phys **`0x7fd6e000`** (`X_FIRMWARE_CTRL`
+at `+0x84` is 0); the dump's populated FADT confirms this. So the
+all-zero read says nothing about a wake vector — it read a PM event
+block. The FACS wake-vector lead is **untested, not dead**: one alias
+read at `0x7fd6e000`+0x0C/0x18 is still required. See
+`12-acpi-static-anchor-corrections.md` §1.
+
+What remains a fair (weaker) conclusion: the PS5's resume control flow
+is hypervisor-mediated, so a classic BIOS ACPI wake vector may not be
+the entry point — but that is now `[inference]` pending the corrected
+read, not a `[verified-on-console]` NOOP.
 
 Alternatives for locating `acpi_sleep_machdep`:
 1. The kobj table lead is resolved: ktext+0x396390 belongs to the

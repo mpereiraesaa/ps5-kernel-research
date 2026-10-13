@@ -26,6 +26,9 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 10 | `cpu_stdext_feature` = the dword adjacent to the CPUID cluster (`0x6799`) | **WRONG** — has INVPCID (impossible on Zen 2) | [verified-on-dump] `10` §137 |
 | 11 | `fsgsbase_enable` CR4 write via a kernel-data boot candidate | **WRONG** — candidates never stable across boots | [verified-on-console] `10` §135 |
 | 12 | `vm_map` gating is a valid oracle for the static image | **WRONG** — the static image has no vm_map entries | [verified-in-tree] `07` §153 |
+| 13 | "FACS wake vector at phys `0x9bf60` is all-zero → PS5 has no FACS wake" | **WRONG ADDRESS** — `0x9bf60` is `PM1a_EVT_BLK`; FACS is `0x7fd6e000` | [verified-on-dump] `12` §1, `09`, `10` |
+| 14 | `acpi_sleep_machdep+0x18e` is a valid #DB breakpoint in the resume window | **WRONG** — `0x18e`=398 B exceeds the function's compiled size | [verified-in-source] `12` §2, `09`, `10` |
+| 15 | "No `.data` pointer to the ACPI strings ⇒ PS5 dropped/renamed the event path" | **WRONG** — references live in un-dumped `.text`, not `.data` | [verified-on-dump] `12` §3 |
 
 ## Detail on the load-bearing ones
 
@@ -77,6 +80,39 @@ or `r0gdb_cleanup`'s `run_in_kernel` MSR step.
 **Lesson**: before assuming a signal-frame field drives behavior,
 verify the `mc_flags` gate that decides whether the kernel *reads* it.
 "Field is zero in the frame" ≠ "kernel uses the zero."
+
+### #13–#15 — Three ACPI static-anchor errors, one shared lesson [see `12`]
+
+The resume route (`10`) hinged on three "facts" that were never checked
+against the object they described. Each had a cheap offline falsifier,
+and none was ever run before console risk. Full detail in
+`12-acpi-static-anchor-corrections.md`.
+
+- **#13 — wrong FADT field.** The FACS was claimed at phys `0x9bf60`
+  "from X_FIRMWARE_CTRL at +0x40." ACPI puts `FIRMWARE_CTRL` at
+  `+0x24` (`X_FIRMWARE_CTRL` at `+0x84`); `+0x40` is `PM1a_EVT_BLK`.
+  The dump's populated FADT gives `FIRMWARE_CTRL = 0x7fd6e000`
+  (`X_FIRMWARE_CTRL = 0`). So the all-zero `0x9bf60` read tested the
+  PM-block base, not the FACS — the "no FACS wake" NOOP is invalid and
+  the real FACS (`0x7fd6e000`) is an **untested** lead.
+- **#14 — off-the-end breakpoint.** `acpi_sleep_machdep+0x18e` (398
+  bytes) exceeds what that function can compile to (crude `-O0`
+  upper bound `0x10e`; `-Os` lower bound 12 B). The offset is not
+  inside `acpi_sleep_machdep` for any layout near FreeBSD 11.0. The
+  resume *window* is real; the *instruction* is unverified.
+- **#15 — misread absence.** "No `.data` pointer to the ACPI event
+  strings" was read as "PS5 dropped/renamed the path." In FreeBSD 11
+  those names are string literals referenced from `.text`; a data-only
+  dump cannot see them. Absence of a pointer in a partial dump is
+  evidence of nothing.
+
+**Shared lesson**: derive a constant from the object it indexes (`+N`
+from the *same* table/function), never transcribe a neighbouring field
+or an offset whose containing symbol you never sized. All three would
+have been caught by one structural cross-check before touching the
+console. Reinforces #3 (`START_RIP_OFF` typo) and #4 (CR4 bit scan):
+**measurement beats interpretation, and the cheapest measurement is the
+one you do offline.**
 
 ### #3/#4 — Two lab-wide "measurement beats interpretation" lessons
 

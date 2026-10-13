@@ -299,7 +299,11 @@ The hcall invocation cannot come from a userland payload. It must
 come from kernel context during the resume window:
 
 1. r0gdb's debug register machinery arms #DB at
-   acpi_sleep_machdep+0x18e (in the resume path)
+   `acpi_sleep_machdep+0x18e` (in the resume path). **CORRECTION
+   (2026-10-13):** this offset is unverified — `0x18e` (398 B) exceeds
+   the function's compiled size, so it cannot be an instruction inside
+   `acpi_sleep_machdep` (see `12` §2). The *window* is real; re-derive
+   the breakpoint instruction before arming it.
 2. The #DB fires after resumectx but before acpi_wakeup_cpus
 3. The ROP chain (or gadget-step) invokes VMMCALL from the kernel
    context where the intercept is (presumably) enabled
@@ -339,9 +343,13 @@ used for this structural match.
 ### ACPI tables [verified-on-dump]
 
 - FADT at kdata+0x7604000 (signature "FACP", length 268)
-- FACS at phys **0x9bf60** (from FADT X_FIRMWARE_CTRL at +0x40)
+- FACS at phys **0x7fd6e000** (from FADT `FIRMWARE_CTRL` at **+0x24**;
+  `X_FIRMWARE_CTRL` at +0x84 is 0). **CORRECTION (2026-10-13):** the
+  earlier `0x9bf60` came from reading the `PM1a_EVT_BLK` field at +0x40,
+  not the FACS pointer. See `12-acpi-static-anchor-corrections.md` §1.
 - The FACS wake vector (at +0x0C 32-bit or +0x18 64-bit) would give
-  the kernel resume entry point — one alias-engine read needed
+  the kernel resume entry point — one alias-engine read needed, at the
+  corrected address 0x7fd6e000
 - DSDT at kdata+0x2cb4c58
 
 ### ACPI strings in kernel data [verified-on-dump]
@@ -352,9 +360,12 @@ used for this structural match.
 - "power_resume" at kdata+0x037b4ee and 0x04395ef
 - "power_suspend" at kdata+0x0399a65 and 0x048c6aa
 
-No aligned kernel data pointers to these strings exist (the
-eventhandler lists are outside the dump window or use a different
-naming scheme on PS5).
+No aligned kernel data pointers to these strings exist. **CORRECTION
+(2026-10-13):** this is expected, not informative — FreeBSD 11 stores
+these event names as string literals referenced from `.text` (not
+`.data`), which this data-only dump does not contain. Absence of a
+`.data` pointer does not imply PS5 renamed or dropped the path. See
+`12-acpi-static-anchor-corrections.md` §3.
 
 ### HCALL H0 result [verified-on-console]
 
