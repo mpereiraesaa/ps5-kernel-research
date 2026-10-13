@@ -536,8 +536,12 @@ and text is XOM to every reader we have. **The A1 QA-flags chain
 (qa_probe v2 → rest cycle → qa_check v2) is now the prioritized next
 console phase** — a successful QA text read plus a byte-scan delivers
 both CR4 gadgets (read + write), after which the ring-0 machinery
-becomes the CR4 engine. The GPUVM route (gpuvm_read v3) remains the
-alternative. Full context: docs/09-live-kernel-state-and-fsgsbase.md.
+becomes the CR4 engine. The GPUVM v3 route was listed as an alternative,
+but its 2026-10-14 source audit found an unconverted physical PTE
+address, unresolved GPU VA mappings, and unchecked restoration
+([verified-in-tree] `07` §“gate upgrade”; `11` #45). The built ELF is
+blocked offline and has not been run. Full historical context:
+docs/09-live-kernel-state-and-fsgsbase.md.
 
 ## 2026-10-12 — New route: HCALL 0x0f STARTUP_MP resume-window AP launch
 

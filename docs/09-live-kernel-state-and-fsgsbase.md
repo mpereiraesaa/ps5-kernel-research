@@ -116,9 +116,13 @@ prerequisite is a **Phase-B text read**:
 1. **qa_probe v2 → rest cycle → qa_check v2** (the A1 QA-flags chain:
    HV builds text pages RW without xotext → text readable → byte-scan
    for the CR4 gadgets) — now the prioritized next console phase
-2. or **gpuvm_read v3** (PDB2 scan → retarget to .text → PM4 DMA)
+2. or **gpuvm_read v3** (PDB2 scan → retarget to .text → PM4 DMA),
+   historically proposed but blocked by the source audit in `07`
+   §“gate upgrade” and `11` #45
 
-Both are built, gated, and staged. After the text read, the ring-0
+Both were built and staged; the v3 abstract read gate did not cover its
+PTE address domain, DMA GPU VAs, or restoration [verified-in-tree] (`07`
+§“gate upgrade”). After a validated text read, the ring-0
 machinery becomes the CR4 read/write engine, and the FSGSBASE enable
 is: read CR4 → write CR4|`0x10000` (owner-gated) → identify and set
 `cpu_stdext_feature` bit 0 → live `rdfsbase` test → prospero-win
