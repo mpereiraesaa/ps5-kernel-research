@@ -45,19 +45,17 @@
 
 #include "../r0gdb.h"
 #include "../offsets.h"
+#include "../../gdb_stub/trap_state.h"
 #include "../../lib/r0gdb-bootstrap.h"
 
-extern int set_offsets(void);
-extern uint32_t r0gdb_get_fw_version(void);
-extern uint64_t kdata_base;
-extern ssize_t copyout(void *dst, uint64_t src, size_t count);
-extern ssize_t copyin(uint64_t dst, const void *src, size_t count);
-extern int kwrite20(uint64_t ptr, uint64_t a, uint64_t b, uint32_t c);
-
-/* r0run.asm's machinery + the globals it reads */
-extern void run_in_kernel(void *regs);
+/* r0run.asm's machinery + the globals it reads - declared in r0gdb.h
+ * (void run_in_kernel(struct regs*)) and defined in r0gdb.c. The
+ * struct regs layout (trap_state.h) is the authoritative one the asm
+ * consumes: rsp@56, rip@128, eflags@136 - verified against the asm's
+ * field accesses ([rdi+56]=rsp, [rdi+128]=rip, [rdi+136]=eflags). */
 extern uint64_t kframe;
 extern uint64_t uretframe;
+extern uint64_t kdata_base;
 
 /* raw syscalls (FreeBSD 11 numbers, verified against the cloned
  * sys/kern/syscalls.master): SYS_thr_self=432, SYS_cpuset_setaffinity=488 */
@@ -91,17 +89,6 @@ int __sysctl(const int *name, unsigned int namelen, void *oldp,
 #define IST3_OFF 0x34
 #define IST4_OFF 0x3c
 #define COOKIE   UINT64_C(0xCAFE133700314C4D)
-
-/* the register struct - the layout r0run.asm consumes (verified against
- * the asm's xchg/loads: rax@0 rbx@8 rcx@16 rdx@24 rsi@32 rdi@40 rbp@48
- * rip@56 r8@64..r15@120 rsp@128 eflags@136) */
-struct chain_regs {
-    uint64_t rax, rbx, rcx, rdx, rsi, rdi, rbp, rip;
-    uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
-    uint64_t rsp;
-    uint32_t eflags;
-    uint32_t _pad;
-};
 
 /* the cave: the frame buffer replaces r0gdb_setup's kmalloc(2048).
  * The frames span cave+0xe0 .. cave+0x518 (the setup's geometry), the
@@ -308,7 +295,7 @@ int main(int argc, char **argv)
     fflush(stdout);
 
     /* [C6] the deliberate one-shot: run_in_kernel with the cookie target */
-    struct chain_regs regs;
+    struct regs regs;
     memset(&regs, 0, sizeof(regs));
     regs.rax = COOKIE;
     regs.rdi = cave + 0x600;            /* the cookie slot */
