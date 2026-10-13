@@ -1,0 +1,27 @@
+{
+  "firmware": "13.60",
+  "source": "PS5Dev/Byepervisor-Reborn include/offsets/13_60.h at ea04f7132b837087f552c57261cb800481a3a910",
+  "offsets": {
+    "PIVOT_ADD_RSP28_RET": "0x25213e",
+    "IRETQ": "0x257b3d",
+    "POP_RAX": "0x2912a1",
+    "POP_RCX": "0x2918b2",
+    "POP_RDI": "0x28ce6d",
+    "POP_RSI": "0x34cb91",
+    "POP_RDX": "0x2a0f7b",
+    "POP_R8": "0xb8ca6d",
+    "POP_RSP": "0x291c42",
+    "STORE_RCX_R8": "0x474389",
+    "STORE_RDI8_RCX": "0x32693f",
+    "OR_RCX_EAX": "0x321ea0",
+    "SET_DR7": "0xa07ba6",
+    "ST_RCX_RDX": "0x82b915",
+    "ST_RCX_RAX": "0x2bb28f",
+    "MOV_RAX_RSI": "0x8e3a44",
+    "MOV_RAX_RDI": "0xbecdea",
+    "REP_MOVSB": "0x25d027",
+    "CLD": "0x30644f",
+    "RET_TRAMP": "0x2912a2",
+    "DBREG_RESUME": "0x2529d8"
+  }
+}

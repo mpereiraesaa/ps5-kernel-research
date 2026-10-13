@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check four proposed KH2 gadget contracts in a locally supplied text image.
+"""Check proposed KH2 gadget contracts in a locally supplied text image.
 
 The image and disassembly stay off-repo. A match checks instruction shape at
 the supplied offsets, not firmware identity, runtime mapping, or execution.
@@ -34,6 +34,25 @@ DBREG = (
     "mov QWORD PTR [rsp],rax",
     "xor eax,eax", "ret",
 )
+FULL_CONTRACTS = {
+    "PIVOT_ADD_RSP28_RET": PIVOT,
+    "IRETQ": IRET,
+    **{f"POP_{reg}": (f"pop {reg.lower()}", "ret")
+       for reg in ("RAX", "RCX", "RDI", "RSI", "RDX", "R8", "RSP")},
+    "STORE_RCX_R8": ("mov QWORD PTR [rcx],r8", "ret"),
+    "STORE_RDI8_RCX": ("mov QWORD PTR [rdi+0x8],rcx", "ret"),
+    "OR_RCX_EAX": ("or DWORD PTR [rcx],eax", "ret"),
+    "SET_DR7": ("mov dr7,rax", "mov eax,r8d", "ret"),
+    "ST_RCX_RDX": ("mov QWORD PTR [rcx],rdx", "ret"),
+    "ST_RCX_RAX": ("mov QWORD PTR [rcx],rax", "xor eax,eax", "ret"),
+    "MOV_RAX_RSI": ("mov rax,rsi", "ret"),
+    "MOV_RAX_RDI": ("mov rax,rdi", "ret"),
+    "REP_MOVSB": ("rep movs BYTE PTR es:[rdi],BYTE PTR ds:[rsi]",
+                  "nop", "repz ret"),
+    "CLD": ("cld", "ret"),
+    "RET_TRAMP": RET_TRAMP,
+    "DBREG_RESUME": DBREG,
+}
 INSN = re.compile(r"^\s*([0-9a-f]+):\s+([a-z][^\n]*)$", re.IGNORECASE)
 
 
@@ -51,6 +70,8 @@ def parse_instructions(output):
 def check_sequence(instructions, offset, expected, allow_plain_ret=False):
     observed = instructions[:len(expected)]
     actual = [item[1] for item in observed]
+    actual = ["pop r8" if line == "rex.RXB pop r8" else
+              "nop" if line == "xchg ax,ax" else line for line in actual]
     if allow_plain_ret and len(actual) > 1 and actual[1] in ("ret", "rep ret"):
         actual[1] = "repz ret"
     anchored = bool(observed) and observed[0][0] == offset
@@ -89,6 +110,64 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def no_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate manifest key: {key}")
+        result[key] = value
+    return result
+
+
+def parse_offset_manifest(path, firmware=None):
+    try:
+        manifest = json.loads(path.read_text(), object_pairs_hook=no_duplicate_keys)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read offset manifest: {exc}") from exc
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("offsets"), dict):
+        raise ValueError("offset manifest needs an offsets object")
+    if not isinstance(manifest.get("firmware"), str) or not manifest["firmware"]:
+        raise ValueError("offset manifest needs a firmware label")
+    if firmware is not None and manifest["firmware"] != firmware:
+        raise ValueError("manifest firmware does not match --firmware")
+    offsets = {}
+    for name, value in manifest["offsets"].items():
+        if name not in FULL_CONTRACTS:
+            raise ValueError(f"unknown gadget name: {name}")
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise ValueError(f"invalid offset for {name}")
+        try:
+            offset = int(value, 0) if isinstance(value, str) else value
+        except ValueError as exc:
+            raise ValueError(f"invalid offset for {name}") from exc
+        if offset < 0:
+            raise ValueError(f"negative offset for {name}")
+        offsets[name] = offset
+    return offsets
+
+
+def inspect_manifest(path, firmware, offsets):
+    if not path.is_file():
+        raise ValueError("text image must be a regular file")
+    size = path.stat().st_size
+    checked = {}
+    for name, offset in offsets.items():
+        expected = FULL_CONTRACTS[name]
+        window = 0x60 if name == "DBREG_RESUME" else 0x20
+        if offset + window > size:
+            raise ValueError(f"{name} window falls outside text image")
+        checked[name] = check_sequence(
+            disassemble(path, offset, window), offset, expected,
+            allow_plain_ret=name == "PIVOT_ADD_RSP28_RET")
+    missing = sorted(FULL_CONTRACTS.keys() - offsets.keys())
+    return {"firmware_label": firmware, "text_sha256": sha256_file(path),
+            "text_size": size, "checked": checked, "missing": missing,
+            "coverage_complete": not missing,
+            "all_contracts_match": not missing and all(
+                item["contract_match"] for item in checked.values()),
+            "scope": "bounded entry instruction shapes; no runtime, basic-block, or full-chain proof"}
+
+
 def inspect(path, firmware, pivot_offset, dbreg_offset,
             iret_offset, ret_tramp_offset):
     if not path.is_file():
@@ -120,16 +199,31 @@ def main():
     parser.add_argument("--text", required=True, type=Path,
                         help="raw kernel text image; never copied into this repo")
     parser.add_argument("--firmware", required=True, help="provenance label only")
-    parser.add_argument("--pivot-offset", required=True, type=lambda x: int(x, 0))
-    parser.add_argument("--dbreg-offset", required=True, type=lambda x: int(x, 0))
-    parser.add_argument("--iret-offset", required=True, type=lambda x: int(x, 0))
-    parser.add_argument("--ret-tramp-offset", required=True,
+    parser.add_argument("--offsets", type=Path,
+                        help="JSON manifest for all or selected gadget offsets")
+    parser.add_argument("--pivot-offset", type=lambda x: int(x, 0))
+    parser.add_argument("--dbreg-offset", type=lambda x: int(x, 0))
+    parser.add_argument("--iret-offset", type=lambda x: int(x, 0))
+    parser.add_argument("--ret-tramp-offset",
                         type=lambda x: int(x, 0))
     args = parser.parse_args()
     try:
-        result = inspect(args.text, args.firmware, args.pivot_offset,
-                         args.dbreg_offset, args.iret_offset,
-                         args.ret_tramp_offset)
+        if args.offsets:
+            if any(value is not None for value in (args.pivot_offset,
+                   args.dbreg_offset, args.iret_offset,
+                   args.ret_tramp_offset)):
+                raise ValueError("--offsets cannot be combined with individual offsets")
+            result = inspect_manifest(args.text, args.firmware,
+                                      parse_offset_manifest(args.offsets,
+                                                            args.firmware))
+        else:
+            if any(value is None for value in (args.pivot_offset,
+                   args.dbreg_offset, args.iret_offset,
+                   args.ret_tramp_offset)):
+                raise ValueError("four individual offsets are required without --offsets")
+            result = inspect(args.text, args.firmware, args.pivot_offset,
+                             args.dbreg_offset, args.iret_offset,
+                             args.ret_tramp_offset)
     except ValueError as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2))
