@@ -212,6 +212,61 @@ comparison (`11` #27). The
 classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
 real 12.02 run has yet produced this record format.
 
+### Pinned 11.60 marker placement arithmetic
+
+[public-consensus] In commit `5299395`, `kh_chain_store` emits five qwords
+(`POP_RCX`, address, `POP_RAX`, value, `ST_RCX_RAX`), so each proposed marker
+costs `0x28` bytes
+([`khook.c:75-84`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L75-L84)).
+The fixed arm, continuation, and big-chain limits come from that commit's
+[`khook.h:30-37`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/include/khook.h#L30-L37).
+[inference] The following **source-layout plan**, with offsets relative to
+the reference scratch or big-chain base, accommodates four markers; a
+12.02 build with different gadget stack effects or code layout would
+falsify its applicability.
+
+| Region | Proposed intervals and consequence |
+|---|---|
+| Arm `scratch+0x40..0xa0` | A1P at `+0x40..0x68`, then the original five-qword arm chain at `+0x68..0x90`; `0x10` remains before the continuation. |
+| Continuation `scratch+0xa0..0x140` | A1R at `+0xa0..0xc8`, then the original continuation and user iret frame at `+0xc8..0x120`; `0x20` remains before the `resumectx` area. The generated arm RIP and RSP slots move to `scratch+0xf8` and `scratch+0x110`. |
+| Dispatch `big+0x00..0x600` | The register save ends at `+0x58`; D1S is `+0x58..0x80`, the one-store test handler is `+0x80..0xa8`, and D1O is `+0xa8..0xd0`. The restore sequence starts at `+0xd0`; with the pinned one-shot test tail the chain ends at `+0x138`, within the `0x600` buffer. |
+
+[inference] The two dispatch markers move `restore_off` from the original
+`0x80` to `0xd0`. The three self-modifying save targets must therefore
+move from `big+0x88/0x98/0xa8` to `big+0xd8/0xe8/0xf8` for RDI/RSI/RDX,
+respectively. The pinned source computes these targets from `restore_off`
+([`khook.c:401-419`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L401-L419));
+adding marker qwords without changing that formula would make the save
+gadgets write into the wrong chain words. A source build showing correctly
+relocated save targets would falsify this specific omitted-update failure.
+
+[inference] Placement before the arm's existing `POP_RAX` reloads the hook
+target after A1P's RAX/RCX clobbers. Placement at the start of the
+continuation precedes its `POP_RDI`/`POP_RCX` reloads. D1S follows the
+reference RSI/RDI/RDX saves, and D1O follows the **one-store test** handler;
+the latter's RAX/RCX clobbers need a separate liveness review for any other
+handler. This is conditional on the actual gadget side effects and does not
+turn an unverified 12.02 store sequence into a usable marker.
+
+`tools/khook_marker_layout.py` reproduces the numeric check from the three
+public files in commit `5299395` (`include/khook.h`, `khook.c`, `main.c`).
+From a local clone of the public repo, run:
+
+```sh
+git -C /path/to/Byepervisor-Reborn show 5299395b15ec91f7484ded2e7631977e0df94a4d:include/khook.h > /tmp/khook-529.h
+git -C /path/to/Byepervisor-Reborn show 5299395b15ec91f7484ded2e7631977e0df94a4d:khook.c > /tmp/khook-529.c
+git -C /path/to/Byepervisor-Reborn show 5299395b15ec91f7484ded2e7631977e0df94a4d:main.c > /tmp/khook-529-main.c
+python3 tools/khook_marker_layout.py --header /tmp/khook-529.h --source /tmp/khook-529.c --main /tmp/khook-529-main.c
+```
+
+It verifies the five-qword helper and source-side save/restore slot formula,
+reports the computed intervals and source hashes, and rejects the later
+unmodified upstream `kh_chain_store` helper because it uses a different
+POP_R8/store pair. It also rejects a deliberately changed RDX save-slot
+offset. No third-party source, dump, or payload is stored in this repo.
+This check proves source arithmetic only; it does not supply 12.02 gadget
+bytes, journal ownership, a final per-CPU layout, or a runnable ELF.
+
 ### Current Kstuff-style one-`ICEBP` build
 
 The later offline build documented in `16` uses a different IST4 layout

@@ -78,6 +78,7 @@ hanging the console on a bad assumption.
 | [`tools/stub_verify2.py`](tools/stub_verify2.py) | Hardened; first live ring-0 run pending | Level 2: gated ring-0 EFER read + validated IDT/TSS restore (kernel-text `store_rax_rdi` only, pinned 12.02 deltas) |
 | [`tools/stub_verify3.py`](tools/stub_verify3.py) | Ported; first live run pending | Level 3: level-2 pattern + CR0 read + sanity check |
 | [`tools/r0gdb_session.py`](tools/r0gdb_session.py) | v5.1, ported; pending live validation | The production ring-0 session client (computed-port discovery, staged return frame, SMEP-safe restore) |
+| [`tools/khook_marker_layout.py`](tools/khook_marker_layout.py) | Offline source check | Computes four proposed journal-marker intervals and relocated save slots from the pinned public 11.60 `khook` source; no 12.02 instruction validation |
 
 Levels 2/3 and the session client refuse ring-0 work until the live
 offset deltas match the pinned **12.02** table and the operator gates
