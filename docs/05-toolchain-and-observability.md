@@ -65,6 +65,24 @@ check each `ps5log_line` result; even a successful send is not proof that the
 PC persisted the line. The retained PC log and matching manifest are the
 evidence that the classifier assesses (`17`).
 
+The separate local payload workspace also has a **read-only KH2 capture
+core** at `engineering/payloads/byepervisor_probe_1202/kh2_capture.c/.h`.
+It accepts kernel-data read and log-send callbacks, reads the gate/IST6,
+frame slots, and journal words, and emits R0/R1/Q1/R2/Q2 plus changed frame
+and journal records. A failed read attempts an ERR-level `KH2E` line naming
+the stage, region, and address. Its host check,
+`kh2_capture_host_test.py --notes-repo /path/to/ps5-kernel-research`,
+compiled the sampler with `cc`, produced 11 native records, and combined
+them with B0/B1/B2/A2/D2 fixtures for a complete 18-record classifier run.
+It also checked mismatch, failed-read, failed-send (including the error
+line), and premature-quiesce paths. Source SHA-256: `kh2_capture.c`
+`8284e7b9a733a24ad14c3c8b8e5ab79cf74ee53de499138d615daee12f982914`,
+`kh2_capture.h`
+`96789919226b4d004958bb5dddcbc8766106c3d8948fcb0b25a22ed2b9db42b6`.
+This code has no thread handoff, PS5 SDK adapter, or 12.02 chain integration;
+its phase guard checks call order only. `kh2_capture.c` also compiled as a
+PS5 SDK relocatable object; no payload link or console operation was performed.
+
 [inference] The local prearmed worker's `observer_channel_read` uses the
 inherited SDK `kernel_copyin` primitive to configure its separate pipe
 (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`),

@@ -29,6 +29,7 @@ SOURCES = {
     "R2": "observer", "Q2": "observer",
 }
 RECORD = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH2\s+(.+)$")
+CAPTURE_ERROR = re.compile(r"^(\d+)\t(\d+)\tERR\tKH2E\s+(.+)$")
 HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
 SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
 
@@ -261,6 +262,7 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
 def classify(raw: bytes, manifest: dict | None = None) -> dict:
     seen = {}
     rejected = []
+    capture_errors = []
     b1_parts = {}
     b1_regions = []
     baseline = None
@@ -269,6 +271,32 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     journal_preseed = None
     state = {}
     for line in raw.decode("utf-8", errors="replace").splitlines():
+        error_match = CAPTURE_ERROR.match(line)
+        if error_match:
+            seq, _, payload = error_match.groups()
+            tokens = payload.split()
+            pairs = [token.split("=", 1) for token in tokens]
+            fields = dict(pairs) if all(len(pair) == 2 for pair in pairs) else {}
+            try:
+                stage = fields["stage"]
+                cpu = int(fields["cpu"])
+                address = fields["addr"]
+                region = fields["region"]
+                if (len(fields) != len(pairs) or stage not in STAGES or
+                        fields.get("operation") != "read" or
+                        not 0 <= cpu < 16 or
+                        (baseline is not None and cpu != baseline["cpu"]) or
+                        not HEX.fullmatch(address) or
+                        not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", region)):
+                    raise ValueError
+            except (KeyError, ValueError):
+                rejected.append({"seq": int(seq),
+                                 "reason": "malformed KH2E capture error"})
+            else:
+                capture_errors.append({"seq": int(seq), "stage": stage,
+                                       "cpu": cpu, "region": region,
+                                       "addr": address})
+            continue
         if "\tMARK\tKH1 " in line:
             rejected.append({"reason": "KH1 lacks required raw evidence"})
             continue
@@ -388,6 +416,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         "handoff_record_set_complete": (
             all(stage in seen for stage in HANDOFF_STAGES)
             and not causal_order_conflict),
+        "capture_errors": capture_errors,
+        "first_capture_error": capture_errors[0] if capture_errors else None,
         "out_of_order": out_of_order,
         "causal_order_conflict": causal_order_conflict,
         "rejected": rejected,

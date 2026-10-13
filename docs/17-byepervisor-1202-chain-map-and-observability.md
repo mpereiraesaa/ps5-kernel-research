@@ -192,6 +192,11 @@ Legacy bare `KH1 … verified=1` records are rejected because they omit the
 frame, journal, and readback values. A KH2 line can still be false if its
 producer fabricated or sampled the wrong address; the classifier cannot
 authenticate a kernel event from text alone.
+The read-only sampler's `ERR` line `KH2E stage=… cpu=… operation=read
+region=… addr=…` is a separate failure report. The classifier preserves it
+as `capture_errors`/`first_capture_error` but never counts it as a KH2
+milestone. A retained R1 `KH2E` with no R1 record identifies the reported
+failed read; it says nothing about whether a later trap could have fired.
 
 [inference] A later frame report cannot establish a canary replacement by
 supplying its own unlinked `can0..4` values; likewise a journal report cannot
@@ -260,6 +265,23 @@ client accepted a send, while only a retained PC log and matching manifest
 show what reached `ps5logd` before a possible shutdown. A generated fixture
 does not establish any kernel milestone.
 
+**Native capture scaffold, host-tested offline:** the separate payload
+workspace now also contains `kh2_capture.c/.h` and
+`kh2_capture_host_test.py`. The sampler reads selected kernel-data addresses
+through a supplied callback, emits raw R0/R1/R2 values before reporting a
+mismatch, samples F1/F2 and four journal words, and formats Q1/Q2 after at
+least one successful pass. Its host test generated 11 native lines; with
+the existing B0/B1/B2/A2/D2 fixtures, the classifier accepted all 18
+records. It also exercised a wrong F1 canary, failed read with `KH2E`,
+failed send (including the `KH2E` path), and premature Q1. The C source SHA-256 is
+`8284e7b9a733a24ad14c3c8b8e5ab79cf74ee53de499138d615daee12f982914`.
+The sampler is **not a synchronized worker**: its Q records depend on a
+future main/worker return signal and ownership transfer, which it cannot
+verify on its own. No SDK adapter or 12.02 payload invokes it; a host
+fixture does not establish a console event. Its C source cross-compiled to a
+PS5 SDK object, but was not linked into an ELF. The first changed frame sample
+may also be partial and needs raw frame review.
+
 ### Two-transaction observer ownership schedule
 
 [inference] The one-trap prearmed worker cannot simply keep sampling across
@@ -290,8 +312,9 @@ its first `getuid`
 | Second trap through return | Worker owns F2/D1S/D1O sampling and logging. Main invokes the test syscall without concurrent SDK R/W or logger calls. | After return, worker quiesces and acknowledges idle before main performs D2 restoration/readback and closes the log. |
 
 The proposed KH2 contract now names R0/R1/Q1/R2/Q2 and the classifier
-checks their raw links and order. **No producer or worker emits them**, so
-this remains an offline log specification, not a verified ownership schedule.
+checks their raw links and order. The host sampler can format them from mock
+data, but **no integrated 12.02 producer or worker emits them**, so this
+remains an offline log specification, not a verified ownership schedule.
 The worker's atomic acknowledgments and resource transfer still need a
 source-level implementation and host-side failure fixtures. An implementation
 with a truly independent kernel read
