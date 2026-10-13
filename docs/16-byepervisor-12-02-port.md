@@ -644,6 +644,61 @@ over a larger distance or another identified data-pointer table would
 falsify using this cutoff as a general address-coverage limit; the scan
 does not rule out those sources or prove any 12.02 bytes.
 
+[verified-on-dump] A wider data-pointer scan found two 13.60 rows at
+`kernel-data.bin+0x1c6718` and `+0x1c9948`, separated by `0x3230`.
+Each has seven interleaved text pointers and six metadata pointers;
+the metadata sequence is identical across the two rows. The unique
+12.02 pair with the same row gap and within-image metadata pattern is
+at `kernel-data.bin+0x1beae8` and `+0x1c1d18`. In order, the last two
+text targets of the first donor row are `ktext+0x82b330` and
+`+0x82b350`; the corresponding first 12.02 row targets are
+`+0x8bb620` and `+0x8bb640`. The second donor pair ends at
+`+0x872b20`/`+0x872b40`, and the second 12.02 pair at
+`+0x900e30`/`+0x900e50`. [verified-in-tree]
+`tools/kh2_static_table_audit.py:17-120` checks the within-image row
+patterns, matching gap, valid text-pointer ranges, and uniqueness;
+`tests/test_kh2_static_table_audit.py` rejects an ambiguous target pair.
+Reproduce it without copying either data image into this repo:
+
+```sh
+python3 tools/kh2_static_table_audit.py \
+  --data-1202 /path/outside/repo/12.02-kernel-data.bin \
+  --data-1360 /path/outside/repo/13.60-kernel-data.bin \
+  --text-base-1202 0xffffffff884c0000 \
+  --text-base-1360 0xffffffffd3b70000
+```
+
+[inference] The paired rows are plausible homologous static objects,
+but their function pointers do **not** anchor an interior gadget merely
+because it is nearby. The 13.60 `ST_RCX_RDX` gadget is at
+`ktext+0x82b915`, `0x5e5` after the first donor row's
+`+0x82b330` target. [verified-on-dump] The donor text SHA-256 is
+`20da45a0910c990153fbfb7c94e16356867e0bd84f7c9fbf754a45a5dd129673`.
+Disassembling it
+from `+0x82b330` to `+0x82b370` shows that target's two return paths
+at `+0x82b34b` and `+0x82b34f`; the next row target at `+0x82b350`
+also returns by `+0x82b36b`/`+0x82b36f`. The gadget is in later code,
+outside those referenced functions. A donor branch from either entry
+to `+0x82b915` would falsify that containment reading; the bounded
+entry disassembly has only local branches to its returns. Reproduce
+the boundary check with:
+
+```sh
+objdump -D -b binary -m i386:x86-64 \
+  --start-address=0x82b330 --stop-address=0x82b370 \
+  /path/outside/repo/13.60-kernel-text.bin
+```
+
+[inference] Adding `0x5e5` to the 12.02 row target would suggest
+`ktext+0x8bbc05`, but the donor-side containing-function premise is
+false. This number is **rejected as a gadget projection** and is not
+added to the 12.02 candidate manifest (`11` #47). A matching 12.02
+instruction sequence at that address would validate it independently,
+not vindicate this cross-function offset transfer. A verified object
+definition showing the two rows are different objects would falsify the
+homology inference; it would only strengthen the rejection of the
+gadget projection.
+
 [verified-on-dump] The 13.60 data dump also contains exact pointers to
 many Byepervisor gadgets, clustered around data offsets `0x2079040`
 and `0x207ca00` beside frame-like values. The corresponding 12.02

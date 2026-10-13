@@ -136,6 +136,13 @@ same-function relation beyond the window or another identified static
 pointer table would falsify that particular coverage limit; the audit
 does not assert that every kernel-data anchor has been exhausted.
 
+[verified-on-dump] `16` §“Data-pointer cross-check” also identifies
+two plausibly homologous 13.60/12.02 static pointer rows. They map
+nearby function **entries**, but donor disassembly places the
+`ST_RCX_RDX` gadget beyond the referenced function returns. The
+tempting `12.02 ktext+0x8bbc05` transfer is rejected (`11` #47), so
+the store gadget remains **unresolved** in the chain inventory.
+
 ## Failure evidence that survives a failed return
 
 [public-consensus] The 11.60 source already uses kernel-data cookies:
