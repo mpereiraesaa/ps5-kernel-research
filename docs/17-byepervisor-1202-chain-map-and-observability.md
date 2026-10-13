@@ -68,14 +68,17 @@ IST values are **not** a native baseline (`11` #19). A fresh read-only live
 baseline is required for any later experiment.
 
 [verified-in-tree] In the current `fullchain_allcpu.c` layout, CPU `i` owns
-`[scratch+i×0x500, scratch+(i+1)×0x500)`. The 11.60 reference image uses
-`[scratch, scratch+0x4000)`, including its big chain at
-`[scratch+0x3a00, scratch+0x4000)` (`5299395/include/khook.h:30-37`).
-Overlaying them at the same base would intersect the first 13 CPU slots;
-the big chain alone intersects CPU 11 and 12 slots. [inference] A direct
-combined build therefore needs separate regions or a proved repacking,
-even though `0x5000 > 0x4000`. A disjoint layout with readback on every
-region would falsify the claimed overlap for that redesigned placement;
+`[scratch+i×0x500, scratch+(i+1)×0x500)`. The 11.60 image **reserves**
+`[scratch, scratch+0x4000)`, intersecting slots 0–12 at the same base
+(`5299395/include/khook.h:30-37`). Its actual writes include the first
+`0x500` bytes (`khook.c:440-441`, colliding with CPU 0), state at `+0x600`
+and saved gate/IST at `+0x620..+0x637` (`main.c:21-24,76-79`, colliding
+with CPU 1), and a big chain starting at `+0x3a00` (`khook.c:390,437`,
+colliding with CPU 11). The reserved `0x600`-byte big-chain capacity reaches
+CPU 12, though its actual emitted length depends on the handler. [inference]
+A direct combined build therefore needs separate regions or a proved
+repacking, even though `0x5000 > 0x4000`. A disjoint layout with readback on
+every region would falsify the claimed overlap for that redesigned placement;
 the overlap calculation applies to the current shared base only (`11` #25).
 
 [inference] The shared vector-1 gate plus a **selected-core-only** IST6
