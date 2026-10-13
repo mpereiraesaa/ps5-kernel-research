@@ -117,6 +117,43 @@ address knowledge needed**. The khook machinery generalizes: their
 lifecycle. The chain runs on the #GP instead of the #DB — identical
 otherwise.
 
+#### Correction (owner review, 2026-10-13): the engine is NOT proven
+
+The phase-1 write-up below over-claimed: it called the
+frames/xchg/int9 machinery "PROVEN LIVE on 12.02". The honest record:
+**0 of 4 ring-0 attempts survived** (2026-10-09 + the three on
+2026-10-12) — every session ended in a panic or hang. What Oct 9
+actually established was *transient* behavior only: the entry did
+not instantly kill the machine, and two single-instruction steps
+returned sane values (EFER, CR0) — inside a session that then died.
+No session completed, no restore ran, no exit verified, no machine
+survived, and the freeze cause was never identified. The engine is
+**unvalidated as a foundation**; the port's validation ladder must
+start from zero assumptions about it.
+
+**Footprint comparison (a concrete candidate for the deaths).** Our
+`r0gdb_setup` patches 3 IDT gates (vectors 1/9/179) + 3 TSS IST slots
+(IST3/4/6) on **all 16 CPUs** — 48 IST writes — and leaves them
+patched for the entire session (indefinite under the park).
+Byepervisor's khook patches **1 gate + 1 IST slot on 1 CPU** for a
+one-shot, milliseconds-scale trigger. Redirecting three IST indexes
+machine-wide reroutes *any* other gate using those indexes (the
+NMI/#MC/#DF class) into one shared 2048-byte buffer for the whole
+session — a plausible mechanism for the unexplained ~100-250ms
+deaths [inference]. The port follows their minimal footprint
+regardless: one gate, one IST, one core, milliseconds.
+
+The port's execution model does not inherit the r0gdb failure modes
+by construction: it is sessionless (no gdbstub packet loop — where
+every freeze landed), one-shot (no per-step round-trips), passive
+(the kernel trips the trigger), and brief (the chain runs in
+milliseconds, then restores). But the shared machinery class (an
+IDT gate patch + IST + frames at CPL0) remains unvalidated beyond
+transient single steps — the first live port test must therefore be
+the minimal one-shot chain in the port's own execution model (the
+KHOOK_TEST-pattern: a safe trigger + a tiny chain + a verified
+return + machine-alive), not an assumption carried over from Oct 9.
+
 ## Phase 1 results (2026-10-13): the engine decision
 
 **The owner's cross-FW diff idea, tested against our own tables.** We
