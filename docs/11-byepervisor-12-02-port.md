@@ -117,6 +117,61 @@ address knowledge needed**. The khook machinery generalizes: their
 lifecycle. The chain runs on the #GP instead of the #DB — identical
 otherwise.
 
+## Phase 1 results (2026-10-13): the engine decision
+
+**The owner's cross-FW diff idea, tested against our own tables.** We
+are not limited to their three headers: our kstuff tree carries the
+same field set for **all 65 firmwares** (1_00 … 13_60), so the motion
+model was built from our own tables via inter-symbol distances
+(anchor-independent). Findings [verified-on-tables]:
+
+- the **12.xx family is nearly frozen** (12.00→12.70: most distances
+  identical; movers shift 0x10–0x60; `rdmsr_start`/`pop_all_iret`
+  moved at 12.20 and *reverted* at 13.00)
+- **13.00 is a major reorganization**: whole regions moved ~0x3a6a0
+  (`rep_movsb`, `copyin/copyout`, `push_pop_all_iret`, the syscall
+  path), and `store_rax_rdi` jumped regions entirely
+  (−0xAA3EEE → +0x11a4e)
+- therefore **delta-transfer from their 13.xx headers to 12.02
+  crosses the reorganization and is low-confidence** — the
+  approximation idea works within a family, and their headers are in
+  the wrong one
+
+**The gadget problem dissolves — the engine substitution.** The
+pop-gadget ROP chains are *their* engine, not a requirement. The
+kstuff lineage has a different, **12.02-proven** execution engine:
+`run_in_kernel` (`r0run.asm`, byte-identical in the upstream fork):
+
+- a register struct is loaded via **xchg of all sixteen GPRs** —
+  full register control *and* live-register capture in one primitive
+- the kernel frame (target RIP/RSP/RFLAGS, cs=0x20) is written to
+  `kframe` in kernel data — **registers set by kernel-data writes
+  (our pipe primitive), not by pop gadgets**
+- CPL0 entry via the patched vector-9 gate (`int 9`, DPL3, IST3) —
+  the same gate/frame machinery `r0gdb_setup` used, **proven live on
+  2026-10-09** (the EFER/CR0 reads and the store gadgets all ran
+  through it)
+
+For the fault-entry side (the FACS #GP trigger), the same machinery
+applies: `r0gdb_setup`'s IDT-gate + IST patching pattern, extended
+from vectors 1/9/179 to **vector 13 (#GP)** — the fault context's
+frame is saved at the IST entry (the proven pivot design) and the
+xchg capture preserves the kernel's live registers for the resume.
+
+**The port architecture, revised**: Byepervisor's *structure* (the
+FACS #GP trigger, the resume-window launch with the fault-frame
+argument replacement, the NP-disable `break_hv`, the pre-rest pmap
+edits) + **our engine** (the frames/xchg/int9 machinery instead of
+their pop chains). The missing-gadget set becomes: **empty** — every
+needed primitive is in our verified 12_02.h table or is the proven
+r0gdb machinery itself.
+
+Remaining true unknowns (unchanged): the HV-side `pcpus`/heap
+discovery (dynamic, from root 0), the FACS-trigger integration (the
+dump-verified anchor), the `break_hv` port, and the `cpu_switch`
+struct layout (the resumectx DR7 slot) for the DR7-style arm if the
+#GP trigger needs one.
+
 ## Port phases
 
 1. **Offsets + gadget mapping** (offline + our primitives): the table
