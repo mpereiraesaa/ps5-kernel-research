@@ -602,6 +602,37 @@ engine as “proven” would repeat a claim already corrected above.
   not be rerun by removing the target guard; any live trigger needs a
   separately reviewed frame and return path plus owner approval.
 
+### Patched-gate IST4 delivery attempt (2026-10-13)
+
+- **FW/build:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_patched_ist4_delivery.elf`, SHA-256
+  `86fb2394cd4e541a4685d01b93b92dd8cb435acefa9fd2ec9320ea53668725ab`.
+  The owner explicitly approved this changed-gate build and the hard
+  power-cycle recovery plan after the earlier guarded build refused.
+- **Expected:** require the audited live v1 target
+  `ktext+0x3188b0`, single-CPU affinity, IST4, and zero scratch;
+  stage a canary and five-word user return frame; point that CPU's
+  IST4 at scratch; retarget the shared #DB gate's low qword to the
+  kstuff `add_rsp_iret` offset `ktext+0x2b3626`; issue one TF/NOP
+  #DB; restore and verify gate, IST4, and scratch; print E2 hardware
+  frame and E3 `MATCH`. This design still depends on an unverified
+  12.02 instruction/return contract at the kstuff stub. The shared
+  gate also exposes other CPUs during the short patch window.
+- **Actual:** preflight printed P1/P2/P3 and two E1 lines. E1 reported
+  CPU 15 with a single-CPU affinity mask and stated the intended
+  IST4 pointer, hardware-frame address, return-frame address, and
+  one-qword gate swap. No E2 or E3 appeared. The sender timed out
+  after 30 seconds; a subsequent three-ping check received no replies.
+- **Recovery state:** console unreachable after the run; owner hard
+  power cycle requested, outcome pending.
+- **Interpretation:** [verified-on-console] the checks and staging
+  reached E1, followed by a freeze before the return marker.
+  [inference] The failure lies somewhere after E1: IST4 write/readback,
+  gate write/readback, #DB delivery, stub/`iretq` return, or early
+  restoration. The lack of an E2 marker does **not** prove #DB reached
+  the patched CPU or IST4 slot. Evidence of a hardware frame is still
+  absent; the experiment does not validate step 1 of the boundary below.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
