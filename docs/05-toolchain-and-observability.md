@@ -64,6 +64,20 @@ check each `ps5log_line` result; even a successful send is not proof that the
 PC persisted the line. The retained PC log and matching manifest are the
 evidence that the classifier assesses (`17`).
 
+[inference] The local prearmed worker's `observer_channel_read` uses the
+inherited SDK `kernel_copyin` primitive to configure its separate pipe
+(`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`),
+so a second pipe alone does not permit concurrent main-thread kernel R/W.
+The client header explicitly says `ps5log` is not thread-safe
+(`engineering/homebrew_ps5/projects/logging_server/client/ps5log.h:31`).
+For the two-trap KH2 proposal, main and observer must hand off ownership of
+both resources around the arm return and the later test syscall. A verified
+replacement with independent primitives and a thread-safe logger would
+falsify this scheduling requirement for that replacement; the current
+implementation has neither. Captured stdout shares the log socket, so
+`printf` during worker-owned sampling must also be deferred or serialized
+(`11` #32, `17` handoff schedule).
+
 ## Elevation for homebrew processes (Lapy)
 
 - `PS5-Lapy-JB-Daemon` (owned-root fork): resident daemon + one-shot
