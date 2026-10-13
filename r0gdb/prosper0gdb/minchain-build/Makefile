@@ -3,7 +3,8 @@
 # for the full root-cause record in its header), with a different main.c:
 # no dbg_enter, no stub session - pure CPL3 copyout reads.
 #
-# Sanitized repo copy: PS5_PAYLOAD_SDK and PS5_HOST are env/make-required.
+# Sanitized repo copy. Building needs PS5_PAYLOAD_SDK. Sending to a console
+# requires the explicit run-risky target and its approval/recovery gates.
 
 SELF_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 BUILD_ROOT := $(abspath $(SELF_DIR)/../../..)
@@ -15,8 +16,11 @@ ifeq ($(wildcard $(YASM)),)
 YASM := yasm
 endif
 
-PS5_HOST ?= $(error Set PS5_HOST to the console address)
+PS5_HOST ?=
 PS5_PORT ?= 9021
+MINCHAIN_OWNER_APPROVED ?=
+MINCHAIN_RECOVERY_CONFIRMED ?=
+MINCHAIN_CROSS_CPU_DB_SAFE ?=
 
 ELF := minchain.elf
 CFLAGS := -Wall -g -O0
@@ -53,5 +57,14 @@ clean:
 	rm -f $(ELF) dbg.o prosper0gdb.o r0run.o
 
 test: $(ELF)
+	@echo "Build complete. Console execution is gated; use run-risky only after review."
+
+run-risky: $(ELF)
+	@test -n "$(PS5_HOST)" || (echo "Set PS5_HOST to the console address"; exit 2)
+	@test "$(MINCHAIN_OWNER_APPROVED)" = "yes" || (echo "Set MINCHAIN_OWNER_APPROVED=yes after explicit owner approval"; exit 2)
+	@test "$(MINCHAIN_RECOVERY_CONFIRMED)" = "yes" || (echo "Set MINCHAIN_RECOVERY_CONFIRMED=yes after confirming the recovery plan"; exit 2)
+	@test "$(MINCHAIN_CROSS_CPU_DB_SAFE)" = "yes" || (echo "Refusing run: establish that vector-1 handling is safe on every CPU, then set MINCHAIN_CROSS_CPU_DB_SAFE=yes"; exit 2)
 	python3 $(BUILD_ROOT)/../../../send_elf.py $(ELF) --host $(PS5_HOST) --port $(PS5_PORT) \
 	  --wait-response --read-timeout 25
+
+.PHONY: all clean test run-risky

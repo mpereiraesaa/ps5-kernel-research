@@ -6,9 +6,10 @@
  * through exactly this), with ONLY the patch footprint minimized:
  *
  *   - ONE cpu (pinned), TWO gates (v9 for the int9 entry, v1 for the
- *     TF #DB return), TWO IST slots - all via single-qword writes
- *     (race-free; NEVER the whole-TSS read-modify-write, lethal per
- *     rung 3a)
+ *     TF #DB return), TWO IST slots - written as single qwords to avoid
+ *     the whole-TSS read-modify-write failure. This does NOT make the
+ *     shared vector-1 gate safe for #DB events on other CPUs; the live
+ *     run target requires an explicit cross-CPU safety acknowledgment.
  *   - the frames staged VERBATIM as r0gdb_setup stages them (tframe,
  *     kframe, uretframe + the int179 frames - the exact geometry the
  *     machinery expects), in a verified-zero kernel-data cave instead
@@ -263,7 +264,8 @@ int main(int argc, char **argv)
     }
 
     /* [C5] the minimal patch: 2 gates + 2 IST slots, cpu 0 only,
-     * single-qword writes, gate hi first / lo last.
+     * single-qword writes, gate hi first / lo last. The IDT is shared;
+     * the CPU0 pin does not constrain #DB events on other CPUs.
      *
      * PATCH-LIFECYCLE RULE (from the owner's review question): after the
      * FIRST patch write lands, NO failure path may exit without the full
@@ -276,6 +278,7 @@ int main(int argc, char **argv)
      * with the patch live) - the accepted deliberate-entry risk. */
     int patch_started = 0;
     int rc_final = 0;
+    int restore_complete = 0;
     unsigned char chk[16];
     uint64_t c_lo, c_hi, c_ist3, c_ist4;
     uint64_t got = 0;
@@ -288,11 +291,11 @@ int main(int argc, char **argv)
     uint64_t ist4v = cave + 0x1f0;
 
 #define PW(addr, val, tag) do { \
+        if(!patch_started) patch_started = 1; \
         if(copyin((addr), &(val), 8) != 8) { \
             printf("[C5] FAIL: patch write " tag "\n"); \
             fflush(stdout); rc_final = 6; goto cleanup; \
         } \
-        if(!patch_started) patch_started = 1; \
     } while(0)
 
     PW(gate9 + 8, n9_hi, "gate9 hi");
@@ -305,17 +308,29 @@ int main(int argc, char **argv)
 
     /* readback verify - a failure here ALSO goes to cleanup (the state is
      * fully patched; the restore must run before exiting) */
-    copyout(chk, gate9, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
+    if(copyout(chk, gate9, 16) != 16) {
+        printf("[C5] FAIL: gate9 readback copyout\n"); fflush(stdout);
+        rc_final = 6; goto cleanup;
+    }
+    memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
     if(c_lo != n9_lo || c_hi != n9_hi) {
         printf("[C5] FAIL: gate9 readback\n"); fflush(stdout);
         rc_final = 6; goto cleanup;
     }
-    copyout(chk, gate1, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
+    if(copyout(chk, gate1, 16) != 16) {
+        printf("[C5] FAIL: gate1 readback copyout\n"); fflush(stdout);
+        rc_final = 6; goto cleanup;
+    }
+    memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
     if(c_lo != n1_lo || c_hi != n1_hi) {
         printf("[C5] FAIL: gate1 readback\n"); fflush(stdout);
         rc_final = 6; goto cleanup;
     }
-    copyout(&c_ist3, ist3_cpu0, 8); copyout(&c_ist4, ist4_cpu0, 8);
+    if(copyout(&c_ist3, ist3_cpu0, 8) != 8 ||
+       copyout(&c_ist4, ist4_cpu0, 8) != 8) {
+        printf("[C5] FAIL: IST readback copyout\n"); fflush(stdout);
+        rc_final = 6; goto cleanup;
+    }
     if(c_ist3 != ist3v || c_ist4 != ist4v) {
         printf("[C5] FAIL: ist readback\n"); fflush(stdout);
         rc_final = 6; goto cleanup;
@@ -357,8 +372,10 @@ cleanup:
     /* [C8] the best-effort restore - only if anything was written; each
      * write individually checked and counted, NEVER aborted; then the
      * readback verify. A failed restore = the loud power-cycle message. */
+    restore_complete = !patch_started;
     if(patch_started) {
         int wfail = 0;
+        int rfail = 0;
         wfail += (copyin(gate9, &g9_lo, 8) != 8);
         wfail += (copyin(gate9 + 8, &g9_hi, 8) != 8);
         wfail += (copyin(gate1, &g1_lo, 8) != 8);
@@ -366,17 +383,24 @@ cleanup:
         wfail += (copyin(ist3_cpu0, &ist3o, 8) != 8);
         wfail += (copyin(ist4_cpu0, &ist4o, 8) != 8);
 
-        copyout(chk, gate9, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
-        ok9 = (c_lo == g9_lo && c_hi == g9_hi);
-        copyout(chk, gate1, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
-        ok1 = (c_lo == g1_lo && c_hi == g1_hi);
-        copyout(&c_ist3, ist3_cpu0, 8); copyout(&c_ist4, ist4_cpu0, 8);
-        oki = (c_ist3 == ist3o && c_ist4 == ist4o);
+        if(copyout(chk, gate9, 16) == 16) {
+            memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
+            ok9 = (c_lo == g9_lo && c_hi == g9_hi);
+        } else rfail++;
+        if(copyout(chk, gate1, 16) == 16) {
+            memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
+            ok1 = (c_lo == g1_lo && c_hi == g1_hi);
+        } else rfail++;
+        if(copyout(&c_ist3, ist3_cpu0, 8) == 8 &&
+           copyout(&c_ist4, ist4_cpu0, 8) == 8)
+            oki = (c_ist3 == ist3o && c_ist4 == ist4o);
+        else rfail++;
 
-        printf("[C8] restore: writes_failed=%d g9=%d g1=%d ist=%d\n",
-               wfail, ok9, ok1, oki);
+        printf("[C8] restore: writes_failed=%d readbacks_failed=%d "
+               "g9=%d g1=%d ist=%d\n", wfail, rfail, ok9, ok1, oki);
         fflush(stdout);
-        if(wfail || !ok9 || !ok1 || !oki) {
+        restore_complete = !wfail && !rfail && ok9 && ok1 && oki;
+        if(!restore_complete) {
             printf("[C8] !!! RESTORE INCOMPLETE - LIVE PATCHED STATE - "
                    "POWER-CYCLE THE CONSOLE NOW !!!\n");
             fflush(stdout);
@@ -388,8 +412,9 @@ cleanup:
         fflush(stdout);
     }
 
-    /* [C9] zero-back the cave (best-effort; failures reported, not fatal) */
-    if(cave) {
+    /* [C9] Keep the cave intact if any descriptor restore could not be
+     * verified: a remaining gate may still pivot onto its stacks. */
+    if(cave && restore_complete) {
         memset(buf, 0, sizeof(buf));
         for(uint64_t o = 0; o < CAVE_SZ; o += sizeof(buf)) {
             size_t n = (CAVE_SZ - o < sizeof(buf)) ? (size_t)(CAVE_SZ - o)
@@ -402,6 +427,9 @@ cleanup:
             }
         }
         printf("[C9] cave zeroed back\n");
+        fflush(stdout);
+    } else if(cave) {
+        printf("[C9] cave retained because restore was not verified\n");
         fflush(stdout);
     }
 
