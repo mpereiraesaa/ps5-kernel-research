@@ -385,9 +385,18 @@ B0, the three B1 parts, B2, A2, and D2 through supplied read, SHA-256, and
 send callbacks. It requires a B1 prewrite snapshot for each physical span;
 its write callback wrappers then stage each B1 span in at most `0x500`-byte
 calls, reporting a failed call's address as `KH2E`. The B2 wrapper requires
-all 16 IST6 writes before the gate write, then four context writes, and
-reports any callback failure before the final B2 readback. A failed write
+four context writes, then all 16 IST6 writes, and the shared gate write last;
+an early gate or IST6 request is rejected (`11` #40). It reports any callback
+failure before the final B2 readback. A failed write
 does not authorize a trigger or imply successful restoration.
+[inference] Moving context writes ahead of the gate removes the deliberate
+sequence in which some had not yet been attempted after redirection. It does
+not prove their values at the patch instant: B2 reads them only afterward.
+The native #DB handler can still see staged IST6 values before the gate
+patch, and the new handler can be reached before B2 readback. A same-attempt
+pre-gate read contradicting any planned context qword would falsify the
+assumption that all four were staged before redirection. No console run has
+tested this sequence.
 Each wrapper sends `KH2W begin` before the supplied write callback and
 `KH2W done` only after it returns success. A send failure blocks later
 wrapper writes. The host check exercised 47 paired attempts in its complete
@@ -411,7 +420,7 @@ CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected
 B1/B2/A2/D2 write failures emitted retained `KH2E` without the
 corresponding success record. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`3221546631da6b0c0b1e12a3db207d370277fa4ca3752d89badaaf134b60f60f`;
+`3377dc4535b5afe5cdf98bdce0a5dce7da9584fe1c24ce9747e47fb01fd152c7`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
@@ -469,7 +478,7 @@ its first `getuid`
 
 | Interval | SDK kernel R/W and `ps5log` owner | Required handoff evidence before the next boundary |
 |---|---|---|
-| Before first trap | Worker opens its independent pipe, reads native gate/IST, and sends R0 while main is idle, then yields. Main owns staging, gate/IST patch, final context writes, and B2 readback/log while worker waits idle. | After B2, main relinquishes both shared resources. Worker samples gate, selected IST6, both frame preseeds, and journal preseed, reports R1 raw values, then acknowledges readiness. Only then may main issue TF/NOP without SDK reads/writes or logger calls. |
+| Before first trap | Worker opens its independent pipe, reads native gate/IST, and sends R0 while main is idle, then yields. Main owns staging, context writes, all IST6 writes, the final gate patch, and B2 readback/log while worker waits idle. | After B2, main relinquishes both shared resources. Worker samples gate, selected IST6, both frame preseeds, and journal preseed, reports R1 raw values, then acknowledges readiness. Only then may main issue TF/NOP without SDK reads/writes or logger calls. |
 | First trap through arm return | Worker owns sampling and logging of F1/A1P/A1R. Main executes the trap/return path without touching the SDK primitive or logger. | On return, main requests quiescence. Worker finishes any in-flight read/send and acknowledges idle before main reads the dispatch IST6 or emits A2. If no return, worker can continue sampling until shutdown, subject to transport survival. |
 | Between traps | Main owns A2 readback/log and any state/oracle writes or reads required before the test syscall. Worker remains idle. | Main relinquishes the resources again. Worker verifies dispatch IST6 and F2 canaries, reports its pretrigger sample, and acknowledges readiness before main calls `getuid`. |
 | Second trap through return | Worker owns F2/D1S/D1O sampling and logging. Main invokes the test syscall without concurrent SDK R/W or logger calls. | After return, worker quiesces and acknowledges idle before main performs D2 restoration/readback and closes the log. |
