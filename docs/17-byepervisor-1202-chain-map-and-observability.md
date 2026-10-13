@@ -756,7 +756,15 @@ Compiling this audit ELF validates none of those contracts.
    It joins only classifier-accepted B0, three B1 parts, B2, and A2 to the
    candidate. It compares selected CPU and frame slots; B1 span bases/sizes,
    context and journal addresses; B2/A2 full IST image hashes, selected
-   pointers, count, and A2 armed-word address. A mismatched manifest hash,
+   pointers, count, and A2 armed-word address. A log comparison additionally
+   requires `build_sha` at the plan root and `image_sha` in each B1 span;
+   it compares those with B0's reported build tag and each B1 staged-byte
+   hash. The synthetic fixture uses placeholder hashes, so its success is
+   a parser example, not evidence about a real build. For a real candidate,
+   calculate the B1 hashes from the exact off-repo staged bytes and tie the
+   build tag to a recorded build procedure. These fields detect an accidental
+   plan/build mix-up even when each reported B1 write/readback pair agrees.
+   A mismatched manifest hash,
    ambiguous sequence, rejected classifier record, or capture error causes a
    nonzero exit. `partial_observed_fields_match` lists missing records as
    coverage gaps, not failed execution. `no_comparable_records` also exits
@@ -765,7 +773,8 @@ Compiling this audit ELF validates none of those contracts.
    retained producer *reported*, not independent memory ownership or code
    execution; an unobserved stage remains unlocated. It does not compare the
    gate/IST **field addresses**, because those are absent from KH2 records,
-   or authenticate the source build behind a reported `build_sha`.
+   or independently authenticate the source build behind a reported
+   `build_sha`; the plan and producer can both make the same false claim.
    A passing result still reports
    `ownership_verified: false`: it establishes disjoint geometry and agreement
    with the accepted reported fields only. [inference]

@@ -18,16 +18,20 @@ def candidate():
     return json.loads(path.read_text())
 
 
-def planned_log(plan, *, b2_sha=None, image_addr="0x20000", through="A2"):
+def planned_log(plan, *, b0_sha=None, b1_big_sha=None, b2_sha=None,
+                image_addr="0x20000", through="A2"):
     hashes = check(plan)
     arm = hashes["expected_b2_ist_image_sha"]
     dispatch = hashes["expected_a2_ist_image_sha"]
     payloads = [
-        record("B0", cpu="0", f1_slot="0x20018", f2_slot="0x20218"),
+        record("B0", cpu="0", build_sha=b0_sha or "a" * 64,
+               f1_slot="0x20018", f2_slot="0x20218"),
         record("B1", cpu="0", part="image", addr=image_addr, bytes="1280",
                rbp_addr="0x20300", rip_addr="0x20308", rsp_addr="0x20310",
                dr7_addr="0x20318"),
-        record("B1", cpu="0", part="big", addr="0x23a00", bytes="1536"),
+        record("B1", cpu="0", part="big", addr="0x23a00", bytes="1536",
+               image_sha=b1_big_sha or "c" * 64,
+               readback_sha=b1_big_sha or "c" * 64),
         record("B1", cpu="0", part="journal", addr="0x25000", bytes="256",
                a1p_addr="0x25000", a1r_addr="0x25008", d1s_addr="0x25010",
                d1o_addr="0x25018"),
@@ -67,6 +71,24 @@ class LayoutCheck(unittest.TestCase):
         self.assertEqual(changed["comparison_status"], "mismatch")
         self.assertEqual([item["field"] for item in changed["mismatches"]],
                          ["B2.ist_image_sha", "A2.ist_before_sha"])
+
+    def test_build_and_staged_image_hash_mismatch_survive_internal_classification(self):
+        plan = candidate()
+        result = compare_log(plan, planned_log(plan, b0_sha="f" * 64,
+                                               b1_big_sha="e" * 64))
+        self.assertEqual(result["comparison_status"], "mismatch")
+        self.assertEqual([item["field"] for item in result["mismatches"]],
+                         ["B0.build_sha", "B1.big.image_sha"])
+
+    def test_log_join_requires_declared_build_and_staged_hashes(self):
+        plan = candidate()
+        del plan["build_sha"]
+        with self.assertRaisesRegex(ValueError, "build_sha"):
+            compare_log(plan, planned_log(candidate()))
+        plan = candidate()
+        del plan["b1"]["journal"]["image_sha"]
+        with self.assertRaisesRegex(ValueError, "b1.journal.image_sha"):
+            compare_log(plan, planned_log(candidate()))
 
     def test_mismatched_manifest_does_not_compare_fields(self):
         plan = candidate()
