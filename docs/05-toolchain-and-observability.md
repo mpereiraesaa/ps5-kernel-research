@@ -131,6 +131,19 @@ the bridge and all KH2 capture/worker/main modules. Source SHA-256:
 This proves host hash agreement and SDK linkability only: it does not
 exercise a PS5 read, logger session, shared-resource handoff, or a #DB.
 
+`kh2_integrated_host.c` then ran the actual main emitter and pthread worker
+in **one host process** over one mutex-protected mock memory image and
+ordered log. Its callbacks reject a read, send, or main staging write by
+the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
+notes checkout with `--notes-repo`, classified 20 complete 18-record attempts with
+no callback-owner violation or stage-order conflict; a journal left changed
+was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
+`a3905b1fbb86a1002d20eeba104fcbae6ca1555ab567d91a859454507186de5b`,
+`kh2_integrated_host_test.py`
+`0cbcffccbd59fcdbb8ce32dc3133fbc9dcd7f56fd34247c0bdcd73b418ffc252`.
+The two mock kernel events set frame/journal bytes directly; they are not
+hardware traps or a PS5 SDK/log transport test.
+
 [inference] The local prearmed worker's `observer_channel_read` uses the
 inherited SDK `kernel_copyin` primitive to configure its separate pipe
 (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`),
