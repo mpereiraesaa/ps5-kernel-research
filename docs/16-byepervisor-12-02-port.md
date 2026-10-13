@@ -1,5 +1,9 @@
 # The Byepervisor-Reborn port plan for 12.02
 
+The faithful 11.60 two-transaction #DB chain, its 12.02 evidence gaps, and
+failure-observation requirements are inventoried in `17`. The FACS #GP route
+below is a separate trigger design with a different exception frame.
+
 **Status: ACTIVE (implementation phase)** — the route's public reference
 implementation is in hand; this doc maps it onto our 12.02 console and
 holdings. Supersedes the r0gdb-stepping dependency for the launch chain
@@ -74,7 +78,7 @@ anchors both per boot (we derive both bases).
 | `COMMON_TSS` | 0x3BB6FE0 | ✓ (`tss_array`, +0x2E8AFE0) |
 | `SYS_GETUID` | 0x2a8d60 | ✓ via our sysent anchors (746 sy_call entries) |
 | `DMPML4I/DMPDPI/PML4PML4I` | pmap self-refs | ✓ functionally — our alias engine resolves PML4/PDP/PD/PT live |
-| `DATA_CAVE` | 0x2D39000 | ✓ no static offset needed — `kh_find_cave` zero-scans with our kread |
+| `DATA_CAVE` | 0x2D39000 | candidate only — `kh_find_cave` zero-scans, but zero bytes do not establish ownership or cross-boot safety |
 | `HV_MP_STARTUP_CALL` | 0xC16EE0 | **not needed by our trigger** (below) |
 | `ACPI_SLEEP_MACHDEP_HOOK` | 0x3913B0 | not needed (our anchor approaches to it were debunked on 12.02) |
 | `MP_STARTUP_INIT_VECTOR` | 0x269FB8 | only needed for the benign-resume variant |
@@ -89,14 +93,14 @@ match is missing.
 
 | Their gadget | Semantics | Our 12.02 coverage |
 |---|---|---|
-| `DBREG_RESUME` | resumectx tail (loads DR0–3/6/7, then restores a context and pivots) | **candidate only** — `cpu_switch` anchors the same code region but is not the gadget entry; see the cross-dump audit and chain contract below |
-| `REP_MOVSB` | rep movsb; ret | ✓ close — `rep_movsb_pop_rbp_ret` (adapts with a frame qword) |
-| `RET_TRAMP` | ret | ✓ `nop_ret` |
-| `IRETQ` | iretq | ✓ `doreti_iret` / `pop_all_iret` family |
-| `store_rax_rdi`-class stores | mov [rX], rY; ret | partial — `store_rax_rdi` ✓; other reg-pairs need derivation or chain rewrite |
-| `pop rXX; ret` ×7 | pop reg; ret | partial — `pop_all_iret` pops all then irets; individual pops need derivation or chain rewrite |
-| `PIVOT_ADD_RSP28_RET` | add rsp,0x28; ret | derivation needed (our gate pivots are iret-shaped) |
-| `OR_RCX_EAX`, `SET_DR7`, `MOV_RAX_RSI/RDI`, `CLD` | assorted | derivation needed (small) |
+| `DBREG_RESUME` | starts with `mov dr0,rax`, then loads DR1–3/6/7 and restores/pivots context | candidate `ktext+0x2acb78` from a 13.60 local anchor; `cpu_switch` is only a containing-function anchor, and the 12.02 bytes/entry contract are unverified (`11` #23) |
+| `REP_MOVSB` | rep movsb; ret | 12.02 table has `rep_movsb_pop_rbp_ret`; its extra pop requires a different frame, and bytes are unverified |
+| `RET_TRAMP` | ret | `nop_ret` has a 12.02 table address; instruction bytes not yet read |
+| `IRETQ` | iretq | `doreti_iret` / `pop_all_iret` have 12.02 table addresses; frame contract needs validation |
+| `store_rax_rdi`-class stores | mov [rX], rY; ret | 12.02 table names `store_rax_rdi`; exact bytes and the other register pairs need validation or chain rewrite |
+| `pop rXX; ret` ×7 | pop reg; ret | individual pops remain unknown; `pop_all_iret` has a different frame contract |
+| `PIVOT_ADD_RSP28_RET` | add rsp,0x28; ret | low-confidence candidate `ktext+0x2ac2de` (`16`, cross-dump table); 12.02 bytes unknown and Kstuff's iret-shaped pivot is not equivalent |
+| `OR_RCX_EAX`, `SET_DR7`, `MOV_RAX_RSI/RDI`, `CLD` | assorted | unresolved; one-shot omits `OR_RCX_EAX`, but the other 12.02 instruction addresses and contracts require evidence (`17`) |
 
 Their constants worth recording: `KH_DR7_BP0_EXEC = 0x403`,
 `KH_USER_CS 0x43 / SS 0x3b`, `KH_RFLAGS_USER 0x202`,
