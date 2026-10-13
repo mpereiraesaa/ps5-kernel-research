@@ -837,6 +837,30 @@ Compiling this audit ELF validates none of those contracts.
 1. Identify the 12.02 instruction bytes and containing basic blocks for the
    pivot, `DBREG_RESUME`, return, stores, pops, and DR7 disarm; record stack
    deltas and clobbers. The current data-only 12.02 dump cannot prove these.
+   [verified-in-tree] `tools/kh2_gadget_contract.py:16-34,49-64,67-102`
+   checks the two proposed
+   entry instruction sequences at explicitly supplied offsets in a raw text
+   image. It uses bounded `objdump` disassembly, records the image SHA-256 and
+   the first mismatching instruction, and exits nonzero on a mismatch. For a
+   matching FW 12.02 image outside this notes repo, run:
+
+   ```sh
+   python3 tools/kh2_gadget_contract.py \
+     --text /path/outside/repo/kernel-text.bin --firmware 12.02 \
+     --pivot-offset 0x2ac2de --dbreg-offset 0x2acb78
+   ```
+
+   [verified-on-dump] The held 13.60 donor text (SHA-256
+   `20da45a0910c990153fbfb7c94e16356867e0bd84f7c9fbf754a45a5dd129673`)
+   passes the same checker at `+0x25213e` and `+0x2529d8`; this calibrates
+   the checker against the donor, not against 12.02. [inference] A mismatch in
+   12.02 would falsify transfer of that **listed instruction shape** at
+   the projected offset, though a semantically different implementation
+   might still support a redesigned chain. A match would establish only
+   local instruction shape: the remaining gadgets, stack/frame context,
+   executable runtime mapping, and any actual #DB delivery still require
+   separate evidence. The `--firmware` value is a label, not authentication;
+   retain independent image provenance alongside the reported digest.
 2. Identify a 12.02 test-hook instruction boundary and resume contract, then
    separately the resume-window `startup_mp` call and AP init vector. A
    `sysent` function pointer alone does not identify the getuid body or an
