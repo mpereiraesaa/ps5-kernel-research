@@ -835,6 +835,45 @@ engine as “proven” would repeat a claim already corrected above.
   later in handler/return processing remain possible. No exception frame
   was captured and patched-stack delivery remains unvalidated.
 
+#### First-change frame observer attempt (2026-10-13)
+
+- **FW/build:** 12.02,
+  `byepervisor_probe_1202_observer_frame_first_change.elf`, SHA-256
+  `b837d83ab0c9260a8da8f4c54802d058870fd951da59b60feaa362d69af525b0`.
+  This lab build added a PC marker on the first five-qword read that differs
+  from the staged canary, before the confirming read, and removed the 1 ms
+  observer sleep while armed. The stable-frame check remained separate.
+- **Expected:** after the post-patch canary handshake, issue one TF/NOP
+  #DB. If the staged frame changes and the observer can read and send it,
+  receive `frame-observer first-change` before any stable-frame result.
+- **Risk and recovery:** this uses the same unverified 12.02 #DB target
+  and shared gate as the handshake attempt. A freeze or failed restoration
+  requires a hard power cycle. The owner approved this build, the console
+  run, and that recovery plan before dispatch.
+- **Actual:** elfldr reported P1/P2/P3 and `[F1] observer READY`, then its
+  25-second response wait timed out. The PC `ps5log/1` log received READY
+  and `pretrigger sampled cpu=9 canary=MATCH` 0.001151 seconds later.
+  It received no `first-change`, stable-frame, completion, or BYE record.
+  Server shutdown finalized two records with no sequence gaps; no clean
+  close was reported. The console then failed three pings and its tested
+  listener ports were closed.
+- **Recovery state:** the owner hard power-cycled the console and confirmed
+  it was back. A two-ping check succeeded after startup; elfldr on port
+  9021 was still unavailable at that check.
+- **Interpretation:** [verified-on-console] the PC received one matching
+  canary sample after READY, but no changed-frame sample or clean return
+  (this experiment record, FW/build and recovery above). [inference] the
+  canary sample occurred with the gate and IST4 patches installed because
+  the built source sets the observer phase only after patch readback; a
+  different built control-flow order would falsify this timing claim.
+  The worker sends `pretrigger sampled` before storing the acknowledgment
+  that releases the trigger thread. Thus this record does not establish
+  that the thread reached TF/NOP. [inference] a trap or another fault that
+  stops the CPUs before the next observer read or PC send could leave this
+  same two-record log; a post-trigger observer record would falsify
+  observer stoppage as the explanation for that run. This attempt leaves
+  patched-gate #DB delivery unobserved.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
