@@ -259,6 +259,22 @@ frame is raw canary replacement and needs RIP/CS/RFLAGS/RSP/SS review.
 gate mismatch, frame/marker progression, nonselected CPU activity, and a
 failed observer on return using synthetic transcripts.
 
+[verified-in-tree] The worker also emits `FC1 READ_FAIL` if its private-pipe
+read fails and emits an `ERR`-level `GATE_VERIFIED` with raw values if the
+gate or an IST4 pointer differs (`fullchain_prearmed.c:147-179,226-233`).
+The host classifier reports these separately as
+`observer_read_failed_after_main_patch_phase` and
+`observer_gate_or_ist_mismatch_after_main_readback` when linked to the same
+run. Both mean the main thread reached the observer handoff after its own
+patch readback; neither proves `ICEBP` executed. A later `READ_FAIL` during
+scratch sampling is retained as a signal without erasing a preceding
+positive gate/frame/marker record. The classifier flags a copy marker with
+no corresponding frame report for raw review. [inference] Because the worker
+reads five scratch pages sequentially, one sample can combine a pretrap
+frame page with a later marker page; a second sample showing the changed
+frame would resolve that sampling ambiguity. This does not justify calling
+the missing frame a failed #DB delivery.
+
 [inference] This is still a risky one-`ICEBP` diagnostic, not the 11.60
 two-transaction port. Its second `pop_all_iret` frame does not restore an
 incidental CPU's original GPRs, and the observer itself runs during the

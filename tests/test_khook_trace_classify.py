@@ -180,6 +180,26 @@ class FullchainTests(unittest.TestCase):
             pc_same_run_verified=True)
         self.assertTrue(result["nonselected_cpu_activity_requires_review"])
 
+    def test_prearmed_error_reports_bound_patch_handoff(self):
+        error_gate = self.FC1.replace(
+            b"MARK\tFC1 seq=2 phase=GATE_VERIFIED",
+            b"ERR\tFC1 seq=2 phase=GATE_VERIFIED").replace(
+                b"gate_lo=0x111", b"gate_lo=0x112")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=self.PC_STAGE + error_gate,
+            pc_same_run_verified=True)
+        self.assertTrue(result["signals"]["fc1"]["gate_mismatch"])
+        self.assertEqual(result["boundary"],
+                         "observer_gate_or_ist_mismatch_after_main_readback")
+        ready = self.FC1.splitlines(keepends=True)[0]
+        read_fail = b"3\t3000\tERR\tFC1 seq=2 phase=READ_FAIL\n"
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=self.PC_STAGE + ready + read_fail,
+            pc_same_run_verified=True)
+        self.assertTrue(result["signals"]["fc1"]["read_fail_before_gate_report"])
+        self.assertEqual(result["boundary"],
+                         "observer_read_failed_after_main_patch_phase")
+
     def test_prearmed_rejects_out_of_order_frame(self):
         frame = (b"3\t3000\tMARK\tFC1 seq=2 phase=FRAME cpu=3 "
                  b"rip=0x123 cs=0x43 flags=0x202 rsp=0x456 ss=0x3b\n")
@@ -191,6 +211,17 @@ class FullchainTests(unittest.TestCase):
                          "prepatch_staging_seen_gate_patch_or_later_unproven")
         self.assertIn("frame or marker without preceding verified gate",
                       result["signals"]["fc1"]["issues"])
+
+    def test_prearmed_marker_without_frame_is_flagged(self):
+        marker = (b"4\t4000\tMARK\tFC1 seq=3 phase=MARKER cpu=3 "
+                  b"value=0x4b53545546464348\n")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=self.PC_STAGE + self.FC1 + marker,
+            pc_same_run_verified=True)
+        self.assertEqual(result["boundary"],
+                         "copy_marker_seen_return_or_transport_unproven")
+        self.assertTrue(any("marker seen without matching frame" in issue
+                            for issue in result["signals"]["fc1"]["issues"]))
 
     def test_prearmed_return_observer_failure_is_not_success(self):
         live = self.LIVE_STAGE + (

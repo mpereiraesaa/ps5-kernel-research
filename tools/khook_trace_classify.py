@@ -108,31 +108,43 @@ def _fc1_records(pc_text: str) -> dict:
 
     ready = next((r for r in records if r["phase"] == "READY"
                   and r["level"] == "MARK"), None)
-    gate = next((r for r in records if r["phase"] == "GATE_VERIFIED"
-                 and r["level"] == "MARK"), None)
+    gate_reports = [r for r in records if r["phase"] == "GATE_VERIFIED"]
+    gate_report = gate_reports[0] if len(gate_reports) == 1 else None
+    gate = None
+    gate_mismatch = False
     if sum(r["phase"] == "READY" for r in records) > 1:
         issues.append("duplicate READY")
         ready = None
-    if sum(r["phase"] == "GATE_VERIFIED" for r in records) > 1:
+    if len(gate_reports) > 1:
         issues.append("duplicate GATE_VERIFIED")
-        gate = None
-    if gate:
-        fields = gate["fields"]
+    if gate_report:
+        fields = gate_report["fields"]
         gate_cpu_matches = (ready is not None and
                             fields.get("cpu") ==
                             ready["fields"].get("trigger_cpu"))
-        if (fields.get("gate_lo") != fields.get("expected_lo")
-                or fields.get("gate_hi") != fields.get("expected_hi")
-                or fields.get("ist4_matched") != "16"
-                or fields.get("first_bad_cpu") != "-1"
-                or not all(re.fullmatch(r"0x[0-9a-fA-F]+", fields.get(k, ""))
-                           for k in ("gate_lo", "gate_hi"))
-                or not gate_cpu_matches):
-            issues.append("GATE_VERIFIED values do not match")
-            gate = None
-    if gate and (not ready or gate["seq"] <= ready["seq"]):
-        issues.append("GATE_VERIFIED precedes READY")
-        gate = None
+        complete = (gate_cpu_matches and
+                    all(re.fullmatch(r"0x[0-9a-fA-F]+", fields.get(k, ""))
+                        for k in ("gate_lo", "gate_hi", "expected_lo",
+                                  "expected_hi", "first_bad_ist")) and
+                    fields.get("ist4_matched", "").isdigit() and
+                    re.fullmatch(r"-?\d+", fields.get("first_bad_cpu", "")))
+        if not complete or not ready or gate_report["seq"] <= ready["seq"]:
+            issues.append("malformed or out-of-order GATE_VERIFIED")
+        else:
+            matched = (fields["gate_lo"] == fields["expected_lo"] and
+                       fields["gate_hi"] == fields["expected_hi"] and
+                       fields["ist4_matched"] == "16" and
+                       fields["first_bad_cpu"] == "-1")
+            if gate_report["level"] == "MARK" and matched:
+                gate = gate_report
+            elif gate_report["level"] == "ERR" and not matched:
+                gate_mismatch = True
+            else:
+                issues.append("GATE_VERIFIED level and values disagree")
+    read_fail = [r for r in records if r["phase"] == "READ_FAIL"
+                 and r["level"] == "ERR"]
+    read_fail_before_gate = bool(ready and not gate_report and any(
+        r["seq"] > ready["seq"] for r in read_fail))
     frames = [r for r in records if r["phase"] == "FRAME"
               and r["level"] == "MARK"
               and all(re.fullmatch(r"0x[0-9a-fA-F]+", r["fields"].get(k, ""))
@@ -157,12 +169,21 @@ def _fc1_records(pc_text: str) -> dict:
                 issues.append(f"invalid CPU in FC1 {record['phase']}")
         return sorted(cpus)
 
+    frame_cpus = cpu_set(frames)
+    marker_cpus = cpu_set(markers)
+    if markers and any(r["fields"].get("cpu") not in
+                       {str(cpu) for cpu in frame_cpus} for r in markers):
+        issues.append("marker seen without matching frame report; inspect raw snapshot")
+
     return {"records": records, "issues": issues,
             "ready": bool(ready), "gate_verified": bool(gate),
+            "gate_mismatch": gate_mismatch,
+            "read_fail_before_gate_report": read_fail_before_gate,
+            "read_fail": bool(read_fail),
             "trigger_cpu": (int(ready["fields"]["trigger_cpu"])
                             if ready and ready["fields"].get("trigger_cpu", "").isdigit()
                             else None),
-            "frame_cpus": cpu_set(frames), "marker_cpus": cpu_set(markers)}
+            "frame_cpus": frame_cpus, "marker_cpus": marker_cpus}
 
 
 def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
@@ -282,6 +303,10 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     elif (pc_same_run_verified and cpu is not None and
           cpu in fc1["frame_cpus"]) or (same_attempt_verified and frame == "changed"):
         boundary = "frame_changed_copy_marker_or_later_unproven"
+    elif pc_same_run_verified and fc1["gate_mismatch"]:
+        boundary = "observer_gate_or_ist_mismatch_after_main_readback"
+    elif pc_same_run_verified and fc1["read_fail_before_gate_report"]:
+        boundary = "observer_read_failed_after_main_patch_phase"
     elif (pc_same_run_verified and fc1["gate_verified"]) or (
           same_attempt_verified and audit_header and
           audit_header.group(1).lower() == "2b3626" and
