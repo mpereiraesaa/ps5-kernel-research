@@ -707,6 +707,22 @@ Compiling this audit ELF validates none of those contracts.
    across `0x5000` bytes, but its 16 per-CPU slots occupy that entire span.
    A separate `0x4000` reference image cannot be overlaid at the same base;
    a jointly packed layout needs explicit interval and ownership proofs.
+   [verified-in-tree] `tools/kh2_layout_check.py:43-107` checks a candidate JSON
+   plan's 16 landing slots, three physical B1 spans, optional reference
+   reservations, gate and IST words, two frame slots, four context words, and
+   five journal words. Its interval checks reject the existing shared-base
+   collision (`tests/test_kh2_layout_check.py:34-44`). Run the deliberately synthetic
+   passing fixture with
+   `python3 tools/kh2_layout_check.py examples/kh2_layout_synthetic.json`.
+   The JSON defines spans by absolute base and byte size; the checker treats
+   them as half-open intervals and accepts integer or `0x` string values.
+   `reserved` spans may contain their own B1 writes but must
+   not touch any per-CPU landing. A passing result reports
+   `ownership_verified: false`: it proves only disjoint geometry. [inference]
+   A real 12.02 candidate must still obtain independently supported scratch,
+   gate, and IST ownership plus readback; a later allocation or native-state
+   observation contradicting that ownership would falsify the candidate even
+   if this checker passes.
 4. Finalize a **pre-armed observer** against the chosen layout, including both
    frame slots, all journal words, gate/IST state, and the saved baseline.
    The offline-built audit scaffold above covers the reference slot positions
