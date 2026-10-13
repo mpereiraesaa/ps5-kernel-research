@@ -1067,7 +1067,7 @@ path**. It does not: the proposed repeat reuses the minimal `justreturn`
 probe would be a different build with its own reviewed frame sequence,
 build identity, expected observations, and recovery plan.
 
-**Staged `ret` continuation candidate (built offline, not sent):**
+**Staged `ret` continuation candidate (built offline, deferred):**
 [inference] A smaller explicit ROP return path can avoid the unverified
 `justreturn` call/EOI behavior without claiming to reproduce Kstuff's
 full KELF handoff. The `add_rsp_iret` entry still needs a five-word
@@ -1091,8 +1091,11 @@ same-privilege return
 this is what lets the first frame select `F−0x30` as the ROP stack.
 The proposed two-gadget chain makes no deliberate register, GSBASE,
 or CR3 changes, so its intended no-op return can consume the original
-hardware frame. It is **not** Kstuff's full register/GS/CR3 continuation,
-and the 12.02 gadget bytes have not been read. A disassembly showing
+hardware frame. It is **not** Kstuff's full register/GS/CR3 continuation
+or Byepervisor's context-preserving dispatch/return chain. Adding a
+`ret` before `iretq` does not supply the state handling those working
+paths perform. It must not be presented as a public-validated khook
+return path. The 12.02 gadget bytes have not been read. A disassembly showing
 another epilogue or a captured frame that does not land at `F−0x28`
 would falsify the proposed geometry.
 
@@ -1108,7 +1111,11 @@ console remains reachable, use the read-only frame audit above before
 recovery. The changed shared gate and all 16 IST4 slots can again leave
 the console in an unsafe state or panic it. Recovery: hard power cycle,
 then read-only baseline audit and UI check. No new ELF was sent; this
-is a separate console-risky experiment requiring owner approval.
+is a separate console-risky experiment requiring owner approval. The
+owner emphasized that Byepervisor's user return occurs **only after**
+its staged chain; this minimal two-gadget run is deferred pending a
+reviewed context-preserving chain or independent evidence that its
+shorter path is safe.
 
 ### Frame staging isolation run
 

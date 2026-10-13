@@ -52,6 +52,9 @@ first staged `iretq` instead targeted user code immediately. The
 handshake attempt powered off without a captured exception frame, so
 it does **not** prove that the immediate return itself failed. It proves
 that choosing that frame was not justified by the working examples.
+A later two-gadget `nop_ret` → `doreti_iret` candidate stages a return
+address but still omits the context handling in those examples; it is
+deferred (`16`).
 A captured trace showing the direct frame completed and a later,
 independent fault powered off the console would falsify a claim that
 the direct frame caused that run's failure.
