@@ -145,7 +145,7 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. A **pre-armed** independent observer captures raw RIP/CS/RFLAGS/RSP/SS without loading a new ELF after a stall. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
 | A1P / A1R arm continuation | Separate in-chain kernel-data markers **after** a verified pivot/store (A1P) and after `DBREG_RESUME` continuation (A1R), if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
 | Q1 first sampling quiesced | Worker finishes in-flight reads/logging and reports idle after main signals an arm return. | Bounds the SDK/logger ownership transfer before A2; it is a control report, not proof of a valid kernel return. |
-| A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the selected dispatch IST6 pointer and journal. | First return completed and the selected IST6 pointed to the planned dispatch frame. |
+| A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of all 16 IST6 qwords, the selected dispatch pointer, and the journal armed word. | First return completed; all 16 values matched when read before the second trigger. The reads are sequential, not an atomic snapshot. |
 | R2 second sampling ready | Worker rereads patched gate, dispatch IST6, untouched F2 canaries, and D1S/D1O preseed after A2, then acknowledges the handoff. | Worker sampled the second pretrigger state before the selected test syscall; no proof the syscall reached the hook. |
 | F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. The pre-armed observer samples independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
 | D1S / D1O dispatch/handler | Separate in-chain markers **after** the required interrupted registers are saved (D1S) and after the test oracle store but before the resume tail (D1O). A 12.02 liveness review must prove the marker's RAX/RCX clobbers harmless. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
@@ -171,12 +171,12 @@ earlier one in the host parse.
 | B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two aligned, nonoverlapping planned five-word frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
 | B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… before_sha=… image_sha=… readback_sha=…`. The image carries `rbp_addr=… rip_addr=… rsp_addr=… dr7_addr=…`; the journal carries `<stage>_addr=… <stage>_before=…` for each of `a1p`, `a1r`, `d1s`, `d1o`. | Read and hash each span **before** its write, then hash the staged bytes and their readback. Each span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. Both frame slots and four distinct aligned context qwords fit within `image`, without overlapping each other. The journal preseed words occupy distinct aligned qwords inside its region. |
 | R0 | `observer_cpu=… build_sha=… gate_lo=… gate_hi=… ist6=… pipe_ready=1 idle=1` | A distinct CPU reports that its pipe is open and it sampled the native selected gate/IST while idle after B0/B1, before main patches the gate. Build hash and readbacks must match B0; this is a worker report, not a kernel-frame observation. |
-| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… ist6_actual=… ist6_expected=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. The selected IST6 readback and expectation must both equal `B0.f1_slot+0x28` and differ from native `B0.ist6`. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
+| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… ist6_actual=… ist6_expected=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; all 16 IST6 values match the planned image and its readback hash. The selected IST6 readback and expectation must both equal `B0.f1_slot+0x28` and differ from native `B0.ist6`. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
 | R1 | `observer_cpu=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=… f1_can0..4=… f2_can0..4=…` and each `<stage>_addr=… <stage>_before=…` for `a1p`, `a1r`, `d1s`, `d1o` | Worker rereads the selected gate/IST, both frame preseeds, and all journal preseeds after B2. Values must match B0/B1/B2, and CPU must match R0. Main waits for this report and acknowledgment before TF. |
 | F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; all five reported canaries match that frame's independent B2 readback, and the raw five-word frame differs. A plausible hardware frame still needs human review. |
 | A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | Address and `before` match that marker's B1 journal preseed; the word changed and equals the expected marker. Marker ownership and gadget placement still need independent proof. |
 | Q1 | `observer_cpu=… reason=arm_return idle=1 inflight=0 samples=…` | Worker reports quiescence after the first return signal, with at least one sample and no read in flight. Main waits for acknowledgment before SDK reads/writes and A2. Missing Q1 leaves that ownership handoff unverified. |
-| A2 | `ist_actual=… ist_expected=… armed_addr=… armed_actual=… armed_expected=…` | The selected dispatch IST6 and armed-state readbacks agree; the IST value must equal `B0.f2_slot+0x28` and differ from native `B0.ist6`, and the armed state is nonzero. The aligned armed-state qword lies inside B1's journal span, away from its marker words. |
+| A2 | `ist_count=… ist_matched=… ist_before_sha=… ist_image_sha=… ist_readback_sha=… first_bad_cpu=… first_bad_ist=… ist_actual=… ist_expected=… armed_addr=… armed_actual=… armed_expected=…` | All 16 IST6 qwords are reread: count matches B2, `ist_before_sha` links to B2's arm image, the planned dispatch image hash equals the readback hash, and every pointer matches. Success uses `first_bad_cpu=16 first_bad_ist=0x0`; a mismatch record names its first CPU and raw pointer but is not accepted as A2. The selected value equals `B0.f2_slot+0x28` and differs from native `B0.ist6`. The nonzero armed-state qword is a free aligned word inside B1's journal. |
 | R2 | `observer_cpu=… gate_lo=… gate_hi=… ist6=… f2_slot=… f2_can0..4=… d1s_addr=… d1s_before=… d1o_addr=… d1o_before=…` | After A2, worker rereads the patched gate, selected dispatch IST6, untouched F2 canaries and dispatch journal words. Values must match B1/B2/A2; main waits for acknowledgment before the test syscall. |
 | Q2 | `observer_cpu=… reason=syscall_return idle=1 inflight=0 samples=…` | Worker reports quiescence after the second return signal. Main waits for acknowledgment before D2 restoration and logging. |
 | D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=… image_restored_sha=… big_restored_sha=… journal_restored_sha=…` | The return/restoration assertions are present; restored IST count equals B2's count, selected gate/IST/scratch readbacks equal B0, and each B1 span's final hash equals its prewrite `before_sha`. B1/A2 geometry links the later context and armed-state writes to restored spans (`11` #33–#34). The AP phase has its own evidence set. |
@@ -282,14 +282,16 @@ least one successful pass. Its host test generated 11 native lines; with
 the existing B0/B1/B2/A2/D2 fixtures, the classifier accepted all 18
 records. It also exercised a wrong F1 canary, failed read with `KH2E`,
 failed send (including the `KH2E` path), and premature Q1. The C source SHA-256 is
-`8284e7b9a733a24ad14c3c8b8e5ab79cf74ee53de499138d615daee12f982914`.
+`e59fe9d2bf2d5c91cfd4d5be83eb20998ab2619c20ef1001fd077abf74c7856b`.
 The sampler is **not a synchronized worker**: its Q records depend on a
 main/worker return signal and ownership transfer, which it cannot
 verify on its own. The separate worker schedule below supplies those calls
-in a host mock. No SDK adapter or 12.02 payload invokes it; a host
-fixture does not establish a console event. Its C source cross-compiled to a
-PS5 SDK object, but was not linked into an ELF. The first changed frame sample
+in a host mock. A host fixture does not establish a console event. The later
+PS5 callback bridge links this core into a smoke ELF, but no 12.02 chain
+invokes it. The first changed frame sample
 may also be partial and needs raw frame review.
+The current host mocks exercise a packed IST6 field address at `+4` modulo
+8; the capture initializer no longer rejects that TSS geometry (`11` #37).
 
 **Host-only worker handoff scaffold:** `kh2_worker.c/.h` runs the sampler on a
 pthread. R0 completes before main owns B2; `begin_arm` returns only after
@@ -310,14 +312,25 @@ uncertain and cannot be treated as permission for another trigger.
 B0, the three B1 parts, B2, A2, and D2 through supplied read, SHA-256, and
 send callbacks. It requires a B1 prewrite snapshot for each physical span;
 D2 rereads all three spans and compares their hashes to those snapshots.
-B2/A2/D2 require the matching main-owned worker state. The host check used
+B2/A2/D2 require the matching main-owned worker state. A2 now rereads all
+16 IST6 qwords, compares them with B2's arm image after advancing only the
+selected pointer to F2, and emits the first mismatching CPU and raw value.
+The host check used
 native C to emit seven main records and combined them with 11 records from
 the separate worker mock; the resulting 18-record transcript passed the
-classifier. An un-restored journal was rejected at D2. These are two mock
+classifier. An un-restored journal was rejected at D2; changing another
+CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`6c0b465d4bd7e298368d46ace2d57a292cc73e75ff9f5bceb6ef095faff619a5`;
+`f49c9c5179c890ae25624708d6e8dab9a4ea71cdadb3414dfdc3576875c44f85`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
+
+[inference] The extra 15 SDK reads at A2 lengthen the interval with the
+shared #DB gate patched. A live build must budget and log this duration and
+retain the approved hard power-cycle recovery plan; a measured shorter or
+unchanged window in an integrated run would falsify the estimated exposure.
+No updated A2 producer has run on the console. Sequential reads cannot rule
+out an unrelated concurrent write between two samples.
 
 **Off-tree PS5 callback bridge:** `kh2_ps5_adapter.c/.h` supplies the SDK
 main-read, separate-pipe worker-read, `ps5log` send, CPU pin/check, and
@@ -728,13 +741,12 @@ Compiling this audit ELF validates none of those contracts.
    must not overlap another CPU landing (`11` #35). Each planned IST top must
    leave a `0x28`-byte hardware frame inside that CPU's landing. The selected
    tops equal F1/F2 `+0x28`; other CPU tops stay fixed between arm and
-   dispatch because A2 reads back only the selected slot (`11` #36). The
-   checker outputs the SHA-256 of the 16 arm targets as little-endian qwords
-   for comparison with B2's `ist_image_sha` and the selected A2 expected top.
+   dispatch in this plan; A2 now rereads all 16 to catch drift (`11` #36–#38).
+   The checker outputs SHA-256 for the 16 arm and dispatch targets as
+   little-endian qwords for comparison with B2/A2 `ist_image_sha`, plus the
+   selected A2 expected top.
    This comparison still needs a retained same-attempt B2/A2 record; the
-   checker does not perform it. The current A2 producer reads only the
-   selected IST6 qword; it cannot establish that the other 15 remained at
-   their B2 values. A passing result reports
+   checker does not perform it. A passing result reports
    `ownership_verified: false`: it proves only disjoint geometry. [inference]
    A real 12.02 candidate must still obtain independently supported scratch,
    gate, and IST ownership plus readback; a later allocation or native-state

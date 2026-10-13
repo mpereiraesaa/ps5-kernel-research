@@ -74,9 +74,12 @@ the stage, region, and address. Its host check,
 `kh2_capture_host_test.py --notes-repo /path/to/ps5-kernel-research`,
 compiled the sampler with `cc`, produced 11 native records, and combined
 them with B0/B1/B2/A2/D2 fixtures for a complete 18-record classifier run.
+The host memory mock now uses a packed, unaligned IST6 field address;
+the sampled pointer value remains aligned. No console read of that revised
+path has occurred.
 It also checked mismatch, failed-read, failed-send (including the error
 line), and premature-quiesce paths. Source SHA-256: `kh2_capture.c`
-`8284e7b9a733a24ad14c3c8b8e5ab79cf74ee53de499138d615daee12f982914`,
+`e59fe9d2bf2d5c91cfd4d5be83eb20998ab2619c20ef1001fd077abf74c7856b`,
 `kh2_capture.h`
 `96789919226b4d004958bb5dddcbc8766106c3d8948fcb0b25a22ed2b9db42b6`.
 This code has no thread handoff, PS5 SDK adapter, or 12.02 chain integration;
@@ -106,15 +109,18 @@ B1 span's prewrite hash, verifies the staged/readback bytes, and later
 checks **all three** restored span hashes at D2 alongside the B0 scratch
 baseline (`11` #33). The image B1 record now bounds all four later context
 qword writes, and A2 requires its armed-state address inside the B1 journal
-span, away from marker words (`11` #34). The main host check rejects both
+span, away from marker words (`11` #34). A2 also reads all 16 IST6 qwords,
+links its arm-image hash to B2, and reports the first CPU with a pointer
+mismatch before permitting the second trigger. The main host check rejects both
 out-of-span cases. `kh2_main_host_test.py` combined seven native main
 records with 11 records from a separate worker mock into a classifier-accepted
-18-record transcript; an un-restored journal was rejected. This verifies
+18-record transcript; an un-restored journal and a changed nonselected IST6
+pointer were rejected at D2 and A2 respectively. This verifies
 format and baseline linkage across two mock processes, not a same-attempt
 console trace. Source SHA-256: `kh2_main_capture.c`
-`6c0b465d4bd7e298368d46ace2d57a292cc73e75ff9f5bceb6ef095faff619a5`,
+`f49c9c5179c890ae25624708d6e8dab9a4ea71cdadb3414dfdc3576875c44f85`,
 `kh2_main_capture.h`
-`e01c5ca3a609432eba1cd3d414fddc8c28a09e3fdd4375fd79107608e986381c`.
+`8441f6438dfbf03c6a6b4bda93fffcc4fa629cf78cf63fa980d18900448ce2e4`.
 The C source cross-compiled as a PS5 SDK object. No 12.02 payload invokes
 this producer.
 
@@ -141,7 +147,7 @@ the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
 notes checkout with `--notes-repo`, classified 20 complete 18-record attempts with
 no callback-owner violation or stage-order conflict; a journal left changed
 was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
-`6ab594f8d7fa7e3634aa2026c0a064a5eb1a8484b0cb70164dbce130b245f0e0`,
+`e5b566cb4d0e10cc25e2f2225fc6ddd7a0744ed840be0f8d4060e48c1588c7d0`,
 `kh2_integrated_host_test.py`
 `0cbcffccbd59fcdbb8ce32dc3133fbc9dcd7f56fd34247c0bdcd73b418ffc252`.
 The two mock kernel events set frame/journal bytes directly; they are not

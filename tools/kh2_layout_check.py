@@ -151,6 +151,9 @@ def check(plan):
             "expected_b2_ist_image_sha": (hashlib.sha256(b"".join(
                 value.to_bytes(8, "little") for value in targets["arm"])).hexdigest()
                 if not errors else None),
+            "expected_a2_ist_image_sha": (hashlib.sha256(b"".join(
+                value.to_bytes(8, "little") for value in targets["dispatch"])).hexdigest()
+                if not errors else None),
             "selected_a2_ist_expected": (
                 hex(targets["dispatch"][selected_cpu]) if not errors else None),
             "ownership_verified": False,
