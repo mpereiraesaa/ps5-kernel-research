@@ -284,6 +284,13 @@ trigger *kind*; see `15` §1 and `11` #16.)
 
 ## Next research steps
 
+**2026-10-13**: the route is public-working on 13.xx (Byepervisor-Reborn)
+and the implementation phase moved to
+[`11-byepervisor-12-02-port.md`](11-byepervisor-12-02-port.md) — the
+field/gadget mapping onto our 12.02 holdings, our FACS #GP trigger
+(no text-read dependency), and the phased plan. The r0gdb-stepping
+launch chain is retired from the critical path.
+
 1. Treat the FreeBSD 11 call order as a comparison model only; identify
    any PS5-specific divergence from same-firmware evidence.
 2. To assign 12.02 text locations, obtain a reproducible same-firmware
