@@ -907,6 +907,38 @@ while the gate/IST4 patch is active remain possible. The pretrigger marker
 does not establish that the probe reached `iretq`, and the missing return
 marker does not identify NPT as the cause.
 
+#### Scope of a Kstuff-shaped follow-up
+
+[public-consensus] Kstuff's `noerrc_iret_frame` does not stop at the first
+`RIP=justreturn` frame. Its next staged entries use `justreturn_pop`,
+`wrmsr_ret` to set GSBASE, `push_pop_all_iret` to capture registers, and
+`noerrc_entry` to preserve the interrupted frame before continuing
+([`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm#L245-L299)).
+Kstuff installs a separate frame pointer in every CPU's IST4 slot while
+using one shared #DB gate
+([`main.c`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/main.c#L1542-L1562)).
+
+[inference] Replacing the probe's direct user frame with only
+`RIP=justreturn`, or copying its current fixed user RIP/RSP frame to
+every CPU, would leave the continuation incomplete and could return an
+unrelated CPU to the probe's user thread. The public `noerrc` stack layout
+or a captured first return showing a different continuation would
+falsify this reading. A meaningful follow-up must stage a complete
+per-CPU entry/continuation/return path that preserves each interrupted
+context; only then can a changed shared gate be armed. This is a new
+console-risky build, not a reuse of the approved handshake ELF.
+
+The proposed observation is one TF/NOP on the selected CPU, with a PC
+marker after the observer acknowledges the patched state and a marker
+only after the full return and restoration. Readback can establish the
+staged per-CPU frames, IST4 slots, and gate values; it cannot establish
+that #DB entered the intended stack. A frame or entry marker tied to
+the selected CPU is still required for that boundary. Risk: a bad
+continuation or an incidental #DB on another CPU can panic or power off
+the console. Recovery: hard power-cycle and confirm normal UI/network
+operation. Under `AGENTS.md`, the owner must approve the exact FW 12.02
+build identity and this recovery plan before it is sent.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
