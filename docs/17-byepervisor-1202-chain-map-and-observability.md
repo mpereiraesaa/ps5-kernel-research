@@ -192,11 +192,24 @@ Legacy bare `KH1 … verified=1` records are rejected because they omit the
 frame, journal, and readback values. A KH2 line can still be false if its
 producer fabricated or sampled the wrong address; the classifier cannot
 authenticate a kernel event from text alone.
-The samplers' `ERR` line `KH2E stage=… cpu=… operation=read|hash
+The separate `ERR` line `KH2E stage=… cpu=… operation=read|hash|write
 region=… addr=…` is a separate failure report. The classifier preserves it
 as `capture_errors`/`first_capture_error` but never counts it as a KH2
 milestone. A retained R1 `KH2E` with no R1 record identifies the reported
 failed read; it says nothing about whether a later trap could have fired.
+`write` is accepted only for pretrigger B1/B2. The off-tree main producer's
+write wrappers report an attempted B1 chunk or B2 gate/IST6/context address
+if their callback fails. `tools/kh2_layout_check.py --log` maps such errors
+to the proposed B1 offset and landing CPU when applicable, IST6 CPU,
+gate word, or context field in
+`write_error_locations`; a failed write leaves that stage unverified.
+[inference] A callback may have changed part of a span before returning an
+error; a same-attempt read of the entire original span would falsify a
+partial-change claim for that event. The logger's send result is not a
+durable PC acknowledgment (`engineering/projects/logging_server/client/ps5log.h:734-749`).
+[verified-in-tree] `tools/khook_trace_classify.py:324-344` and
+`tools/kh2_layout_check.py:176-208,269-271,321` define the host-side
+distinction; their focused tests exercise it.
 
 [inference] A later frame report cannot establish a canary replacement by
 supplying its own unlinked `can0..4` values; likewise a journal report cannot
@@ -311,6 +324,11 @@ uncertain and cannot be treated as permission for another trigger.
 **Host-only main readback scaffold:** `kh2_main_capture.c/.h` reads and emits
 B0, the three B1 parts, B2, A2, and D2 through supplied read, SHA-256, and
 send callbacks. It requires a B1 prewrite snapshot for each physical span;
+its write callback wrappers then stage each B1 span in at most `0x500`-byte
+calls, reporting a failed call's address as `KH2E`. The B2 wrapper requires
+all 16 IST6 writes before the gate write, then four context writes, and
+reports any callback failure before the final B2 readback. A failed write
+does not authorize a trigger or imply successful restoration.
 D2 rereads all three spans and compares their hashes to those snapshots.
 B2/A2/D2 require the matching main-owned worker state. A2 now rereads all
 16 IST6 qwords, compares them with B2's arm image after advancing only the
@@ -319,9 +337,11 @@ The host check used
 native C to emit seven main records and combined them with 11 records from
 the separate worker mock; the resulting 18-record transcript passed the
 classifier. An un-restored journal was rejected at D2; changing another
-CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. These are two mock
+CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected B1
+image and CPU-7 IST6 write failures emitted retained `KH2E` without the
+corresponding B1/B2 success record. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`f49c9c5179c890ae25624708d6e8dab9a4ea71cdadb3414dfdc3576875c44f85`;
+`dfcdf963275054625be7ebd7c4b28cd9b04db271120f414505900e65f34fd72e`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
@@ -333,13 +353,13 @@ No updated A2 producer has run on the console. Sequential reads cannot rule
 out an unrelated concurrent write between two samples.
 
 **Off-tree PS5 callback bridge:** `kh2_ps5_adapter.c/.h` supplies the SDK
-main-read, separate-pipe worker-read, `ps5log` send, CPU pin/check, and
+main-read and main-write, separate-pipe worker-read, `ps5log` send, CPU pin/check, and
 pipe prepare/finish callbacks. `kh2_sha256.c/.h` supplies the SHA callback;
 its 17 host vectors matched `hashlib`, including padding boundaries and a
 million-byte input. A PS5 SDK smoke ELF linked the bridge, logger, observer
 channel, and all KH2 producer modules. It did not run on a console or
 call those callbacks. The callback source hashes and test name are in `05`.
-The bridge does not supply staging/restoration writes, a verified 12.02
+The bridge does not supply a staged chain or restoration sequence, a verified 12.02
 layout or gadget bytes, a test-hook boundary, or a return signal. A socket
 send result still needs a retained PC run file and manifest to establish
 transport integrity.

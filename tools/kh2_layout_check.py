@@ -173,6 +173,41 @@ def check(plan):
             "scope": "interval geometry only; no FW 12.02 byte or runtime proof"}
 
 
+def locate_write_error(plan, error):
+    """Map a reported failed B1/B2 write address to the candidate plan."""
+    address = number(error["addr"])
+    stage, region = error["stage"], error["region"]
+    location = {"seq": error["seq"], "stage": stage, "region": region,
+                "addr": error["addr"], "plan_match": False}
+    if stage == "B1" and region in plan["b1"]:
+        part = plan["b1"][region]
+        base, size = number(part["base"]), number(part["size"])
+        if base <= address < base + size:
+            location.update(plan_match=True, offset=hex(address - base))
+            if region == "image":
+                for landing in plan["landings"]:
+                    start, length = number(landing["base"]), number(landing["size"])
+                    if start <= address < start + length:
+                        location["landing_cpu"] = number(landing["cpu"])
+                        break
+    elif stage == "B2" and region == "gate":
+        base = number(plan["gate"]["base"])
+        if address in (base, base + 8):
+            location.update(plan_match=True, word=(address - base) // 8)
+    elif stage == "B2" and region == "ist6":
+        for cpu, item in enumerate(plan["ist_qwords"]):
+            if address == number(item):
+                location.update(plan_match=True, cpu=cpu)
+                break
+    elif stage == "B2" and region == "context":
+        for index, item in enumerate(plan["context_qwords"]):
+            if address == number(item):
+                location.update(plan_match=True,
+                                context=("rbp", "rip", "rsp", "dr7")[index])
+                break
+    return location
+
+
 def compare_log(plan, raw, manifest=None, geometry=None):
     """Compare only classifier-accepted, unambiguous KH2 report fields."""
     geometry = check(plan) if geometry is None else geometry
@@ -231,6 +266,9 @@ def compare_log(plan, raw, manifest=None, geometry=None):
                 if stage in ("B0", "B2", "A2")}
     accepted.update({f"B1.{part}": seq for part, seq in
                      classification["b1_parts"].items()})
+    write_error_locations = [locate_write_error(plan, error)
+                             for error in classification["capture_errors"]
+                             if error["operation"] == "write"]
     mismatches = []
     comparison_errors = []
     compared_fields = []
@@ -280,6 +318,7 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         "comparison_errors": comparison_errors,
         "classifier_rejected": classification["rejected"],
         "capture_errors": classification["capture_errors"],
+        "write_error_locations": write_error_locations,
         "causal_order_conflict": classification["causal_order_conflict"],
         "transport": classification["transport"],
         "integrity": classification["integrity"],

@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from kh2_layout_check import check  # noqa: E402
 from kh2_layout_check import compare_log  # noqa: E402
+from kh2_layout_check import locate_write_error  # noqa: E402
 from test_khook_trace_classify import record  # noqa: E402
 
 
@@ -102,6 +103,32 @@ class LayoutCheck(unittest.TestCase):
         self.assertEqual(result["comparison_status"], "comparison_error")
         self.assertEqual(result["compared_fields"], [])
         self.assertEqual(result["integrity"], "mismatch")
+
+    def test_failed_write_address_identifies_b1_chunk_and_ist_cpu(self):
+        plan = candidate()
+        raw = planned_log(plan, through="B1")
+        raw += ("5\t5000\tERR\tKH2E stage=B1 cpu=0 operation=write "
+                "region=image addr=0x1ba00\n"
+                "6\t6000\tERR\tKH2E stage=B2 cpu=0 operation=write "
+                f"region=ist6 addr={plan['ist_qwords'][7]}\n").encode()
+        result = compare_log(plan, raw)
+        self.assertEqual(result["comparison_status"],
+                         "classifier_rejected_or_capture_error")
+        self.assertEqual(result["write_error_locations"], [
+            {"seq": 5, "stage": "B1", "region": "image", "addr": "0x1ba00",
+             "plan_match": True, "offset": "0x500", "landing_cpu": 2},
+            {"seq": 6, "stage": "B2", "region": "ist6",
+             "addr": plan["ist_qwords"][7], "plan_match": True, "cpu": 7},
+        ])
+
+    def test_gate_and_context_write_error_addresses_use_plan_fields(self):
+        plan = candidate()
+        base = {"seq": 5, "stage": "B2", "region": "gate", "addr": "0x2e88310"}
+        self.assertEqual(locate_write_error(plan, base)["word"], 0)
+        context = {**base, "region": "context", "addr": "0x20308"}
+        self.assertEqual(locate_write_error(plan, context)["context"], "rip")
+        context["addr"] = "0x20320"
+        self.assertFalse(locate_write_error(plan, context)["plan_match"])
 
     def test_ambiguous_sequence_cannot_be_joined_to_plan(self):
         plan = candidate()
