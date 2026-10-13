@@ -46,7 +46,12 @@ def record(stage, **overrides):
         "F2": {"slot": "0x318", "rip": "0x4321", "cs": "0x43",
                "flags": "0x202", "rsp": "0x8765", "ss": "0x3b",
                **{f"can{i}": hex(i + 11) for i in range(5)}},
-        "A2": {"ist_actual": "0x340", "ist_expected": "0x340",
+        "A2": {"ist_count": "16", "ist_matched": "16",
+               "ist_before_sha": "b" * 64,
+               "ist_image_sha": "c" * 64,
+               "ist_readback_sha": "c" * 64,
+               "first_bad_cpu": "16", "first_bad_ist": "0x0",
+               "ist_actual": "0x340", "ist_expected": "0x340",
                "armed_addr": "0x6a0",
                "armed_actual": "0x55", "armed_expected": "0x55"},
         "Q1": {"observer_cpu": "7", "reason": "arm_return",
@@ -586,6 +591,7 @@ class OtherClassifierTests(unittest.TestCase):
         result = classify_records(
             record("B0"), *(record("B1", part=part)
                             for part in ("image", "big", "journal")),
+            record("B2"),
             record("A2", ist_actual="0x348", ist_expected="0x348"))
         self.assertNotIn("A2", result["observed"])
         self.assertEqual(result["rejected"][0]["reason"],
@@ -597,6 +603,24 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertNotIn("A2", result["observed"])
         self.assertEqual(result["rejected"][0]["reason"],
                          "B0 baseline missing for dispatch IST")
+
+    def test_a2_all_cpu_ist_readback_catches_other_cpu_drift(self):
+        staged = [record("B0"), *(record("B1", part=part)
+                  for part in ("image", "big", "journal")), record("B2")]
+        result = classify_records(*staged, record(
+            "A2", ist_matched="15", first_bad_cpu="7",
+            first_bad_ist="0xdeadbeef", ist_readback_sha="d" * 64))
+        self.assertNotIn("A2", result["observed"])
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "A2 IST image mismatch first_bad_cpu=7 "
+                         "first_bad_ist=0xdeadbeef")
+        result = classify_records(*staged, record("A2", ist_before_sha="d" * 64))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "A2 arm IST baseline differs from B2 image")
+        result = classify_records(record("B0"), record(
+            "B2", ist_count="1", ist_matched="1"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "IST readback count differs")
 
     def test_frame_and_journal_changes_require_earlier_samples(self):
         payloads = [record("B0"), record("B1", part="journal"),
@@ -637,7 +661,7 @@ class OtherClassifierTests(unittest.TestCase):
 
     def test_kh2_record_fits_console_logger_line(self):
         import re
-        for value in (record("B2"), record("B1", part="journal"),
+        for value in (record("B2"), record("A2"), record("B1", part="journal"),
                       record("R1"), record("R2")):
             worst = re.sub(r"0x[0-9a-f]+", "0xffffffffffffffff", value)
             self.assertLess(len(worst.encode()) + 30, 1024)

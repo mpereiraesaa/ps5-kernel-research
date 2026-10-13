@@ -22,8 +22,11 @@ class LayoutCheck(unittest.TestCase):
         self.assertEqual(result["selected_a2_ist_expected"], "0x20240")
         self.assertEqual(int(candidate()["ist_qwords"][0], 16) % 8, 4)
         arm = [int(value, 16) for value in candidate()["ist_targets"]["arm"]]
+        dispatch = [int(value, 16) for value in candidate()["ist_targets"]["dispatch"]]
         self.assertEqual(result["expected_b2_ist_image_sha"],
                          hashlib.sha256(struct.pack("<16Q", *arm)).hexdigest())
+        self.assertEqual(result["expected_a2_ist_image_sha"],
+                         hashlib.sha256(struct.pack("<16Q", *dispatch)).hexdigest())
 
     def test_pr97_shared_base_collides_with_reference_reservation_and_writes(self):
         plan = candidate()
@@ -64,6 +67,7 @@ class LayoutCheck(unittest.TestCase):
         self.assertIn("selected dispatch IST target differs from F2 top", errors)
         self.assertIn("cpu[9] IST target changes without an A2 readback", errors)
         self.assertIsNone(result["expected_b2_ist_image_sha"])
+        self.assertIsNone(result["expected_a2_ist_image_sha"])
 
     def test_ist_qword_addresses_follow_12_02_tss_geometry(self):
         plan = candidate()

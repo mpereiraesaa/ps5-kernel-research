@@ -133,7 +133,7 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                     baseline["gate_lo"], baseline["gate_hi"]):
                 raise ValueError("gate equals native B0 baseline")
             count = int(fields.get("ist_count", "0"))
-            if not 1 <= count <= 16 or int(fields.get("ist_matched", "-1")) != count:
+            if count != 16 or int(fields.get("ist_matched", "-1")) != count:
                 raise ValueError("IST readback count differs")
             if sha("ist_image_sha") != sha("ist_readback_sha"):
                 raise ValueError("IST readback hash mismatch")
@@ -205,6 +205,8 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             journal_region = state.get("b1_regions", {}).get("journal")
             if journal_region is None:
                 raise ValueError("B1 journal missing for armed-state geometry")
+            if "B2" not in seen or ist_count is None:
+                raise ValueError("B2 arm IST image missing for A2 comparison")
             armed_addr = number("armed_addr")
             if (armed_addr % 8 or armed_addr < journal_region[0] or
                     armed_addr + 8 > journal_region[1] or
@@ -212,6 +214,20 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                         armed_addr == address for address, _ in
                         journal_preseed.values()))):
                 raise ValueError("armed state outside journal free word")
+            if sha("ist_before_sha") != state["pretrigger"]["ist_image_sha"]:
+                raise ValueError("A2 arm IST baseline differs from B2 image")
+            a2_count = int(fields.get("ist_count", ""))
+            matched = int(fields.get("ist_matched", ""))
+            first_bad_cpu = int(fields.get("first_bad_cpu", ""))
+            first_bad_ist = number("first_bad_ist")
+            if a2_count != ist_count:
+                raise ValueError("A2 IST count differs from B2")
+            if (matched != a2_count or
+                    sha("ist_image_sha") != sha("ist_readback_sha") or
+                    first_bad_cpu != 16 or first_bad_ist != 0):
+                raise ValueError(
+                    f"A2 IST image mismatch first_bad_cpu={first_bad_cpu} "
+                    f"first_bad_ist={first_bad_ist:#x}")
             if (number("ist_actual") != number("ist_expected") or
                     number("armed_actual") != number("armed_expected")):
                 raise ValueError("arm-return readback differs")
@@ -382,6 +398,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                 "gate_lo": int(fields["gate_lo"], 16),
                 "gate_hi": int(fields["gate_hi"], 16),
                 "ist6": int(fields["ist6_actual"], 16),
+                "ist_image_sha": fields["ist_image_sha"].lower(),
             }
         if stage == "R0":
             state["observer_cpu"] = int(fields["observer_cpu"])
