@@ -895,7 +895,7 @@ Compiling this audit ELF validates none of those contracts.
    separate evidence. The `--firmware` value is a label, not authentication;
    retain independent image provenance alongside the reported digest.
 
-   [verified-in-tree] `tools/kh2_gadget_contract.py:37-55,113-167`
+   [verified-in-tree] `tools/kh2_gadget_contract.py:37-55,113-168,197-230`
    also accepts `--offsets` with a JSON manifest. It checks the bounded
    instruction sequence at every supplied entry among the 21 public
    `KERNEL_GADGET_*` names, reports every omitted name, and returns failure
