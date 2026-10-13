@@ -960,6 +960,40 @@ Compiling this audit ELF validates none of those contracts.
    stack-frame placement, executable runtime mapping, and trap delivery
    unproved. This checker does not discover unknown 12.02 offsets or make
    the data-only dump into a text image.
+
+   [verified-in-tree] `tools/kh2_identical_gadget_scan.py:16-106` adds a
+   candidate-finding pass for a future locally supplied 12.02 text image.
+   It first checks all 21 donor instruction shapes at the public 13.60
+   offsets, derives each exact byte span only in memory, then scans **every
+   target byte** for identical spans. It prints image SHA-256 values, hit
+   counts, and bounded offset lists, never the instruction bytes.
+   [verified-on-dump] A full linear `objdump -D` sweep of the held 13.60
+   image missed the published `pop ...; ret` entries. [inference] A decoder
+   walking from file offset zero need not align with every later gadget
+   entry; a bytewise candidate scan avoids that specific blind spot.
+   Run a donor self-check with:
+
+   ```sh
+   python3 tools/kh2_identical_gadget_scan.py \
+     --donor /path/outside/repo/13.60-kernel-text.bin \
+     --donor-firmware 13.60 \
+     --donor-offsets examples/kh2_gadget_offsets_1360.json \
+     --target /path/outside/repo/13.60-kernel-text.bin \
+     --target-firmware 13.60
+   ```
+
+   [verified-on-dump] Against the held donor SHA above, the self-check
+   recovered every published entry. Nine of 21 exact signatures appeared
+   once, while the one-byte `RET_TRAMP` matched 44,139 positions. Those
+   counts demonstrate that short byte signatures need independent
+   selection; a scan hit alone cannot identify the reference gadget. For
+   a 12.02 image, replace only `--target` and `--target-firmware`. [inference]
+   A 12.02 hit would be a byte-identical address **candidate**, not proof
+   of an executable instruction boundary, the correct enclosing function,
+   context liveness, or a working trap path. Zero hits would falsify
+   byte-for-byte transfer of that donor sequence but would not rule out a
+   semantically equivalent gadget. No 12.02 text image is currently held,
+   so no 12.02 scan result exists.
 2. Identify a 12.02 test-hook instruction boundary and resume contract, then
    separately the resume-window `startup_mp` call and AP init vector. A
    `sysent` function pointer alone does not identify the getuid body or an
