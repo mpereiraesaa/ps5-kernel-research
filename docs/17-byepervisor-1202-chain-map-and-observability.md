@@ -112,7 +112,7 @@ own firmware. There is no held 12.02 ktext image in this audit.
 | `MOV_RAX_RSI`, `MOV_RAX_RDI`, `ST_RCX_RAX`, `ST_RCX_RDX` for register save | `0x958504`, `0xc5e5da`, `0x3620bf`, `0x8a2725` | **Unknown** as a set. `store_rax_rdi` at 12.02 `+0x2ac112` is a different register pairing; any substitution needs a new register-liveness proof. |
 | `POP_RSI`, `POP_RDX`, `SET_DR7` for one-shot resume | `0x8aafb5`, `0x3476db`, `0xa7bd86` | **Unknown**. A debug-register instruction cannot be inferred from a nearby function address. |
 | handler marker using `POP_RCX`, `POP_RAX`, `ST_RCX_RAX` | `0x339712`, `0x338d2a`, `0x3620bf` | **Unknown** on 12.02. A marker cannot be promised until a store sequence is proven and its clobbers are accounted for. |
-| `CLD`, `REP_MOVSB` for later AP-copy path | `0x462c1a`, `0x304367` | `CLD` **unknown**. **Table address** `rep_movsb_pop_rbp_ret` at `+0x2efdba` (`12_02.h:15`) has an extra pop and needs a distinct frame; the 11.60 copy chain cannot be pasted. |
+| `CLD`, `REP_MOVSB` for later AP-copy path | `0x462c1a`, `0x304367` | `CLD` **unknown**. [inference] A three-header local-anchor projection yields **candidate** `REP_MOVSB` at `+0x2f31b7` (`16` §“Bounded scan”); its 12.02 bytes are unavailable. **Table address** `rep_movsb_pop_rbp_ret` at `+0x2efdba` (`12_02.h:15`) has an extra pop and needs a distinct frame; the 11.60 copy chain cannot be pasted. |
 | `OR_RCX_EAX` for persistent hook | unused in 11.60 one-shot path | Not required if the 12.02 proof remains one-shot. |
 | `POP_R8`, `STORE_RCX_R8` | absent/unused in 11.60 | Not required: `5299395/khook.c:75-84` uses RAX stores instead. The RAX store remains unverified on 12.02. |
 | `getuid` DR0 execute target for F2 | Public test uses an interior body instruction | [inference] **Entry-only diagnostic candidate** `ktext+0x3130a0` from 12.02 `sysent[24].sy_call` (`16`, entry-only target). An F2 frame RIP matching this pointer would support delivery to the table entry if DR0/DR7 and dispatch are independently linked. It does not identify the public `getuid` body `+0xe` instruction or validate return. |
@@ -951,10 +951,11 @@ Compiling this audit ELF validates none of those contracts.
    ```
 
    [inference] `examples/kh2_gadget_offsets_1202_candidates.json` lists
-   only the four address candidates already discussed in `16`. If a
+   five address candidates: the prior four plus the cross-header
+   `REP_MOVSB` projection (`16` §“Bounded scan”). If a
    matching 12.02 text image is later supplied, run the same command with
-   `--firmware 12.02` and that manifest. Even four matches would report
-   `coverage_complete=false` and 17 missing entries. A 12.02 byte mismatch
+   `--firmware 12.02` and that manifest. Even five matches would report
+   `coverage_complete=false` and 16 missing entries. A 12.02 byte mismatch
    at any candidate falsifies its listed instruction shape. A full 21-entry
    match would still leave enclosing basic blocks, register liveness,
    stack-frame placement, executable runtime mapping, and trap delivery
