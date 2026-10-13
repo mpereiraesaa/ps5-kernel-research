@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check two proposed KH2 entry contracts in a locally supplied text image.
+"""Check four proposed KH2 gadget contracts in a locally supplied text image.
 
 The image and disassembly stay off-repo. A match checks instruction shape at
 the supplied offsets, not firmware identity, runtime mapping, or execution.
@@ -14,6 +14,8 @@ from pathlib import Path
 
 
 PIVOT = ("add rsp,0x28", "repz ret")
+IRET = ("iretq",)
+RET_TRAMP = ("ret",)
 DBREG = (
     "mov dr0,rax",
     "mov rax,QWORD PTR [rdi+0x80]", "mov dr1,rax",
@@ -87,20 +89,29 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def inspect(path, firmware, pivot_offset, dbreg_offset):
+def inspect(path, firmware, pivot_offset, dbreg_offset,
+            iret_offset, ret_tramp_offset):
     if not path.is_file():
         raise ValueError("text image must be a regular file")
     size = path.stat().st_size
-    if (pivot_offset < 0 or dbreg_offset < 0 or
-            pivot_offset + 8 > size or dbreg_offset + 0x60 > size):
-        raise ValueError("candidate window falls outside text image")
+    windows = {"pivot": (pivot_offset, 8), "dbreg_resume": (dbreg_offset, 0x60),
+               "iret": (iret_offset, 4), "ret_tramp": (ret_tramp_offset, 2)}
+    if any(offset < 0 or offset + length > size
+           for offset, length in windows.values()):
+        raise ValueError("gadget window falls outside text image")
     pivot = check_sequence(disassemble(path, pivot_offset, 8), pivot_offset,
                            PIVOT, allow_plain_ret=True)
     dbreg = check_sequence(disassemble(path, dbreg_offset, 0x60),
                            dbreg_offset, DBREG)
+    iret = check_sequence(disassemble(path, iret_offset, 4),
+                          iret_offset, IRET)
+    ret_tramp = check_sequence(disassemble(path, ret_tramp_offset, 2),
+                               ret_tramp_offset, RET_TRAMP)
     return {"firmware_label": firmware, "text_sha256": sha256_file(path),
             "text_size": size, "pivot": pivot, "dbreg_resume": dbreg,
-            "both_contracts_match": pivot["contract_match"] and dbreg["contract_match"],
+            "iret": iret, "ret_tramp": ret_tramp,
+            "all_contracts_match": all(item["contract_match"] for item in
+                                       (pivot, dbreg, iret, ret_tramp)),
             "scope": "bounded instruction-shape check; no runtime or full-chain proof"}
 
 
@@ -111,14 +122,18 @@ def main():
     parser.add_argument("--firmware", required=True, help="provenance label only")
     parser.add_argument("--pivot-offset", required=True, type=lambda x: int(x, 0))
     parser.add_argument("--dbreg-offset", required=True, type=lambda x: int(x, 0))
+    parser.add_argument("--iret-offset", required=True, type=lambda x: int(x, 0))
+    parser.add_argument("--ret-tramp-offset", required=True,
+                        type=lambda x: int(x, 0))
     args = parser.parse_args()
     try:
         result = inspect(args.text, args.firmware, args.pivot_offset,
-                         args.dbreg_offset)
+                         args.dbreg_offset, args.iret_offset,
+                         args.ret_tramp_offset)
     except ValueError as exc:
         parser.error(str(exc))
     print(json.dumps(result, indent=2))
-    return 0 if result["both_contracts_match"] else 1
+    return 0 if result["all_contracts_match"] else 1
 
 
 if __name__ == "__main__":

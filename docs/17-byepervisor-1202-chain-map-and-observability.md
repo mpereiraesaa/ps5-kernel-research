@@ -104,7 +104,7 @@ own firmware. There is no held 12.02 ktext image in this audit.
 |---|---:|---|
 | `PIVOT_ADD_RSP28_RET` for both #DB entries | `0x2a0ede` | **Candidate** `ktext+0x2ac2de`: the `cpu_switch−0x22` relation appears in the published 13.00, 13.20, and 13.60 tables (`16`, cross-firmware local-anchor consistency). 12.02 bytes and stack consumption remain missing. Kstuff's `add rsp,0xe8; iretq` at `+0x2b3626` is a different contract. |
 | `IRETQ` for arm and dispatch returns | `0x2ac22d` | **Table address** `doreti_iret` at `+0x2b362d` (`12_02.h:12`); 12.02 bytes not read. |
-| `RET_TRAMP` | `0x338d2b` | **Table address** `nop_ret` at `+0x2b0b26` (`12_02.h:17-18`); exact 12.02 bytes not read. |
+| `RET_TRAMP` | `0x338d2b` | **Table address** `nop_ret` at `+0x2b0b26` (`12_02.h:17-18`); [verified-on-dump] the 13.60 donor's corresponding entry at `+0x255036` is a plain `ret`, despite the symbol name. Exact 12.02 bytes not read. |
 | `POP_RAX`, `POP_RCX`, `POP_RDI` for arm/context/store | `0x338d2a`, `0x339712`, `0x289e0a` | **Unknown** individually; `pop_all_iret` is not a drop-in replacement because it consumes a different frame. |
 | `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78`: the `mov_cr3_rax_mov_ds+0xe1` relation appears in the published 13.00, 13.20, and 13.60 tables (`16`). [verified-on-dump] The 13.60 donor entry is `mov dr0,rax`; the preceding load from `[rdi+0x78]` is outside the gadget, and the arm chain supplies DR0 in RAX (`11` #23). The 12.02 entry, remaining debug-register loads, and continuation stack are unverified. `cpu_switch` alone does not prove this tail. |
 | `STORE_RDI8_RCX` to write `IST+8` in arm continuation | `0x3cc4af` | **Unknown** equivalent. |
@@ -837,8 +837,8 @@ Compiling this audit ELF validates none of those contracts.
 1. Identify the 12.02 instruction bytes and containing basic blocks for the
    pivot, `DBREG_RESUME`, return, stores, pops, and DR7 disarm; record stack
    deltas and clobbers. The current data-only 12.02 dump cannot prove these.
-   [verified-in-tree] `tools/kh2_gadget_contract.py:16-34,49-64,67-102`
-   checks the two proposed
+   [verified-in-tree] `tools/kh2_gadget_contract.py:16-37,51-67,70-115`
+   checks four proposed
    entry instruction sequences at explicitly supplied offsets in a raw text
    image. It uses bounded `objdump` disassembly, records the image SHA-256 and
    the first mismatching instruction, and exits nonzero on a mismatch. For a
@@ -847,12 +847,17 @@ Compiling this audit ELF validates none of those contracts.
    ```sh
    python3 tools/kh2_gadget_contract.py \
      --text /path/outside/repo/kernel-text.bin --firmware 12.02 \
-     --pivot-offset 0x2ac2de --dbreg-offset 0x2acb78
+     --pivot-offset 0x2ac2de --dbreg-offset 0x2acb78 \
+     --iret-offset 0x2b362d --ret-tramp-offset 0x2b0b26
    ```
 
    [verified-on-dump] The held 13.60 donor text (SHA-256
    `20da45a0910c990153fbfb7c94e16356867e0bd84f7c9fbf754a45a5dd129673`)
-   passes the same checker at `+0x25213e` and `+0x2529d8`; this calibrates
+   passes the same checker at pivot `+0x25213e`, debug-register tail
+   `+0x2529d8`, `iretq` `+0x257b3d`, and plain `ret` `+0x255036`. The
+   latter is Kstuff's `nop_ret` table address
+   (`r0gdb/prosper0gdb/offsets/13_60.h:17-18`) but starts
+   at the `ret` instruction in the donor. This calibrates
    the checker against the donor, not against 12.02. [inference] A mismatch in
    12.02 would falsify transfer of that **listed instruction shape** at
    the projected offset, though a semantically different implementation

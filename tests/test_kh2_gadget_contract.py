@@ -49,6 +49,16 @@ class GadgetContractTests(unittest.TestCase):
         self.assertEqual(result["first_mismatch_index"], 10)
         self.assertFalse(result["contract_match"])
 
+    def test_distinguishes_iret_from_plain_return(self):
+        iret = module.check_sequence([(0x300, "iretq")],
+                                     0x300, module.IRET)
+        ret = module.check_sequence([(0x400, "ret")],
+                                    0x400, module.RET_TRAMP)
+        self.assertTrue(iret["contract_match"])
+        self.assertTrue(ret["contract_match"])
+        self.assertFalse(module.check_sequence(
+            [(0x300, "ret")], 0x300, module.IRET)["contract_match"])
+
 
 if __name__ == "__main__":
     unittest.main()
