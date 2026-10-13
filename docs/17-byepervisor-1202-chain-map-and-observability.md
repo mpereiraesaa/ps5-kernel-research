@@ -488,6 +488,11 @@ its 17 host vectors matched `hashlib`, including padding boundaries and a
 million-byte input. A PS5 SDK smoke ELF linked the bridge, logger, observer
 channel, and all KH2 producer modules. It did not run on a console or
 call those callbacks. The callback source hashes and test name are in `05`.
+The host runtime test now executes the **actual adapter functions** against
+temporary SDK, pipe, CPU, and logger stubs. It covers chunk sizes, CPU
+ownership checks, pipe open/read/close state, and send failures (`05`, KH2
+adapter runtime host check). This closes the link-only host test gap; it
+does not demonstrate an on-console worker handoff or PC log retention.
 The bridge does not supply a staged chain or restoration sequence, a verified 12.02
 layout or gadget bytes, a test-hook boundary, or a return signal. A socket
 send result still needs a retained PC run file and manifest to establish

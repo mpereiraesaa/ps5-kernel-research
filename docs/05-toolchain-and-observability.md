@@ -180,6 +180,27 @@ the bridge and all KH2 capture/worker/main modules. Source SHA-256:
 This proves host hash agreement and SDK linkability only: it does not
 exercise a PS5 read, logger session, shared-resource handoff, or a #DB.
 
+[verified-in-tree] The off-tree `kh2_ps5_adapter_runtime_host_test.py`
+compiles the actual adapter against temporary host stubs and runs
+`kh2_ps5_adapter_runtime_host.c:98-143`. It checked `0x1000`/`0x800`
+SDK chunks for a `0x1800` read and write, rejected main/worker calls on
+the wrong CPU or before worker prepare, opened the separate pipe only after
+observer pinning, propagated MARK/ERR send success and failure, retained
+`prepared=1` after a failed pipe close, and avoided opening a pipe after a
+pin failure. Run it with:
+
+```sh
+python3 kh2_ps5_adapter_runtime_host_test.py \
+  --ps5log /path/to/logging_server/client
+```
+
+The harness C source SHA-256 is
+`fe05d942772d1ae3a10bbc681a9ed199f98bb7745ec8c7160d775a20cd9bac4a`;
+the Python wrapper SHA-256 is
+`a21f360c1794665d78cd3a6b60f169a3966fadfb15a950b261bf6ba59734c883`.
+These are callback and state checks under host stubs; they do not exercise
+the SDK kernel primitive, actual CPU affinity, the PS5 pipe, or PC retention.
+
 `kh2_integrated_host.c` then ran the actual main emitter and pthread worker
 in **one host process** over one mutex-protected mock memory image and
 ordered log. Its callbacks reject a read, send, or main staging write by
