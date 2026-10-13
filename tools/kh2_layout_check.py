@@ -6,6 +6,7 @@ instruction bytes, whether the writes occur, or whether #DB is delivered.
 """
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -42,6 +43,7 @@ def inside(a, b):
 
 def check(plan):
     errors = []
+    kdata_base = number(plan["kdata_base"])
     entries = plan["landings"]
     cpus = [number(item["cpu"]) for item in entries]
     if sorted(cpus) != list(range(16)):
@@ -61,10 +63,40 @@ def check(plan):
         errors.append("gate must contain two qwords")
     if gate[1] % 8:
         errors.append("unaligned gate")
+    if gate[1] != kdata_base + 0x2e88300 + 16:
+        errors.append("vector-1 gate differs from 12.02 IDT address")
     ist = [span(f"ist[{i}]", address, 8)
            for i, address in enumerate(plan["ist_qwords"])]
     if len(ist) != 16:
         errors.append(f"expected 16 IST qwords, got {len(ist)}")
+    tss = plan["tss"]
+    tss_base, stride, ist_index = (number(tss[key]) for key in
+                                   ("base", "stride", "ist_index"))
+    if tss_base != kdata_base + 0x2e8afe0:
+        errors.append("TSS base differs from 12.02 offset")
+    if stride != 0x68 or ist_index != 6:
+        errors.append("12.02 KH2 expects TSS stride 0x68 and IST6")
+    for cpu, actual in enumerate(ist):
+        expected = tss_base + cpu * stride + 0x24 + 8 * (ist_index - 1)
+        if actual[1] != expected:
+            errors.append(f"ist[{cpu}] differs from TSS/IST6 address")
+    targets = {}
+    for phase in ("arm", "dispatch"):
+        values = plan["ist_targets"][phase]
+        if len(values) != 16:
+            raise ValueError(f"expected 16 {phase} IST targets, got {len(values)}")
+        targets[phase] = [number(value) for value in values]
+        for cpu, top in enumerate(targets[phase]):
+            if top % 8 or top < 0x28 or not inside(
+                    ("hardware_frame", top - 0x28, top), landings[cpu]):
+                errors.append(f"{phase} IST target outside cpu[{cpu}] landing")
+    if targets["arm"][selected_cpu] != number(plan["frame_slots"][0]) + 0x28:
+        errors.append("selected arm IST target differs from F1 top")
+    if targets["dispatch"][selected_cpu] != number(plan["frame_slots"][1]) + 0x28:
+        errors.append("selected dispatch IST target differs from F2 top")
+    for cpu in range(16):
+        if cpu != selected_cpu and targets["arm"][cpu] != targets["dispatch"][cpu]:
+            errors.append(f"cpu[{cpu}] IST target changes without an A2 readback")
 
     for name, values in (("frame_slots", plan["frame_slots"]),
                          ("context_qwords", plan["context_qwords"]),
@@ -79,7 +111,9 @@ def check(plan):
                for i, address in enumerate(plan["context_qwords"])]
     journal = [span(f"journal_word[{i}]", address, 8)
                for i, address in enumerate(plan["journal_qwords"])]
-    for item in ist + frames + context + journal:
+    # FreeBSD's packed TSS places IST6 at +0x4c; its qword address need not
+    # be aligned, even though the stack top stored there is aligned.
+    for item in frames + context + journal:
         if item[1] % 8:
             errors.append(f"unaligned {item[0]}")
     for item in frames + context:
@@ -114,6 +148,11 @@ def check(plan):
             if intersects(item, other):
                 errors.append(f"{item[0]} overlaps {other[0]}")
     return {"geometry_valid": not errors, "errors": errors,
+            "expected_b2_ist_image_sha": (hashlib.sha256(b"".join(
+                value.to_bytes(8, "little") for value in targets["arm"])).hexdigest()
+                if not errors else None),
+            "selected_a2_ist_expected": (
+                hex(targets["dispatch"][selected_cpu]) if not errors else None),
             "ownership_verified": False,
             "scope": "interval geometry only; no FW 12.02 byte or runtime proof"}
 
@@ -124,7 +163,7 @@ def main():
     args = parser.parse_args()
     try:
         result = check(json.loads(args.plan.read_text()))
-    except (KeyError, TypeError, ValueError) as exc:
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
         parser.error(f"invalid plan: {exc}")
     print(json.dumps(result, indent=2))
     if not result["geometry_valid"]:

@@ -707,19 +707,34 @@ Compiling this audit ELF validates none of those contracts.
    across `0x5000` bytes, but its 16 per-CPU slots occupy that entire span.
    A separate `0x4000` reference image cannot be overlaid at the same base;
    a jointly packed layout needs explicit interval and ownership proofs.
-   [verified-in-tree] `tools/kh2_layout_check.py:43-118` checks a candidate JSON
+   [verified-in-tree] `tools/kh2_layout_check.py:44-155` checks a candidate JSON
    plan's 16 explicitly placed CPU landings, three physical B1 spans, optional reference
-   reservations, gate and IST words, two frame slots, four context words, and
-   five journal words. Its interval checks reject the existing shared-base
-   collision (`tests/test_kh2_layout_check.py:21-33`). Run the deliberately synthetic
+   reservations, gate and IST words, arm/dispatch IST targets, two frame slots,
+   four context words, and five journal words. Its interval checks reject the
+   existing shared-base collision (`tests/test_kh2_layout_check.py:28-45`).
+   Run the deliberately synthetic
    passing fixture with
    `python3 tools/kh2_layout_check.py examples/kh2_layout_synthetic.json`.
    The JSON defines spans by absolute base and byte size; the checker treats
    them as half-open intervals and accepts integer or `0x` string values.
+   It ties the vector-1 gate and all 16 IST6 field addresses to one supplied
+   `kdata_base` using the 12.02 IDT/TSS offsets and `0x68` TSS stride
+   (`docs/16-byepervisor-12-02-port.md:394-396`). The packed IST6 field address is at TSS `+0x4c`, which
+   may be unaligned; the **stored stack top** is required to be aligned
+   (`11` #37). The fixture uses `kdata_base=0` solely for synthetic geometry.
    The selected CPU landing must lie inside the B1 image and contain **both**
    frame slots; other landings must be disjoint from all B1 writes. A reference
    reservation may contain the selected landing and its B1 writes, but it
-   must not overlap another CPU landing (`11` #35). A passing result reports
+   must not overlap another CPU landing (`11` #35). Each planned IST top must
+   leave a `0x28`-byte hardware frame inside that CPU's landing. The selected
+   tops equal F1/F2 `+0x28`; other CPU tops stay fixed between arm and
+   dispatch because A2 reads back only the selected slot (`11` #36). The
+   checker outputs the SHA-256 of the 16 arm targets as little-endian qwords
+   for comparison with B2's `ist_image_sha` and the selected A2 expected top.
+   This comparison still needs a retained same-attempt B2/A2 record; the
+   checker does not perform it. The current A2 producer reads only the
+   selected IST6 qword; it cannot establish that the other 15 remained at
+   their B2 values. A passing result reports
    `ownership_verified: false`: it proves only disjoint geometry. [inference]
    A real 12.02 candidate must still obtain independently supported scratch,
    gate, and IST ownership plus readback; a later allocation or native-state
