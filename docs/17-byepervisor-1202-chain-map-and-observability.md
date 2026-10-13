@@ -199,12 +199,57 @@ ELF completed, but the live build emitted only its prepatch `[K1]` and
 PC staging marker. A later attempt to load `fullchain_audit.elf` timed
 out and the console became unreachable; no `[KA]` frame or marker was
 captured. The owner hard power-cycled it and confirmed the UI recovered.
+[verified-on-console] Applying the host classifier to the retained PC
+logs reports `setup_only_completed_no_db_triggered` with complete
+transport for the setup run, then
+`prepatch_staging_seen_gate_patch_or_later_unproven` with incomplete
+transport for the live run. These are evidence boundaries, not a
+diagnosis of the failing instruction.
 [inference] Loading another ELF after a stall can be unsafe while the
 shared gate/IST state is unknown, even if ping and elfldr initially
 answer. A future observer must be active **before** patching the gate
 and have an independent reporting path. A captured restored gate before
 the audit attempt would falsify the proposed changed-gate link; the
 available logs do not establish what caused the outage.
+
+**Pre-armed observer contract for a later build [inference].** The
+separate-pipe calibration in `16` observed a pinned worker reading the
+gate/scratch and sending a PC record; the later pretrigger handshake
+observed a canary while a changed gate was installed. Neither run
+captured a post-trigger frame. The next offline design must keep the
+worker and its PC channel alive **before** any IST/gate write, then use
+an explicit sequence number and one shared phase word:
+
+1. The worker sends `READY` with FW, build hash, selected and observer
+   CPUs, and a run token before the main thread writes the shared gate.
+2. After all per-CPU slots and the gate are read back, the main thread
+   stores `GATE_VERIFIED` with release ordering. The worker samples the
+   gate and all IST4 pointers, and sends the raw state plus its phase
+   sequence before acknowledging. This places a durable boundary after
+   patch readback, which the failed fullchain run lacked. A missing
+   acknowledgment still leaves the main thread's last completed store
+   uncertain.
+3. The main thread issues `ICEBP` only after that acknowledgment. The
+   worker samples **all 16** canary frames and marker words repeatedly
+   during the short changed-gate window, reporting the first changed
+   CPU and raw frame fields, then each marker transition. The records
+   must name the slot layout and be flushed independently of elfldr.
+4. On a successful return, the main thread asks the worker to quiesce
+   before using the SDK kernel R/W primitive for restoration; the final
+   record includes gate/IST/scratch readback and BYE. A bounded worker
+   wait and a documented park/recovery state are needed if it does not
+   quiesce. The existing `observer_channel_read` reconfigures its pipe
+   through the SDK's inherited primitive, so all such calls must be
+   serialized with the main thread's SDK reads/writes (`16`, separate
+   channel calibration). Merely allocating a second pipe is not enough.
+
+This is an observation design, not authorization to run or a guarantee
+of safe concurrent #DB handling. The worker itself executes on another
+CPU while the gate is shared, and the register-preservation gap below
+still applies. A complete trace with `GATE_VERIFIED` but no changed
+frame would leave trigger execution, delivery, and frame placement
+unresolved; a changed frame on a nonselected CPU would falsify an
+assumption that pinning confines #DB to the trigger CPU.
 
 [inference] Preparing all 16 IST4 slots in that build addresses the
 wrong-stack hazard, but does not preserve an incidental #DB's interrupted

@@ -109,6 +109,11 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         r"^\d+\t\d+\t(?:MARK|WARN)\treturned after INT1 cpu=(\d+) "
         r"frame=(MATCH|MISMATCH) marker=(MATCH|MISMATCH) restored=YES\b",
         pc_text, re.M)
+    setup_stdout = ("[K2] full frames/IST4 and shared gate read back; "
+                    "originals restored; no #DB" in live_text)
+    setup_pc = bool(re.search(
+        r"^\d+\t\d+\tMARK\tsetup-only full_frames=16 "
+        r"patch-readback=YES restored=YES no_db=1\b", pc_text, re.M))
     restored = "[K1r] shared #DB gate and all IST4 slots restored" in live_text
 
     cpu = int(stage.group(1)) if stage else (
@@ -147,6 +152,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "gate_and_ist_restored_stdout": restored,
         "return_stdout": bool(returned),
         "return_pc": bool(pc_return),
+        "setup_only_stdout": setup_stdout,
+        "setup_only_pc": setup_pc,
         "return_frame": returned.group(2) if returned else None,
         "return_marker": returned.group(3) if returned else None,
         "audit_gate_offset": (f"0x{audit_header.group(1)}" if audit_header else None),
@@ -168,7 +175,9 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         pc_return.group(3) if pc_return and pc_same_run_verified else None)
     signals["return_frame"] = return_frame
     signals["return_marker"] = return_marker
-    if returned and pc_return and pc_same_run_verified and returned.groups() != pc_return.groups():
+    if setup_stdout or (setup_pc and pc_same_run_verified):
+        boundary = "setup_only_completed_no_db_triggered"
+    elif returned and pc_return and pc_same_run_verified and returned.groups() != pc_return.groups():
         boundary = "conflicting_return_records"
     elif return_record:
         boundary = ("one_trap_return_and_checks_passed" if

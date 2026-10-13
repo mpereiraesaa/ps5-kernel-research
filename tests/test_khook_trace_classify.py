@@ -49,6 +49,15 @@ class FullchainTests(unittest.TestCase):
                          "prepatch_staging_seen_gate_patch_or_later_unproven")
         self.assertEqual(result["pc_transport"], "unknown")
 
+    def test_setup_only_completion_is_not_a_failed_live_trigger(self):
+        pc = self.PC_STAGE + (
+            b"2\t2000\tMARK\tsetup-only full_frames=16 "
+            b"patch-readback=YES restored=YES no_db=1\n"
+            b"BYE seq=2 reason=setup-only_complete\n")
+        result = classify_kstuff_fullchain(
+            b"", pc=pc, pc_same_run_verified=True)
+        self.assertEqual(result["boundary"], "setup_only_completed_no_db_triggered")
+
     def test_changed_frame_without_marker_narrows_but_does_not_prove_delivery(self):
         result = classify_kstuff_fullchain(
             self.LIVE_STAGE, self.AUDIT_CHANGED, same_attempt_verified=True)
