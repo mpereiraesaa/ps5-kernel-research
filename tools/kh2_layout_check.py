@@ -184,6 +184,12 @@ def locate_write_error(plan, error):
         base, size = number(part["base"]), number(part["size"])
         if base <= address < base + size:
             location.update(plan_match=True, offset=hex(address - base))
+            if region == "image":
+                for landing in plan["landings"]:
+                    start, length = number(landing["base"]), number(landing["size"])
+                    if start <= address < start + length:
+                        location["landing_cpu"] = number(landing["cpu"])
+                        break
     elif stage == "B2" and region == "gate":
         base = number(plan["gate"]["base"])
         if address in (base, base + 8):

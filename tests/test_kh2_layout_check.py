@@ -116,7 +116,7 @@ class LayoutCheck(unittest.TestCase):
                          "classifier_rejected_or_capture_error")
         self.assertEqual(result["write_error_locations"], [
             {"seq": 5, "stage": "B1", "region": "image", "addr": "0x1ba00",
-             "plan_match": True, "offset": "0x500"},
+             "plan_match": True, "offset": "0x500", "landing_cpu": 2},
             {"seq": 6, "stage": "B2", "region": "ist6",
              "addr": plan["ist_qwords"][7], "plan_match": True, "cpu": 7},
         ])

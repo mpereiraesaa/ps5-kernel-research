@@ -200,7 +200,8 @@ failed read; it says nothing about whether a later trap could have fired.
 `write` is accepted only for pretrigger B1/B2. The off-tree main producer's
 write wrappers report an attempted B1 chunk or B2 gate/IST6/context address
 if their callback fails. `tools/kh2_layout_check.py --log` maps such errors
-to the proposed B1 offset, IST6 CPU, gate word, or context field in
+to the proposed B1 offset and landing CPU when applicable, IST6 CPU,
+gate word, or context field in
 `write_error_locations`; a failed write leaves that stage unverified and
 may leave partial kernel state. The logger's send result is not a durable PC
 acknowledgment. [verified-in-tree] `tools/khook_trace_classify.py`,
