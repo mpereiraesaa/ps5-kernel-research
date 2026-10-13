@@ -104,7 +104,11 @@ below now supplies linkable pinned-CPU/pipe/log functions, but there is no
 12.02 chain integration or console run.
 
 The local `kh2_main_capture.c/.h` adds B0/B1/B2/A2/D2 readback production
-through supplied kernel-read, SHA-256, and log callbacks. It captures each
+through supplied kernel-read, SHA-256, and log callbacks. Its supplied write
+callback stages B1 in `0x500`-byte calls and requires all 16 IST6 writes
+before the B2 gate write, followed by four context writes. A failed callback
+emits `KH2E operation=write` with its attempted address and blocks the
+success record. It captures each
 B1 span's prewrite hash, verifies the staged/readback bytes, and later
 checks **all three** restored span hashes at D2 alongside the B0 scratch
 baseline (`11` #33). The image B1 record now bounds all four later context
@@ -115,17 +119,18 @@ mismatch before permitting the second trigger. The main host check rejects both
 out-of-span cases. `kh2_main_host_test.py` combined seven native main
 records with 11 records from a separate worker mock into a classifier-accepted
 18-record transcript; an un-restored journal and a changed nonselected IST6
-pointer were rejected at D2 and A2 respectively. This verifies
+pointer were rejected at D2 and A2 respectively. Injected B1/B2 write
+failures produced `KH2E` without their success records. This verifies
 format and baseline linkage across two mock processes, not a same-attempt
 console trace. Source SHA-256: `kh2_main_capture.c`
-`f49c9c5179c890ae25624708d6e8dab9a4ea71cdadb3414dfdc3576875c44f85`,
+`dfcdf963275054625be7ebd7c4b28cd9b04db271120f414505900e65f34fd72e`,
 `kh2_main_capture.h`
-`8441f6438dfbf03c6a6b4bda93fffcc4fa629cf78cf63fa980d18900448ce2e4`.
+`90650c699ae6de744993532b5937ca97b5ae53654c73ba7630306c4af3650a29`.
 The C source cross-compiled as a PS5 SDK object. No 12.02 payload invokes
 this producer.
 
-The off-tree `kh2_ps5_adapter.c/.h` now binds the main read callback to
-chunked SDK `kernel_copyout`, the worker read to `observer_channel_read`,
+The off-tree `kh2_ps5_adapter.c/.h` now binds the main read/write callbacks
+to chunked SDK `kernel_copyout`/`kernel_copyin`, the worker read to `observer_channel_read`,
 and the send callback to `ps5log_line`; worker prepare/finish pins and checks
 the observer CPU and opens/restores its separate pipe. `kh2_sha256.c/.h`
 supplies the missing SHA-256 callback without relying on the SDK's
@@ -133,8 +138,8 @@ unresolved `_libmd_SHA256_*` symbols. Its 17 host vectors, including SHA
 padding boundaries and a million-byte input, matched Python `hashlib`.
 `kh2_ps5_adapter_host_test.py` also linked a PS5 SDK smoke ELF containing
 the bridge and all KH2 capture/worker/main modules. Source SHA-256:
-`kh2_ps5_adapter.c` `604e1751ee3d469ee460f512eba73de53100e80a35aa4fbd44c0d916e6d111c5`,
-`kh2_ps5_adapter.h` `2ef155d1690a5a255c6871b1f54c14a996cdb146119d35eadcd4baaa90c1a089`,
+`kh2_ps5_adapter.c` `f1ca2571532332e01a0a2ece0343c535d8f0854d97fdab67912cbf27c19c2f75`,
+`kh2_ps5_adapter.h` `67eaa92529f629a677264dc562489f452b646360f6fcba46cc96cd66152e1e66`,
 `kh2_sha256.c` `973d80697bc965d4bf9ed86456dac5ceb33400810425154328f572855cd5ec64`,
 `kh2_sha256.h` `cd45c004b36a8b99bf88f73b9517425a6a7e6ea2df5d2d93c214dff7c36e8e28`.
 This proves host hash agreement and SDK linkability only: it does not
@@ -147,7 +152,7 @@ the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
 notes checkout with `--notes-repo`, classified 20 complete 18-record attempts with
 no callback-owner violation or stage-order conflict; a journal left changed
 was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
-`e5b566cb4d0e10cc25e2f2225fc6ddd7a0744ed840be0f8d4060e48c1588c7d0`,
+`937a99dd156cc7d210cb003ce8e54f6320540ca238039a1eee5857569b354357`,
 `kh2_integrated_host_test.py`
 `0cbcffccbd59fcdbb8ce32dc3133fbc9dcd7f56fd34247c0bdcd73b418ffc252`.
 The two mock kernel events set frame/journal bytes directly; they are not

@@ -125,6 +125,22 @@ def classify_records(*payloads):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_pretrigger_write_errors_are_retained_without_forging_milestones(self):
+        raw = (f"1\t1000\tMARK\t{record('B0')}\n"
+               "2\t2000\tERR\tKH2E stage=B1 cpu=3 operation=write "
+               "region=image addr=0x600\n"
+               "3\t3000\tERR\tKH2E stage=B2 cpu=3 operation=write "
+               "region=ist6 addr=0x804\n").encode()
+        result = classify(raw)
+        self.assertEqual([item["operation"] for item in result["capture_errors"]],
+                         ["write", "write"])
+        self.assertEqual(result["observed"], {"B0": 1})
+        self.assertEqual(result["first_missing_direct_evidence"], "B1")
+        invalid = classify(raw + b"4\t4000\tERR\tKH2E stage=A2 cpu=3 "
+                           b"operation=write region=ist6 addr=0x804\n")
+        self.assertIn("malformed KH2E capture error",
+                      [item["reason"] for item in invalid["rejected"]])
+
     def test_pretrigger_only_does_not_claim_db_failed(self):
         result = run("B0", "B1", "R0", "B2", "R1")
         self.assertEqual(result["first_missing_direct_evidence"], "F1")
