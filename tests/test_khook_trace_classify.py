@@ -506,6 +506,50 @@ class FullchainTests(unittest.TestCase):
             self.assertEqual(result["boundary"],
                              "gate_and_ist_staged_delivery_or_later_unproven")
 
+    def test_prearmed_v4_links_baseline_main_trigger_marker_and_frame(self):
+        base = self.FC1.replace(b"prearmed-v1", b"prearmed-v4")
+        baseline = (b"4\t4000\tMARK\tFC1 seq=3 phase=PRETRIGGER cpu=3 "
+                    b"frame_matched=5 marker_before=0x0 "
+                    b"can0=0x4a524652414d4800 can1=0x4a524652414d4801 "
+                    b"can2=0x4a524652414d4802 can3=0x4a524652414d4803 "
+                    b"can4=0x4a524652414d4804\n")
+        trigger = (b"5\t5000\tMARK\tFCM phase=TRIGGER_BEGIN fw=12.02 "
+                   b"build=prearmed-v4 cpu=3 pretrigger=1\n")
+        frame = (b"6\t6000\tMARK\tFC1 seq=4 phase=FRAME cpu=3 "
+                 b"sample=targeted rip=0x123 cs=0x43 flags=0x202 "
+                 b"rsp=0x456 ss=0x3b\n")
+        def classify(extra):
+            return classify_kstuff_fullchain(
+                self.LIVE_STAGE, pc=self.PC_STAGE + base + extra,
+                pc_same_run_verified=True)
+        self.assertEqual(
+            classify(baseline)["boundary"],
+            "pretrigger_baseline_verified_trigger_or_later_unproven")
+        reported = classify(baseline + trigger)
+        self.assertEqual(reported["boundary"],
+                         "trigger_call_reached_db_delivery_or_later_unproven")
+        self.assertTrue(reported["signals"]["fc1"]["trigger_begin"])
+        self.assertEqual(classify(baseline + trigger + frame)["boundary"],
+                         "frame_changed_copy_marker_or_later_unproven")
+        missing_baseline = classify(trigger + frame)
+        self.assertEqual(missing_baseline["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+        self.assertFalse(missing_baseline["signals"]["fc1"]["trigger_begin"])
+        mismatch = baseline.replace(b"\tMARK\t", b"\tERR\t").replace(
+            b"frame_matched=5", b"frame_matched=4")
+        self.assertEqual(classify(mismatch)["boundary"],
+                         "observer_pretrigger_mismatch_before_trigger")
+        malformed_error = baseline.replace(b"\tMARK\t", b"\tERR\t")
+        self.assertEqual(classify(malformed_error)["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+        wrong_raw = baseline.replace(b"can4=0x4a524652414d4804",
+                                     b"can4=0x4a524652414d4805")
+        self.assertEqual(classify(wrong_raw)["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+        read_fail = b"4\t4000\tERR\tFC1 seq=3 phase=READ_FAIL\n"
+        self.assertEqual(classify(read_fail)["boundary"],
+                         "observer_read_failed_pretrigger")
+
     def test_prearmed_gate_mismatch_and_nonselected_frame(self):
         bad_gate = self.FC1.replace(b"gate_lo=0x111", b"gate_lo=0x112")
         result = classify_kstuff_fullchain(

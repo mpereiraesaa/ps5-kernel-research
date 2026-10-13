@@ -704,21 +704,36 @@ available logs do not establish what caused the outage.
 
 **Isolated prearmed Kstuff variant, built offline and not run.**
 [verified-in-tree] Our separate local source
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-262,550-652`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-265,550-680`
 builds the current `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
+`f1a07acd27ccceee01083ec4541d47197414e161d443a15935114c74a56c296b`.
+The unrun v3 source is preserved outside this repo at
+`engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v3.c`;
+rebuilding it at the original source path reproduced SHA-256
 `494491a5fbfb319483459343e7db9b03e94af732a469ca896bcea5d35f77948d`.
 The prior unrun v2 source is preserved outside this notes repo at
 `engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v2.c`.
 Rebuilding it at the original source path reproduced its ELF SHA-256
 `39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`;
-v3 corrects the copy-gadget offset (`11` #46). Neither was run.
+v3 corrected the copy-gadget offset (`11` #46); v4 adds a pretrigger
+observer/main handoff. None was run.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
 main thread stages IST4 or changes the gate. After the main thread writes and
 reads back all 16 IST4 slots and the gate, the worker independently reads the
 full gate and all 16 IST4 values and sends `FC1 GATE_VERIFIED` with raw gate
 qwords, expected qwords, matched count, and first mismatch. The trigger waits
-for that PC send and acknowledgment. While armed, the worker reads all 16
+for that PC send and acknowledgment. [verified-in-tree]
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:212-261,651-680`
+then has the worker read the selected `0x500`-byte slot, compare its five
+frame canaries and zero destination marker, and send `FC1 PRETRIGGER` with
+the five raw canaries before
+acknowledging. The worker waits without another read or PC send while main
+sends `FCM TRIGGER_BEGIN` and releases the sampling phase immediately before
+the `fullchain_icebp` call. This serializes the two threads' `ps5log` use at
+the handoff. A retained `TRIGGER_BEGIN` establishes that main reached the
+call site and its PC send returned; it does not prove the `ICEBP` instruction
+was fetched. While armed, the worker reads all 16
 preseeded five-word frames and copy markers, sending each first change as
 `FC1 FRAME` or `FC1 MARKER`; successful return joins it before the main
 thread resumes SDK kernel R/W operations. In this second offline build the
@@ -729,15 +744,17 @@ to a five-page sweep; it cannot guarantee a sample before an immediate
 shutdown. A timeout or unsafe teardown parks.
 
 [verified-in-tree] The `FC1` local sequence begins at 1; its stages are
-`READY`, `GATE_VERIFIED`, zero or more `FRAME`/`MARKER` records, and
+`READY`, `GATE_VERIFIED`, `PRETRIGGER`, zero or more `FRAME`/`MARKER` records, and
 `QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
-`build=prearmed-v3`, and selected/observer CPU numbers. The exact ELF SHA is
+`build=prearmed-v4`, and selected/observer CPU numbers. The exact ELF SHA is
 recorded above, while `ps5log/1`'s `HELLO` boot token identifies the PC
 session; the version tag is not an ELF hash. `tools/khook_trace_classify.py`
 preserves raw `FC1` fields and sequence issues. With `--pc-same-run`, a
 matching gate/16 IST4 record advances the observed boundary beyond PR #97's
-prepatch `[K1]`; a selected CPU's changed frame or copy marker narrows it
-further. Without that operator assertion, these records remain visible but do
+prepatch `[K1]`. V4 adds separate boundaries for a matching selected-frame
+pretrigger baseline and a linked main-thread `FCM TRIGGER_BEGIN`. A selected
+CPU's changed frame or copy marker narrows it further. Without that operator
+assertion, these records remain visible but do
 not advance a separate elfldr transcript. An `FC1` marker is only a copy
 side effect, not proof of a valid return or debug-register arm. A changed
 frame is raw canary replacement and needs RIP/CS/RFLAGS/RSP/SS review.
@@ -748,8 +765,19 @@ failed observer on return using synthetic transcripts.
 `[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
 asserted. A disagreement yields `conflicting_probe_cpu_records` before any
 gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
-For `prearmed-v2` and `prearmed-v3` it requires the sample mode and rejects a `targeted`
+For `prearmed-v2`, `prearmed-v3`, and `prearmed-v4` it requires the sample mode and rejects a `targeted`
 record naming a CPU other than the trigger CPU; v1 records remain readable.
+For v4, a frame/marker needs an earlier accepted `PRETRIGGER` record with
+all five raw canaries matching the selected CPU's staged values.
+The classifier reports a pretrigger mismatch or a returned observer read
+failure after the verified gate separately from a missing delivery record
+(`tools/khook_trace_classify.py` `_fc1_records` and
+`classify_kstuff_fullchain`; `tests/test_khook_trace_classify.py`
+`test_prearmed_v4_links_baseline_main_trigger_marker_and_frame`). [inference]
+If the console stops after `TRIGGER_BEGIN` with no changed frame, the
+retained log bounds the unobserved interval to the call, exception entry,
+observer read, or transport; it cannot exclude #DB delivery. A same-attempt
+plausible frame at the selected slot would falsify a claim of no delivery.
 
 [verified-in-tree] The worker also emits `FC1 READ_FAIL` if its private-pipe
 read fails and emits an `ERR`-level `GATE_VERIFIED` with raw values if the
@@ -792,6 +820,8 @@ python3 tools/fullchain_layout_check.py \
 It checks eight register offsets, the `F−0x28` hardware frame, the
 `+0xe8` entry-iret landing, both pop-all frames, the copy `pop rbp; ret`
 handoff, slot bounds and overlap, and the staged/observer canary formula.
+For v4 it checks that the pretrigger comparison uses the same canary
+formula as staging and later frame reporting.
 The optional offset audit also checks IDT, TSS, and four text-relative
 Kstuff entries against the same-firmware public table. [verified-in-tree]
 The historical PR #97 source fails only the copy-entry comparison

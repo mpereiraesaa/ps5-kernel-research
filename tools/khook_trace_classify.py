@@ -701,7 +701,7 @@ def _fc1_records(pc_text: str) -> dict:
     records = []
     issues = []
     last_seq = 0
-    for line in pc_text.splitlines():
+    for line_index, line in enumerate(pc_text.splitlines()):
         parts = line.split("\t", 3)
         if len(parts) != 4 or not parts[3].startswith("FC1 "):
             continue
@@ -715,7 +715,8 @@ def _fc1_records(pc_text: str) -> dict:
         if seq != last_seq + 1:
             issues.append(f"FC1 sequence expected {last_seq + 1}, got {seq}")
         last_seq = seq
-        records.append({"seq": seq, "level": parts[2], "phase": phase,
+        records.append({"seq": seq, "line_index": line_index,
+                        "level": parts[2], "phase": phase,
                         "fields": fields})
 
     ready = next((r for r in records if r["phase"] == "READY"
@@ -757,13 +758,90 @@ def _fc1_records(pc_text: str) -> dict:
                  and r["level"] == "ERR"]
     read_fail_before_gate = bool(ready and not gate_report and any(
         r["seq"] > ready["seq"] for r in read_fail))
+    pretrigger_reports = [r for r in records if r["phase"] == "PRETRIGGER"]
+    pretrigger_report = pretrigger_reports[0] if len(pretrigger_reports) == 1 else None
+    if len(pretrigger_reports) > 1:
+        issues.append("duplicate PRETRIGGER")
+    raw_canaries_match = False
+    raw_canaries_present = bool(pretrigger_report and all(
+        f"can{word}" in pretrigger_report["fields"] for word in range(5)))
+    if pretrigger_report and ready:
+        try:
+            selected_cpu = int(ready["fields"]["trigger_cpu"])
+            raw_canaries = [
+                int(pretrigger_report["fields"][f"can{word}"], 0)
+                for word in range(5)
+            ]
+            raw_canaries_match = (
+                0 <= selected_cpu < 16 and
+                raw_canaries == [
+                    0x4a524652414d4500 + (selected_cpu << 8) + word
+                    for word in range(5)
+                ]
+            )
+        except (KeyError, ValueError):
+            pass
+    pretrigger_verified = bool(
+        ready and gate and pretrigger_report and
+        ready["fields"].get("build") == "prearmed-v4" and
+        pretrigger_report["level"] == "MARK" and
+        pretrigger_report["seq"] > gate["seq"] and
+        pretrigger_report["fields"].get("cpu") ==
+        ready["fields"].get("trigger_cpu") and
+        pretrigger_report["fields"].get("frame_matched") == "5" and
+        pretrigger_report["fields"].get("marker_before") == "0x0" and
+        raw_canaries_match
+    )
+    pretrigger_mismatch = bool(
+        ready and gate and pretrigger_report and
+        ready["fields"].get("build") == "prearmed-v4" and
+        pretrigger_report["level"] == "ERR" and
+        pretrigger_report["seq"] > gate["seq"] and
+        pretrigger_report["fields"].get("cpu") ==
+        ready["fields"].get("trigger_cpu") and
+        (pretrigger_report["fields"].get("frame_matched") in
+         ("0", "1", "2", "3", "4") or
+         (pretrigger_report["fields"].get("marker_before") not in
+          (None, "0x0")) or
+         (raw_canaries_present and not raw_canaries_match))
+    )
+    if pretrigger_report and not pretrigger_verified and not pretrigger_mismatch:
+        issues.append("malformed or out-of-order PRETRIGGER")
+    trigger_reports = []
+    for line_index, line in enumerate(pc_text.splitlines()):
+        parts = line.split("\t", 3)
+        if len(parts) == 4 and parts[3].startswith("FCM "):
+            trigger_reports.append((line_index, parts[2],
+                                    dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3]))))
+    if len(trigger_reports) > 1:
+        issues.append("duplicate FCM trigger report")
+    trigger_begin = False
+    if len(trigger_reports) == 1:
+        line_index, level, fields = trigger_reports[0]
+        trigger_begin = bool(
+            pretrigger_verified and ready and level == "MARK" and
+            ready["fields"].get("build") == "prearmed-v4" and
+            line_index > pretrigger_report["line_index"] and
+            fields.get("phase") == "TRIGGER_BEGIN" and
+            fields.get("fw") == "12.02" and
+            fields.get("build") == "prearmed-v4" and
+            fields.get("cpu") == ready["fields"].get("trigger_cpu") and
+            fields.get("pretrigger") == "1"
+        )
+        if not trigger_begin:
+            issues.append("malformed or unlinked FCM trigger report")
+    read_fail_after_gate_before_pretrigger = bool(
+        gate and ready and ready["fields"].get("build") == "prearmed-v4" and
+        not pretrigger_report and
+        any(r["seq"] > gate["seq"] for r in read_fail)
+    )
 
     def valid_sample(record):
         fields = record["fields"]
         sample = fields.get("sample")
         version = ready["fields"].get("build") if ready else None
         if sample is None:
-            if version in ("prearmed-v2", "prearmed-v3"):
+            if version in ("prearmed-v2", "prearmed-v3", "prearmed-v4"):
                 issues.append(f"{version} frame or marker lacks sample mode")
                 return False
             return True
@@ -783,6 +861,14 @@ def _fc1_records(pc_text: str) -> dict:
                and r["level"] == "MARK"
                and r["fields"].get("value") == "0x4b53545546464348"
                and valid_sample(r)]
+    if ready and ready["fields"].get("build") == "prearmed-v4":
+        if not pretrigger_verified or any(
+            r["seq"] <= pretrigger_report["seq"] for r in frames + markers
+        ):
+            if frames or markers:
+                issues.append("v4 frame or marker without preceding verified pretrigger baseline")
+            frames = []
+            markers = []
     if any(r["phase"] in ("FRAME", "MARKER") and
            (not gate or r["seq"] <= gate["seq"]) for r in records):
         issues.append("frame or marker without preceding verified gate")
@@ -809,7 +895,12 @@ def _fc1_records(pc_text: str) -> dict:
     return {"records": records, "issues": issues,
             "ready": bool(ready), "gate_verified": bool(gate),
             "gate_mismatch": gate_mismatch,
+            "pretrigger_verified": pretrigger_verified,
+            "pretrigger_mismatch": pretrigger_mismatch,
+            "trigger_begin": trigger_begin,
             "read_fail_before_gate_report": read_fail_before_gate,
+            "read_fail_after_gate_before_pretrigger":
+                read_fail_after_gate_before_pretrigger,
             "read_fail": bool(read_fail),
             "trigger_cpu": (int(ready["fields"]["trigger_cpu"])
                             if ready and ready["fields"].get("trigger_cpu", "").isdigit()
@@ -944,6 +1035,14 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     elif (pc_same_run_verified and cpu is not None and
           cpu in fc1["frame_cpus"]) or (same_attempt_verified and frame == "changed"):
         boundary = "frame_changed_copy_marker_or_later_unproven"
+    elif pc_same_run_verified and fc1["pretrigger_mismatch"]:
+        boundary = "observer_pretrigger_mismatch_before_trigger"
+    elif pc_same_run_verified and fc1["read_fail_after_gate_before_pretrigger"]:
+        boundary = "observer_read_failed_pretrigger"
+    elif pc_same_run_verified and fc1["trigger_begin"]:
+        boundary = "trigger_call_reached_db_delivery_or_later_unproven"
+    elif pc_same_run_verified and fc1["pretrigger_verified"]:
+        boundary = "pretrigger_baseline_verified_trigger_or_later_unproven"
     elif pc_same_run_verified and fc1["gate_mismatch"]:
         boundary = "observer_gate_or_ist_mismatch_after_main_readback"
     elif pc_same_run_verified and fc1["read_fail_before_gate_report"]:
