@@ -42,13 +42,16 @@ def inside(a, b):
 
 def check(plan):
     errors = []
-    slots = plan["cpu_slots"]
-    base, size, count = (number(slots[key]) for key in ("base", "size", "count"))
-    if count != 16:
-        raise ValueError(f"expected 16 CPU landing slots, got {count}")
-    if not size or base + count * size > LIMIT:
-        raise ValueError("empty or overflowing CPU landing array")
-    landings = [span(f"cpu[{i}]", base + i * size, size) for i in range(count)]
+    entries = plan["landings"]
+    cpus = [number(item["cpu"]) for item in entries]
+    if sorted(cpus) != list(range(16)):
+        raise ValueError("landings must name each CPU 0..15 exactly once")
+    landings = {cpu: region(f"cpu[{cpu}]", item)
+                for cpu, item in zip(cpus, entries)}
+    selected_cpu = number(plan["selected_cpu"])
+    if selected_cpu not in landings:
+        raise ValueError("selected_cpu must name a landing")
+    selected = landings[selected_cpu]
     b1 = {name: region(name, plan["b1"][name])
           for name in ("image", "big", "journal")}
     reserved = [region(f"reserved:{item['name']}", item)
@@ -82,21 +85,29 @@ def check(plan):
     for item in frames + context:
         if not inside(item, b1["image"]):
             errors.append(f"{item[0]} outside B1 image")
+    if not inside(selected, b1["image"]):
+        errors.append("selected CPU landing outside B1 image")
+    for item in frames:
+        if not inside(item, selected):
+            errors.append(f"{item[0]} outside selected CPU landing")
     for item in journal:
         if not inside(item, b1["journal"]):
             errors.append(f"{item[0]} outside B1 journal")
 
-    # A reserved region may intentionally contain a B1 part. It must not
-    # overlay any per-CPU landing slot in this disjoint-layout contract.
-    physical = landings + list(b1.values()) + [gate] + ist
+    # The selected landing must live in the B1 image so both frame slots can
+    # be reached through its IST6. All other physical overlaps are rejected.
+    physical = list(landings.values()) + list(b1.values()) + [gate] + ist
     for i, item in enumerate(physical):
         for other in physical[i + 1:]:
+            if {item[0], other[0]} == {selected[0], "image"}:
+                continue
             if intersects(item, other):
                 errors.append(f"{item[0]} overlaps {other[0]}")
     for item in reserved:
-        for landing in landings:
+        for cpu, landing in landings.items():
             if intersects(item, landing):
-                errors.append(f"{item[0]} overlaps {landing[0]}")
+                if cpu != selected_cpu or not inside(landing, item):
+                    errors.append(f"{item[0]} overlaps {landing[0]}")
     fields = frames + context + journal
     for i, item in enumerate(fields):
         for other in fields[i + 1:]:

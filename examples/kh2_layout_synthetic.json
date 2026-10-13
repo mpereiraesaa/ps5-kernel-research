@@ -1,5 +1,23 @@
 {
-  "cpu_slots": {"base": "0x10000", "size": "0x500", "count": 16},
+  "selected_cpu": 0,
+  "landings": [
+    {"cpu": 0, "base": "0x20000", "size": "0x500"},
+    {"cpu": 1, "base": "0x10000", "size": "0x500"},
+    {"cpu": 2, "base": "0x10500", "size": "0x500"},
+    {"cpu": 3, "base": "0x10a00", "size": "0x500"},
+    {"cpu": 4, "base": "0x10f00", "size": "0x500"},
+    {"cpu": 5, "base": "0x11400", "size": "0x500"},
+    {"cpu": 6, "base": "0x11900", "size": "0x500"},
+    {"cpu": 7, "base": "0x11e00", "size": "0x500"},
+    {"cpu": 8, "base": "0x12300", "size": "0x500"},
+    {"cpu": 9, "base": "0x12800", "size": "0x500"},
+    {"cpu": 10, "base": "0x12d00", "size": "0x500"},
+    {"cpu": 11, "base": "0x13200", "size": "0x500"},
+    {"cpu": 12, "base": "0x13700", "size": "0x500"},
+    {"cpu": 13, "base": "0x13c00", "size": "0x500"},
+    {"cpu": 14, "base": "0x14100", "size": "0x500"},
+    {"cpu": 15, "base": "0x14600", "size": "0x500"}
+  ],
   "b1": {
     "image": {"base": "0x20000", "size": "0x500"},
     "big": {"base": "0x23a00", "size": "0x600"},
