@@ -16,6 +16,9 @@ def record(stage, **overrides):
                "scratch_sha": "d" * 64,
                "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x900",
                "f1_slot": "0x118", "f2_slot": "0x318"},
+        "R0": {"observer_cpu": "7", "build_sha": "a" * 64,
+               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x900",
+               "pipe_ready": "1", "idle": "1"},
         "B2": {"gate_lo": "0x333", "expected_lo": "0x333",
                "gate_hi": "0x444", "expected_hi": "0x444",
                "ist_count": "16", "ist_matched": "16",
@@ -27,6 +30,16 @@ def record(stage, **overrides):
                "dr7_actual": "0x403", "dr7_expected": "0x403",
                **{f"f1_can{i}": hex(i + 1) for i in range(5)},
                **{f"f2_can{i}": hex(i + 11) for i in range(5)}},
+        "R1": {"observer_cpu": "7", "gate_lo": "0x333",
+               "gate_hi": "0x444", "ist6": "0x140",
+               "f1_slot": "0x118", "f2_slot": "0x318",
+               **{f"f1_can{i}": hex(i + 1) for i in range(5)},
+               **{f"f2_can{i}": hex(i + 11) for i in range(5)},
+               **{f"{name}_addr": address
+                  for name, address in (("a1p", "0x700"), ("a1r", "0x708"),
+                                        ("d1s", "0x710"), ("d1o", "0x718"))},
+               **{f"{name}_before": "0x0"
+                  for name in ("a1p", "a1r", "d1s", "d1o")}},
         "F1": {"slot": "0x118", "rip": "0x1234", "cs": "0x43",
                "flags": "0x202", "rsp": "0x5678", "ss": "0x3b",
                **{f"can{i}": hex(i + 1) for i in range(5)}},
@@ -35,10 +48,19 @@ def record(stage, **overrides):
                **{f"can{i}": hex(i + 11) for i in range(5)}},
         "A2": {"ist_actual": "0x340", "ist_expected": "0x340",
                "armed_actual": "0x55", "armed_expected": "0x55"},
+        "Q1": {"observer_cpu": "7", "reason": "arm_return",
+               "idle": "1", "inflight": "0", "samples": "1"},
+        "R2": {"observer_cpu": "7", "gate_lo": "0x333",
+               "gate_hi": "0x444", "ist6": "0x340", "f2_slot": "0x318",
+               **{f"f2_can{i}": hex(i + 11) for i in range(5)},
+               "d1s_addr": "0x710", "d1s_before": "0x0",
+               "d1o_addr": "0x718", "d1o_before": "0x0"},
         "D2": {"returned": "1", "gate_restored": "1",
                "scratch_restored": "1", "ist_restored": "16",
                "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x900",
                "scratch_readback_sha": "d" * 64},
+        "Q2": {"observer_cpu": "7", "reason": "syscall_return",
+               "idle": "1", "inflight": "0", "samples": "1"},
     }
     if stage == "B1":
         part = overrides.get("part", "image")
@@ -81,9 +103,15 @@ def run(*stages, clean=False, gaps=None):
     return classify(raw, manifest)
 
 
+def classify_records(*payloads):
+    raw = "".join(f"{i}\t{i * 1000}\tMARK\t{value}\n"
+                  for i, value in enumerate(payloads, 1)).encode()
+    return classify(raw)
+
+
 class ClassifierTests(unittest.TestCase):
     def test_pretrigger_only_does_not_claim_db_failed(self):
-        result = run("B0", "B1", "B2")
+        result = run("B0", "B1", "R0", "B2", "R1")
         self.assertEqual(result["first_missing_direct_evidence"], "F1")
         self.assertEqual(result["transport"], "incomplete")
         self.assertIn("not proof", result["interpretation"])
@@ -327,16 +355,66 @@ class FullchainTests(unittest.TestCase):
 
 class OtherClassifierTests(unittest.TestCase):
     def test_later_record_with_missing_frame_is_coverage_gap(self):
-        result = run("B0", "B1", "B2", "A2", clean=True)
+        result = run("B0", "B1", "R0", "B2", "R1", "Q1", "A2", clean=True)
         self.assertEqual(result["first_missing_direct_evidence"], "F1")
-        self.assertEqual(result["later_direct_evidence"], ["A2"])
+        self.assertEqual(result["later_direct_evidence"], ["Q1", "A2"])
         self.assertFalse(result["out_of_order"])
 
     def test_full_diagnostic_does_not_prove_ap(self):
         result = run(*STAGES, clean=True)
         self.assertIsNone(result["first_missing_direct_evidence"])
+        self.assertTrue(result["handoff_record_set_complete"])
         self.assertEqual(result["transport"], "complete")
         self.assertIn("AP phase unassessed", result["interpretation"])
+
+    def test_missing_quiesce_remains_visible_with_later_readback(self):
+        result = run("B0", "B1", "R0", "B2", "R1", "A2")
+        self.assertIn("Q1", result["missing_direct_evidence"])
+        self.assertIn("Q1", result["handoff_records_missing"])
+        self.assertFalse(result["handoff_record_set_complete"])
+        self.assertIn("A2", result["observed"])
+
+    def test_missing_prepatch_worker_record_is_coverage_gap(self):
+        result = run("B0", "B1", "B2", "F1")
+        self.assertEqual(result["first_missing_direct_evidence"], "R0")
+        self.assertIn("F1", result["later_direct_evidence"])
+        self.assertIn("R0", result["handoff_records_missing"])
+        self.assertFalse(result["handoff_record_set_complete"])
+
+    def test_handoff_records_require_linked_raw_readbacks(self):
+        staged = [record("B0"), *(record("B1", part=part)
+                    for part in ("image", "big", "journal"))]
+        result = classify_records(*staged, record("R0", observer_cpu="3"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "invalid or selected observer CPU")
+        result = classify_records(*staged, record("R0", gate_lo="0x333"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "idle observer native state differs from B0")
+
+        prior = [*staged, record("R0"), record("B2")]
+        result = classify_records(*prior, record("R1", f1_can0="0xff"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "first observer canaries differ from B2")
+
+        prior += [record("R1")]
+        result = classify_records(*prior, record("Q1", inflight="1"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "first observer quiescence not verified")
+
+        prior += [record("Q1"), record("A2")]
+        result = classify_records(*prior, record("R2", d1s_before="0x1"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "dispatch journal changed before second trigger")
+
+        prior += [record("R2")]
+        result = classify_records(*prior, record("Q2", idle="0"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "second observer quiescence not verified")
+
+    def test_late_quiesce_conflicts_with_main_a2_order(self):
+        result = run("B0", "B1", "R0", "B2", "R1", "A2", "Q1")
+        self.assertTrue(result["causal_order_conflict"])
+        self.assertFalse(result["handoff_record_set_complete"])
 
     def test_reversed_or_wrong_source_record_is_flagged(self):
         result = run("B0", "B2", "B1", clean=True)
@@ -348,7 +426,7 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertEqual(result["rejected"][0]["reason"], "wrong source")
 
     def test_delayed_frame_report_is_not_execution_order_conflict(self):
-        result = run("B0", "B1", "B2", "A1P", "F1", clean=True)
+        result = run("B0", "B1", "R0", "B2", "R1", "A1P", "F1", clean=True)
         self.assertTrue(result["out_of_order"])
         self.assertFalse(result["causal_order_conflict"])
         self.assertIn("asynchronous sampling", result["interpretation"])
@@ -490,7 +568,8 @@ class OtherClassifierTests(unittest.TestCase):
 
     def test_kh2_record_fits_console_logger_line(self):
         import re
-        for value in (record("B2"), record("B1", part="journal")):
+        for value in (record("B2"), record("B1", part="journal"),
+                      record("R1"), record("R2")):
             worst = re.sub(r"0x[0-9a-f]+", "0xffffffffffffffff", value)
             self.assertLess(len(worst.encode()) + 30, 1024)
 

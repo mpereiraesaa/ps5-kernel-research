@@ -135,16 +135,21 @@ For 12.02, keep **raw evidence plus ordered milestones**. A PC log line is
 only proof that the sender reached its own call; a missing line can also mean
 the sender or transport stopped. Do not put socket I/O in the kernel chain.
 
-| Milestone | Writer and durable evidence | What a positive observation establishes |
+| Milestone | Writer and retained PC evidence | What a positive observation establishes |
 |---|---|---|
 | B0 native baseline | User-mode read-only gate, all relevant IST slots, scratch/journal; `ps5log/1` with FW, build hash, boot identity without console identifiers, pinned CPU. | Starting state for this boot. |
 | B1 image staged | User-mode write/readback of three **physical** spans: the small image containing arm, dispatch, and frame slots; the big chain; and a separate preseeded journal. Log sizes and independent checksums. | Staging completed; no #DB implication. |
+| R0 idle worker ready | A distinct worker CPU opens its pipe and independently reads native selected gate/IST while main is idle. | Worker was present before the gate patch, with readbacks linked to B0; no trap implication. |
 | B2 final pretrigger state | After all `kh_trigger`-style RBP/RIP/RSP writes, read back the selected gate/IST, those three fields, and the planned DR7 value; send the final pretrigger `ps5log/1` record before setting TF. | Gate, selected IST6 pointer to the first frame, and return context were observed before the deliberate first trap; does not prove the trap ran. |
+| R1 first sampling ready | Worker rereads gate/IST, both frame preseeds, and journal preseed after B2, sends a linked record, then acknowledges the handoff. | Worker sampled the intended pretrigger locations before main issued TF; no proof TF executed. |
 | F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. A **pre-armed** independent observer captures raw RIP/CS/RFLAGS/RSP/SS without loading a new ELF after a stall. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
 | A1P / A1R arm continuation | Separate in-chain kernel-data markers **after** a verified pivot/store (A1P) and after `DBREG_RESUME` continuation (A1R), if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
+| Q1 first sampling quiesced | Worker finishes in-flight reads/logging and reports idle after main signals an arm return. | Bounds the SDK/logger ownership transfer before A2; it is a control report, not proof of a valid kernel return. |
 | A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the selected dispatch IST6 pointer and journal. | First return completed and the selected IST6 pointed to the planned dispatch frame. |
+| R2 second sampling ready | Worker rereads patched gate, dispatch IST6, untouched F2 canaries, and D1S/D1O preseed after A2, then acknowledges the handoff. | Worker sampled the second pretrigger state before the selected test syscall; no proof the syscall reached the hook. |
 | F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. The pre-armed observer samples independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
 | D1S / D1O dispatch/handler | Separate in-chain markers **after** the required interrupted registers are saved (D1S) and after the test oracle store but before the resume tail (D1O). A 12.02 liveness review must prove the marker's RAX/RCX clobbers harmless. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
+| Q2 second sampling quiesced | Worker finishes in-flight reads/logging and reports idle after main signals a syscall return. | Bounds the ownership transfer before restoration; it is not an independent kernel-return proof. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
 | H1 AP phase | Separate `entered`, selected-VMCB count, write count, verify count, and `done` evidence, following the 11.60 read-before-write validation pattern. | Only a full expected set and readback can support a 12.02 AP claim. |
 
@@ -152,7 +157,8 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 user-mode observer sends `ps5log/1` `MARK` lines beginning `KH2 stage=…
 source=… cpu=… verified=1`. The source tag names where it read the evidence:
 `B*`, `A2`, and `D2` use `user`; `F*` uses `frame`; `A1P`, `A1R`, `D1S`, and
-`D1O` use `journal`. `verified=1` alone is never accepted; each stage carries
+`D1O` use `journal`; the `R*`/`Q*` handoffs use `observer`.
+`verified=1` alone is never accepted; each stage carries
 the raw values below. All addresses and 64-bit words use `0x` hex, all
 SHA-256 values use 64 hex digits, and CPU is a decimal 0–15. These checks
 test internal consistency; instruction-byte validation and independent
@@ -164,11 +170,23 @@ earlier one in the host parse.
 |---|---|---|
 | B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two aligned, nonoverlapping planned five-word frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
 | B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…`. The journal record also has `<stage>_addr=… <stage>_before=…` for each of `a1p`, `a1r`, `d1s`, `d1o`. | Each physical write span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. Both B0 frame slots fit wholly inside `image`. The journal preseed words occupy distinct aligned qwords inside its region. |
+| R0 | `observer_cpu=… build_sha=… gate_lo=… gate_hi=… ist6=… pipe_ready=1 idle=1` | A distinct CPU reports that its pipe is open and it sampled the native selected gate/IST while idle after B0/B1, before main patches the gate. Build hash and readbacks must match B0; this is a worker report, not a kernel-frame observation. |
 | B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… ist6_actual=… ist6_expected=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. The selected IST6 readback and expectation must both equal `B0.f1_slot+0x28` and differ from native `B0.ist6`. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
+| R1 | `observer_cpu=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=… f1_can0..4=… f2_can0..4=…` and each `<stage>_addr=… <stage>_before=…` for `a1p`, `a1r`, `d1s`, `d1o` | Worker rereads the selected gate/IST, both frame preseeds, and all journal preseeds after B2. Values must match B0/B1/B2, and CPU must match R0. Main waits for this report and acknowledgment before TF. |
 | F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; all five reported canaries match that frame's independent B2 readback, and the raw five-word frame differs. A plausible hardware frame still needs human review. |
 | A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | Address and `before` match that marker's B1 journal preseed; the word changed and equals the expected marker. Marker ownership and gadget placement still need independent proof. |
+| Q1 | `observer_cpu=… reason=arm_return idle=1 inflight=0 samples=…` | Worker reports quiescence after the first return signal, with at least one sample and no read in flight. Main waits for acknowledgment before SDK reads/writes and A2. Missing Q1 leaves that ownership handoff unverified. |
 | A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The selected dispatch IST6 and armed-state readbacks agree; the IST value must equal `B0.f2_slot+0x28` and differ from native `B0.ist6`, and the armed state is nonzero. |
+| R2 | `observer_cpu=… gate_lo=… gate_hi=… ist6=… f2_slot=… f2_can0..4=… d1s_addr=… d1s_before=… d1o_addr=… d1o_before=…` | After A2, worker rereads the patched gate, selected dispatch IST6, untouched F2 canaries and dispatch journal words. Values must match B1/B2/A2; main waits for acknowledgment before the test syscall. |
+| Q2 | `observer_cpu=… reason=syscall_return idle=1 inflight=0 samples=…` | Worker reports quiescence after the second return signal. Main waits for acknowledgment before D2 restoration and logging. |
 | D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=…` | The return/restoration assertions are present; the restored IST count equals B2's count when available, and selected gate/IST/scratch readbacks equal B0. The AP phase has its own evidence set. |
+
+The planned phase order is `B0 B1 R0 B2 R1 F1 A1P A1R Q1 A2 R2 F2
+D1S D1O Q2 D2`; B1 has three physical-part records. Frame and journal
+reports can arrive later than their kernel writes. The `R*`/`Q*` records are
+worker-origin control evidence; they must use the same selected CPU, name
+the distinct observer CPU from R0, and be linked to earlier raw readbacks.
+They do not authenticate the worker or prove a #DB instruction executed.
 
 Legacy bare `KH1 … verified=1` records are rejected because they omit the
 frame, journal, and readback values. A KH2 line can still be false if its
@@ -215,23 +233,26 @@ earlier marker is a coverage gap. `out_of_order` flags a difference in report
 arrival order; it is **not** proof that kernel execution reversed. The
 independent observer may sample frame and journal addresses after subsequent
 steps have already run, or emit their reports in scan order.
-`causal_order_conflict` is reserved for reversal among the user-mode control
-records `B0`, `B1`, `B2`, `A2`, and `D2`. A B1 part sent before B0 is rejected
+`causal_order_conflict` is reserved for reversal among the user/observer
+handoff records `B0`, `B1`, `R0`, `B2`, `R1`, `Q1`, `A2`, `R2`, `Q2`, and `D2`.
+A B1 part sent before B0 is rejected
 because its physical layout cannot yet be checked. B2 gate and D2 restoration claims require the B0 native baseline for
 comparison (`11` #27). The
-classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
-real 12.02 run has yet produced this record format.
+classifier reports every missing stage and the missing handoff records in
+addition to the first gap. Its synthetic tests are in
+`tests/test_khook_trace_classify.py`; no real 12.02 run has yet produced this
+record format.
 
 **Native format scaffold, built and host-tested offline:** the separate local
 payload workspace now contains `kh2_trace_format.c/.h` and
 `kh2_trace_format_host_test.py` under
 `engineering/payloads/byepervisor_probe_1202/`. The pure C formatter
 generates bounded KH2 text for `ps5log/1` without kernel reads or writes.
-The host check compiled it with `cc`, matched every one of the 11 stage
-formats and 13 records (including all B1 parts) against the classifier's
+The host check compiled it with `cc`, matched every one of the 16 stage
+formats and 18 records (including all B1 parts and five handoffs) against the classifier's
 fixture, and classified the resulting complete transcript with no rejected
 record. The formatter source SHA-256 is
-`40835ec33e7c3d9e0bfe2f75c32e4ea7f79880928ff816ee09969cd0e0ccda72`.
+`b1c197a74e763c415df3d496050934d54dd6259e196751970af5da1eea249b99`.
 This is a **formatter**, not a KH2 producer: no 12.02 chain supplies its
 raw fields, no prearmed KH2 frame/journal observer is integrated, and no
 console experiment has run. A successful `ps5log_line` call means the
@@ -263,16 +284,17 @@ its first `getuid`
 
 | Interval | SDK kernel R/W and `ps5log` owner | Required handoff evidence before the next boundary |
 |---|---|---|
-| Before first trap | Worker opens its independent pipe and sends READY while main is idle, then yields. Main owns staging, gate/IST patch, final context writes, and B2 readback/log while worker waits idle. | After B2, main relinquishes both shared resources. Worker samples gate, selected IST6, both frame preseeds, and journal preseed, reports raw values, then acknowledges readiness. Only then may main issue TF/NOP without SDK reads/writes or logger calls. |
+| Before first trap | Worker opens its independent pipe, reads native gate/IST, and sends R0 while main is idle, then yields. Main owns staging, gate/IST patch, final context writes, and B2 readback/log while worker waits idle. | After B2, main relinquishes both shared resources. Worker samples gate, selected IST6, both frame preseeds, and journal preseed, reports R1 raw values, then acknowledges readiness. Only then may main issue TF/NOP without SDK reads/writes or logger calls. |
 | First trap through arm return | Worker owns sampling and logging of F1/A1P/A1R. Main executes the trap/return path without touching the SDK primitive or logger. | On return, main requests quiescence. Worker finishes any in-flight read/send and acknowledges idle before main reads the dispatch IST6 or emits A2. If no return, worker can continue sampling until shutdown, subject to transport survival. |
 | Between traps | Main owns A2 readback/log and any state/oracle writes or reads required before the test syscall. Worker remains idle. | Main relinquishes the resources again. Worker verifies dispatch IST6 and F2 canaries, reports its pretrigger sample, and acknowledges readiness before main calls `getuid`. |
 | Second trap through return | Worker owns F2/D1S/D1O sampling and logging. Main invokes the test syscall without concurrent SDK R/W or logger calls. | After return, worker quiesces and acknowledges idle before main performs D2 restoration/readback and closes the log. |
 
-The current KH2 classifier checks B0/B1/B2/A2/D2 data values and report
-arrival; it has **no worker-ready, quiesced, or second-ready records** and
-cannot verify this ownership schedule. Such direct control records and a
-real producer/observer handoff must be defined before calling the log plan
-implementable. An implementation with a truly independent kernel read
+The proposed KH2 contract now names R0/R1/Q1/R2/Q2 and the classifier
+checks their raw links and order. **No producer or worker emits them**, so
+this remains an offline log specification, not a verified ownership schedule.
+The worker's atomic acknowledgments and resource transfer still need a
+source-level implementation and host-side failure fixtures. An implementation
+with a truly independent kernel read
 primitive and synchronized thread-safe logger would falsify the need for
 this exact ownership transfer, but not the need to capture both frames before
 recovery (`11` #32). The observer CPU's own incidental #DB remains a separate
