@@ -498,6 +498,42 @@ layout or gadget bytes, a test-hook boundary, or a return signal. A socket
 send result still needs a retained PC run file and manifest to establish
 transport integrity.
 
+**Native R0 calibration, built offline and not run:** [verified-in-tree]
+`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:53-124,131-152`
+and `Makefile:31-32,60,136-137` now build
+`byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
+pthread worker, separate-pipe reader, and `ps5log/1` sender. The built ELF
+SHA-256 is
+`5cec3f6815dfccb9d26d954f48f80607df1ab46a75b3a23b7f421ae83eca59cf`;
+its source-list build tag is
+`98089ca9e3e60a41bd612b01858367fd333681d409d8f156c8875fabaca760b2`
+(the tag is **not** the ELF hash). `make kh2-r0-calibration` completed with
+`-Wall -Wextra -Werror`; the actual-adapter host runtime check passed.
+The calibration main selects two permitted CPUs, pins itself, reads the
+native vector-1 gate and selected IST6, starts the worker for its R0
+read/send, then stops it and restores affinity. Its frame/journal fields
+are deliberately unused placeholders for the shared plan validator;
+they are **not** a verified 12.02 layout. It calls no main-side target
+kernel write or #DB trigger. [verified-in-tree] The observer pipe reader
+still changes its own kernel pipe metadata before each read and must restore
+it (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:60-105`).
+
+[inference] For any separately approved FW 12.02 calibration run, the
+expected PC evidence is `KH2R` gate/IST6 begin/done, then a single R0
+record with the build tag and native words; after the worker stops, the ELF
+prints `[KH2R0]` on stdout and calls `ps5log_close`. A returned
+prepare/read/finish error or missing R0
+would narrow **adapter/worker/transport setup**, not the PR #97 post-`[K1]`
+trap boundary. A same-attempt PC log lacking these records despite a
+reported clean return would falsify this expected observation. Actual
+console observation: **none**. The separate pipe's kernel metadata writes,
+worker lifetime, and restore can still fail or wedge; the source parks on
+uncertain worker/restore state. A future console run needs explicit owner
+approval for this exact ELF and a hard power-cycle recovery plan, with
+post-boot read-only baseline inspection. The calibration does not establish
+12.02 gadget bytes, scratch ownership, a two-trap chain, or retained KH2
+frame/journal reports.
+
 **Single-process host rehearsal:** `kh2_integrated_host.c` uses the real
 main emitter and pthread worker against one mock memory image and one log,
 with callback ownership checks through both transactions, including A2
