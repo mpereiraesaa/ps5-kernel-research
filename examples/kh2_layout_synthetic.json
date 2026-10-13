@@ -4,24 +4,24 @@
   "selected_cpu": 0,
   "landings": [
     {"cpu": 0, "base": "0x20000", "size": "0x500"},
-    {"cpu": 1, "base": "0x10000", "size": "0x500"},
-    {"cpu": 2, "base": "0x10500", "size": "0x500"},
-    {"cpu": 3, "base": "0x10a00", "size": "0x500"},
-    {"cpu": 4, "base": "0x10f00", "size": "0x500"},
-    {"cpu": 5, "base": "0x11400", "size": "0x500"},
-    {"cpu": 6, "base": "0x11900", "size": "0x500"},
-    {"cpu": 7, "base": "0x11e00", "size": "0x500"},
-    {"cpu": 8, "base": "0x12300", "size": "0x500"},
-    {"cpu": 9, "base": "0x12800", "size": "0x500"},
-    {"cpu": 10, "base": "0x12d00", "size": "0x500"},
-    {"cpu": 11, "base": "0x13200", "size": "0x500"},
-    {"cpu": 12, "base": "0x13700", "size": "0x500"},
-    {"cpu": 13, "base": "0x13c00", "size": "0x500"},
-    {"cpu": 14, "base": "0x14100", "size": "0x500"},
-    {"cpu": 15, "base": "0x14600", "size": "0x500"}
+    {"cpu": 1, "base": "0x1b500", "size": "0x500"},
+    {"cpu": 2, "base": "0x1ba00", "size": "0x500"},
+    {"cpu": 3, "base": "0x1bf00", "size": "0x500"},
+    {"cpu": 4, "base": "0x1c400", "size": "0x500"},
+    {"cpu": 5, "base": "0x1c900", "size": "0x500"},
+    {"cpu": 6, "base": "0x1ce00", "size": "0x500"},
+    {"cpu": 7, "base": "0x1d300", "size": "0x500"},
+    {"cpu": 8, "base": "0x1d800", "size": "0x500"},
+    {"cpu": 9, "base": "0x1dd00", "size": "0x500"},
+    {"cpu": 10, "base": "0x1e200", "size": "0x500"},
+    {"cpu": 11, "base": "0x1e700", "size": "0x500"},
+    {"cpu": 12, "base": "0x1ec00", "size": "0x500"},
+    {"cpu": 13, "base": "0x1f100", "size": "0x500"},
+    {"cpu": 14, "base": "0x1f600", "size": "0x500"},
+    {"cpu": 15, "base": "0x1fb00", "size": "0x500"}
   ],
   "b1": {
-    "image": {"base": "0x20000", "size": "0x500", "image_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    "image": {"base": "0x1b500", "size": "0x5000", "image_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
     "big": {"base": "0x23a00", "size": "0x600", "image_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
     "journal": {"base": "0x25000", "size": "0x100", "image_sha": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
   },
@@ -38,16 +38,16 @@
   ],
   "ist_targets": {
     "arm": [
-      "0x20040", "0x10028", "0x10528", "0x10a28",
-      "0x10f28", "0x11428", "0x11928", "0x11e28",
-      "0x12328", "0x12828", "0x12d28", "0x13228",
-      "0x13728", "0x13c28", "0x14128", "0x14628"
+      "0x20040", "0x1b528", "0x1ba28", "0x1bf28",
+      "0x1c428", "0x1c928", "0x1ce28", "0x1d328",
+      "0x1d828", "0x1dd28", "0x1e228", "0x1e728",
+      "0x1ec28", "0x1f128", "0x1f628", "0x1fb28"
     ],
     "dispatch": [
-      "0x20240", "0x10028", "0x10528", "0x10a28",
-      "0x10f28", "0x11428", "0x11928", "0x11e28",
-      "0x12328", "0x12828", "0x12d28", "0x13228",
-      "0x13728", "0x13c28", "0x14128", "0x14628"
+      "0x20240", "0x1b528", "0x1ba28", "0x1bf28",
+      "0x1c428", "0x1c928", "0x1ce28", "0x1d328",
+      "0x1d828", "0x1dd28", "0x1e228", "0x1e728",
+      "0x1ec28", "0x1f128", "0x1f628", "0x1fb28"
     ]
   },
   "frame_slots": ["0x20018", "0x20218"],

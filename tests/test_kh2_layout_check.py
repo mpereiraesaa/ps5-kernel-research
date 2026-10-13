@@ -18,15 +18,20 @@ def candidate():
     return json.loads(path.read_text())
 
 
+def zero_span_candidate():
+    path = Path(__file__).resolve().parents[1] / "examples/kh2_layout_1202_zero_span_candidate.json"
+    return json.loads(path.read_text())
+
+
 def planned_log(plan, *, b0_sha=None, b1_big_sha=None, b2_sha=None,
-                image_addr="0x20000", through="A2"):
+                image_addr="0x1b500", through="A2"):
     hashes = check(plan)
     arm = hashes["expected_b2_ist_image_sha"]
     dispatch = hashes["expected_a2_ist_image_sha"]
     payloads = [
         record("B0", cpu="0", build_sha=b0_sha or "a" * 64,
                f1_slot="0x20018", f2_slot="0x20218"),
-        record("B1", cpu="0", part="image", addr=image_addr, bytes="1280",
+        record("B1", cpu="0", part="image", addr=image_addr, bytes="20480",
                rbp_addr="0x20300", rip_addr="0x20308", rsp_addr="0x20310",
                dr7_addr="0x20318"),
         record("B1", cpu="0", part="big", addr="0x23a00", bytes="1536",
@@ -64,7 +69,7 @@ class LayoutCheck(unittest.TestCase):
         partial = compare_log(plan, planned_log(plan, through="B1"))
         self.assertEqual(partial["comparison_status"], "partial_observed_fields_match")
         self.assertEqual(partial["missing_layout_records"], ["B2", "A2"])
-        changed_image = compare_log(plan, planned_log(plan, image_addr="0x1fff8"))
+        changed_image = compare_log(plan, planned_log(plan, image_addr="0x1b4f8"))
         self.assertEqual(changed_image["comparison_status"], "mismatch")
         self.assertEqual(changed_image["mismatches"][0]["field"], "B1.image.addr")
         changed = compare_log(plan, planned_log(plan, b2_sha="f" * 64))
@@ -118,7 +123,7 @@ class LayoutCheck(unittest.TestCase):
             self.assertEqual(partial.returncode, 0, partial.stderr)
             self.assertEqual(json.loads(partial.stdout)["log_comparison"]["comparison_status"],
                              "partial_observed_fields_match")
-            log_path.write_bytes(planned_log(candidate(), image_addr="0x1fff8"))
+            log_path.write_bytes(planned_log(candidate(), image_addr="0x1b4f8"))
             mismatch = subprocess.run(command, capture_output=True, text=True, check=False)
             self.assertEqual(mismatch.returncode, 1, mismatch.stderr)
             self.assertEqual(json.loads(mismatch.stdout)["log_comparison"]["mismatches"][0]["field"],
@@ -136,6 +141,18 @@ class LayoutCheck(unittest.TestCase):
                          hashlib.sha256(struct.pack("<16Q", *arm)).hexdigest())
         self.assertEqual(result["expected_a2_ist_image_sha"],
                          hashlib.sha256(struct.pack("<16Q", *dispatch)).hexdigest())
+
+    def test_dump_zero_span_candidate_covers_all_landings_without_claiming_ownership(self):
+        plan = zero_span_candidate()
+        result = check(plan)
+        self.assertTrue(result["geometry_valid"], result["errors"])
+        self.assertFalse(result["ownership_verified"])
+        image = plan["b1"]["image"]
+        self.assertEqual((int(image["base"], 16), int(image["size"], 16)),
+                         (0x2094500, 0x5000))
+        self.assertEqual(int(plan["reserved"][0]["base"], 16), 0x2099000)
+        with self.assertRaisesRegex(ValueError, "build_sha"):
+            compare_log(plan, b"")
 
     def test_pr97_shared_base_collides_with_reference_reservation_and_writes(self):
         plan = candidate()
@@ -164,6 +181,14 @@ class LayoutCheck(unittest.TestCase):
         plan["landings"][0]["base"] = "0x26000"
         errors = check(plan)["errors"]
         self.assertIn("selected CPU landing outside B1 image", errors)
+
+    def test_every_cpu_landing_and_selected_context_must_be_staged_in_image(self):
+        plan = candidate()
+        plan["landings"][7]["base"] = "0x26000"
+        plan["context_qwords"][0] = "0x1fb80"
+        errors = check(plan)["errors"]
+        self.assertIn("cpu[7] outside B1 image", errors)
+        self.assertIn("context[0] outside selected CPU landing", errors)
 
     def test_ist_target_must_route_into_its_cpu_landing_in_both_phases(self):
         plan = candidate()
