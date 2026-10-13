@@ -121,13 +121,54 @@ def run(*stages, clean=False, gaps=None, f2_target=None):
     return classify(raw, manifest, f2_target)
 
 
-def classify_records(*payloads):
+def classify_records(*payloads, b2_target=None):
     raw = "".join(f"{i}\t{i * 1000}\tMARK\t{value}\n"
                   for i, value in enumerate(payloads, 1)).encode()
-    return classify(raw)
+    return classify(raw, b2_target=b2_target)
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_optional_b2_gate_comparison_keeps_mismatched_readback(self):
+        target = 0xffffffff8876c2de
+        gate = {"gate_lo": "0x88768e060020c2de",
+                "expected_lo": "0x88768e060020c2de",
+                "gate_hi": "0xffffffff", "expected_hi": "0xffffffff"}
+        equal = classify_records(record("B0"), record("B2", **gate),
+                                 b2_target=target)
+        self.assertIn("B2", equal["observed"])
+        self.assertEqual(equal["b2_pivot_gate_comparison"]["status"], "equal")
+        self.assertEqual(equal["b2_pivot_gate_comparison"]["observed_target"],
+                         hex(target))
+        self.assertEqual(equal["b2_pivot_gate_comparison"]["observed_ist"], 6)
+        self.assertEqual(equal["b2_pivot_gate_comparison"]["observed_selector"],
+                         "0x20")
+        wrong = {**gate, "gate_lo": "0x88768e060020c2df",
+                 "expected_lo": "0x88768e060020c2df"}
+        different = classify_records(record("B0"), record("B2", **wrong),
+                                     b2_target=target)
+        self.assertIn("B2", different["observed"])
+        self.assertEqual(different["b2_pivot_gate_comparison"]["status"],
+                         "different")
+        self.assertEqual(different["b2_pivot_gate_comparison"]["observed_target"],
+                         "0xffffffff8876c2df")
+        wrong_ist = {**gate, "gate_lo": "0x88768e070020c2de",
+                     "expected_lo": "0x88768e070020c2de"}
+        ist_result = classify_records(record("B0"), record("B2", **wrong_ist),
+                                      b2_target=target)
+        self.assertEqual(ist_result["b2_pivot_gate_comparison"]["status"],
+                         "different")
+        self.assertEqual(ist_result["b2_pivot_gate_comparison"]["observed_target"],
+                         hex(target))
+        self.assertEqual(ist_result["b2_pivot_gate_comparison"]["observed_ist"],
+                         7)
+        missing = classify_records(record("B0"), b2_target=target)
+        self.assertEqual(missing["b2_pivot_gate_comparison"]["status"],
+                         "no_accepted_b2")
+        self.assertNotIn("b2_pivot_gate_comparison",
+                         classify_records(record("B0"), record("B2", **gate)))
+        with self.assertRaisesRegex(ValueError, "canonical kernel"):
+            classify_records(record("B0"), b2_target=0x1000)
+
     def test_gate_write_brackets_accept_qwords_and_reject_16_bytes(self):
         records = [
             "KH2W stage=B2 cpu=3 region=gate addr=0x508 bytes=8 state=begin",
@@ -164,6 +205,14 @@ class ClassifierTests(unittest.TestCase):
             comparison = json.loads(completed.stdout)["f2_entry_rip_comparison"]
             self.assertEqual(comparison["expected"], "0x3140a0")
             self.assertEqual(comparison["status"], "equal")
+            pivot_command = command + ["--b2-pivot-ktext-base",
+                                       "0xffffffff884c0000"]
+            pivot = subprocess.run(pivot_command, capture_output=True,
+                                   text=True, check=True)
+            pivot_result = json.loads(pivot.stdout)["b2_pivot_gate_comparison"]
+            self.assertEqual(pivot_result["expected_target"],
+                             "0xffffffff8876c2de")
+            self.assertEqual(pivot_result["status"], "different")
             legacy = subprocess.run(command + ["--mode", "kstuff-fullchain"],
                                     capture_output=True, text=True)
             self.assertEqual(legacy.returncode, 2)

@@ -25,7 +25,8 @@ def zero_span_candidate():
 
 
 def planned_log(plan, *, b0_sha=None, b1_big_sha=None, b2_sha=None,
-                image_addr="0x1b500", through="A2"):
+                image_addr="0x1b500", through="A2",
+                b2_gate_lo="0x333", b2_gate_hi="0x444"):
     hashes = check(plan)
     arm = hashes["expected_b2_ist_image_sha"]
     dispatch = hashes["expected_a2_ist_image_sha"]
@@ -43,6 +44,8 @@ def planned_log(plan, *, b0_sha=None, b1_big_sha=None, b2_sha=None,
                d1o_addr="0x25018"),
         record("B2", cpu="0", ist_image_sha=b2_sha or arm,
                ist_readback_sha=b2_sha or arm,
+               gate_lo=b2_gate_lo, expected_lo=b2_gate_lo,
+               gate_hi=b2_gate_hi, expected_hi=b2_gate_hi,
                ist6_actual="0x20040", ist6_expected="0x20040"),
         record("A2", cpu="0", ist_before_sha=b2_sha or arm,
                ist_image_sha=dispatch, ist_readback_sha=dispatch,
@@ -56,6 +59,20 @@ def planned_log(plan, *, b0_sha=None, b1_big_sha=None, b2_sha=None,
 
 
 class LayoutCheck(unittest.TestCase):
+    def test_optional_pivot_gate_comparison_detects_wrong_descriptor(self):
+        plan = candidate()
+        target = 0xffffffff8876c2de
+        ordinary = compare_log(plan, planned_log(plan), b2_target=target)
+        self.assertEqual(ordinary["comparison_status"], "mismatch")
+        self.assertEqual(ordinary["mismatches"][0]["field"], "B2.pivot_gate")
+        self.assertEqual(ordinary["b2_pivot_gate_comparison"]["status"],
+                         "different")
+        matched = compare_log(plan, planned_log(
+            plan, b2_gate_lo="0x88768e060020c2de",
+            b2_gate_hi="0xffffffff"), b2_target=target)
+        self.assertEqual(matched["comparison_status"], "observed_fields_match")
+        self.assertEqual(matched["b2_pivot_gate_comparison"]["status"], "equal")
+
     def test_retained_report_matches_plan_but_does_not_verify_ownership(self):
         plan = candidate()
         result = compare_log(plan, planned_log(plan))
@@ -223,6 +240,13 @@ class LayoutCheck(unittest.TestCase):
             self.assertEqual(mismatch.returncode, 1, mismatch.stderr)
             self.assertEqual(json.loads(mismatch.stdout)["log_comparison"]["mismatches"][0]["field"],
                              "B1.image.addr")
+            log_path.write_bytes(planned_log(candidate()))
+            pivot = subprocess.run(command + ["--b2-pivot-ktext-base",
+                                           "0xffffffff884c0000"],
+                                   capture_output=True, text=True, check=False)
+            self.assertEqual(pivot.returncode, 1, pivot.stderr)
+            self.assertEqual(json.loads(pivot.stdout)["log_comparison"]["mismatches"][0]["field"],
+                             "B2.pivot_gate")
 
     def test_disjoint_synthetic_plan_is_geometry_only(self):
         result = check(candidate())
