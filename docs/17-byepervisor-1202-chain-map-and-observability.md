@@ -117,6 +117,18 @@ own firmware. There is no held 12.02 ktext image in this audit.
 | `POP_R8`, `STORE_RCX_R8` | absent/unused in 11.60 | Not required: `5299395/khook.c:75-84` uses RAX stores instead. The RAX store remains unverified on 12.02. |
 | `getuid` DR0 execute target for F2 | Public test uses an interior body instruction | [inference] **Entry-only diagnostic candidate** `ktext+0x3130a0` from 12.02 `sysent[24].sy_call` (`16`, entry-only target). An F2 frame RIP matching this pointer would support delivery to the table entry if DR0/DR7 and dispatch are independently linked. It does not identify the public `getuid` body `+0xe` instruction or validate return. |
 
+[verified-on-dump] The 13.60 Kstuff `gpr2dr_1_start`/`gpr2dr_2_start`
+entries do not close the `DBREG_RESUME` row: the first enters a
+`cpu_switch` path that continues into context MSR writes, and the second
+jumps back into the same routine after DR6/DR7. [public-consensus]
+Kstuff's `r0gdb_write_dbregs` uses nine single-step calls from the first
+entry and three from the second, explicitly bypassing the intervening
+instructions (`16`, debug-register entry contract; `11` #48). [inference]
+Even if the 12.02 table addresses point to analogous code, a direct
+arm-chain return and register/stack contract remains unverified. A 12.02
+instruction image showing a self-contained return path would falsify this
+specific gap; a table name alone would not.
+
 [inference] The table covers every gadget class used by the 11.60 arm,
 dispatch, one-shot return, and AP copy path, but does **not** yield an
 executable 12.02 map. A byte-level 12.02 disassembly agreeing with each
