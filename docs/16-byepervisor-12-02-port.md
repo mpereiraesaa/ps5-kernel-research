@@ -1056,6 +1056,49 @@ path**. It does not: the proposed repeat reuses the minimal `justreturn`
 probe would be a different build with its own reviewed frame sequence,
 build identity, expected observations, and recovery plan.
 
+**Staged `ret` continuation candidate (built offline, not sent):**
+[inference] A smaller explicit ROP return path can avoid the unverified
+`justreturn` call/EOI behavior without claiming to reproduce Kstuff's
+full KELF handoff. The `add_rsp_iret` entry still needs a five-word
+kernel `iretq` frame. Set its RIP to Kstuff's 12.02 `nop_ret`
+(`ktext+0x2b0b26`), CS=`0x20`, flags=`2`, RSP=`F−0x30`, SS=`0`, where
+`F` is that CPU's IST4 value. At `F−0x30`, stage Kstuff's
+`doreti_iret` (`ktext+0x2b362d`). The hardware's five-word #DB frame
+starts at `F−0x28`. The intended sequence is:
+
+`add_rsp_iret` → `iretq` → `nop_ret` → `ret` → `doreti_iret` →
+`iretq` through the CPU-saved frame.
+
+[public-consensus] Kstuff's
+[`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h#L12-L18)
+defines `add_rsp_iret`, `doreti_iret`, and `nop_ret` (the last from
+`wrmsr_ret+2`). The same header defines `justreturn` separately
+([`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h#L62-L69)).
+[public-consensus] In 64-bit mode, `iretq` pops RSP/SS even on a
+same-privilege return
+([AMD64 APM Vol. 2](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2));
+this is what lets the first frame select `F−0x30` as the ROP stack.
+The proposed two-gadget chain makes no deliberate register, GSBASE,
+or CR3 changes, so its intended no-op return can consume the original
+hardware frame. It is **not** Kstuff's full register/GS/CR3 continuation,
+and the 12.02 gadget bytes have not been read. A disassembly showing
+another epilogue or a captured frame that does not land at `F−0x28`
+would falsify the proposed geometry.
+
+The separate local build uses all 16 staged IST4 frames and changes the
+shared #DB gate last, as above. Setup-only ELF SHA-256
+`1709f16c0040de299b1d961126f02733c8f93e35acb0be86666793f7867ec71d`;
+live `INT1` ELF SHA-256
+`cb1440429c62643d65326384883f733c8f47ea51b3dbf285a47f3bbd9198c5a0`.
+Both artifacts are outside this notes repo. Expected setup-only result:
+`[J1r]` and `[J2]` with no #DB. Expected live result: `[J2] ...
+frame=MATCH` and restored gate/IST4/scratch; if it fails while the
+console remains reachable, use the read-only frame audit above before
+recovery. The changed shared gate and all 16 IST4 slots can again leave
+the console in an unsafe state or panic it. Recovery: hard power cycle,
+then read-only baseline audit and UI check. No new ELF was sent; this
+is a separate console-risky experiment requiring owner approval.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
