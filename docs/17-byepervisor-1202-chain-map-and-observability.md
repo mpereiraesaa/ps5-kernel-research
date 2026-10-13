@@ -202,10 +202,14 @@ write wrappers report an attempted B1 chunk or B2 gate/IST6/context address
 if their callback fails. `tools/kh2_layout_check.py --log` maps such errors
 to the proposed B1 offset and landing CPU when applicable, IST6 CPU,
 gate word, or context field in
-`write_error_locations`; a failed write leaves that stage unverified and
-may leave partial kernel state. The logger's send result is not a durable PC
-acknowledgment. [verified-in-tree] `tools/khook_trace_classify.py`,
-`tools/kh2_layout_check.py`, and their focused tests define this distinction.
+`write_error_locations`; a failed write leaves that stage unverified.
+[inference] A callback may have changed part of a span before returning an
+error; a same-attempt read of the entire original span would falsify a
+partial-change claim for that event. The logger's send result is not a
+durable PC acknowledgment (`engineering/projects/logging_server/client/ps5log.h:734-749`).
+[verified-in-tree] `tools/khook_trace_classify.py:324-344` and
+`tools/kh2_layout_check.py:176-208,269-271,321` define the host-side
+distinction; their focused tests exercise it.
 
 [inference] A later frame report cannot establish a canary replacement by
 supplying its own unlinked `can0..4` values; likewise a journal report cannot
