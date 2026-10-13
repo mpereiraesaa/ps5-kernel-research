@@ -461,7 +461,8 @@ def classify(raw: bytes, manifest: dict | None = None,
                 region = fields["region"]
                 operation = fields.get("operation")
                 if (len(fields) != len(pairs) or stage not in STAGES or
-                        operation not in ("read", "hash", "write") or
+                        operation not in ("read", "hash", "write",
+                                          "prepare", "finish") or
                         (operation == "write" and stage not in
                          ("B1", "B2", "A2", "D2")) or
                         not 0 <= cpu < 16 or
@@ -469,14 +470,24 @@ def classify(raw: bytes, manifest: dict | None = None,
                         not HEX.fullmatch(address) or
                         not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", region)):
                     raise ValueError
+                if operation in ("prepare", "finish"):
+                    if (set(fields) != {"stage", "cpu", "operation", "region",
+                                        "addr", "code"} or
+                            region != "pipe" or int(address, 16) != 0 or
+                            int(fields["code"]) == 0 or
+                            (operation == "prepare" and stage != "R0") or
+                            (operation == "finish" and stage not in ("R0", "Q2"))):
+                        raise ValueError
             except (KeyError, ValueError):
                 rejected.append({"seq": int(seq),
                                  "reason": "malformed KH2E capture error"})
             else:
-                capture_errors.append({"seq": int(seq), "stage": stage,
-                                       "cpu": cpu, "operation": fields["operation"],
-                                       "region": region,
-                                       "addr": address})
+                error = {"seq": int(seq), "stage": stage,
+                         "cpu": cpu, "operation": operation,
+                         "region": region, "addr": address}
+                if operation in ("prepare", "finish"):
+                    error["code"] = int(fields["code"])
+                capture_errors.append(error)
                 if operation == "write":
                     matching = [key for key in pending_writes
                                 if key[:3] == (stage, cpu, region) and
