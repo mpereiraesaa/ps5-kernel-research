@@ -994,6 +994,16 @@ Compiling this audit ELF validates none of those contracts.
    byte-for-byte transfer of that donor sequence but would not rule out a
    semantically equivalent gadget. No 12.02 text image is currently held,
    so no 12.02 scan result exists.
+
+   [verified-on-console] A direct SDK pipe read of 12.02 `ktext` already
+   panicked the console in `qa_probe` (`docs/07-evidence.md:693-716`; `11`
+   #44). The guarded alias replacement made a denied baseline read
+   recoverable but did not produce instruction bytes. [inference] The
+   finder therefore cannot be fed by merely requesting a shorter
+   `kernel_copyout` window at a candidate offset; a changed NPT state or
+   a separately validated non-pipe acquisition path would falsify this
+   constraint for a future run. The staged GPUVM v3 route in `07` remains
+   unrun and cannot be counted as a held 12.02 text image.
 2. Identify a 12.02 test-hook instruction boundary and resume contract, then
    separately the resume-window `startup_mp` call and AP init vector. A
    `sysent` function pointer alone does not identify the getuid body or an
