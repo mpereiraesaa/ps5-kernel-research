@@ -192,11 +192,15 @@ def locate_write_error(plan, error):
                     if start <= address and address + length <= start + landing_size:
                         location["landing_cpu"] = number(landing["cpu"])
                         break
-    elif stage in ("B0", "B2", "D2") and region == "gate":
+    elif stage in ("B0", "B2", "D2", "R0", "R1", "R2") and region == "gate":
         base = number(plan["gate"]["base"])
         if address in (base, base + 8) and address + length <= base + 16:
-            location.update(plan_match=True, word=(address - base) // 8)
-    elif stage in ("B0", "B2", "A2", "D2") and region == "ist6":
+            location["plan_match"] = True
+            if length == 16:
+                location["gate_words"] = 2
+            else:
+                location["word"] = (address - base) // 8
+    elif stage in ("B0", "B2", "A2", "D2", "R0", "R1", "R2") and region == "ist6":
         for cpu, item in enumerate(plan["ist_qwords"]):
             if address == number(item) and length <= 8 and (stage != "A2" or
                                             cpu == number(plan["selected_cpu"])):
@@ -215,6 +219,15 @@ def locate_write_error(plan, error):
                 location.update(plan_match=True, frame=index + 1,
                                 offset=hex(address - base))
                 break
+    elif stage in ("R1", "R2") and region in ("f1", "f2"):
+        frame = 0 if region == "f1" else 1
+        base = number(plan["frame_slots"][frame])
+        if address == base and length <= 0x28:
+            location.update(plan_match=True, frame=frame + 1)
+    elif stage in ("R1", "R2") and region in ("A1P", "A1R", "D1S", "D1O"):
+        marker = ("A1P", "A1R", "D1S", "D1O").index(region)
+        if address == number(plan["journal_qwords"][marker]) and length <= 8:
+            location.update(plan_match=True, journal=region)
     elif stage == "A2" and region == "armed":
         if address == number(plan["journal_qwords"][4]) and length <= 8:
             location["plan_match"] = True

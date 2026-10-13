@@ -154,6 +154,19 @@ class LayoutCheck(unittest.TestCase):
         ])
         self.assertIn("B2", result["missing_layout_records"])
 
+    def test_observer_handoff_reads_map_to_selected_plan_fields(self):
+        plan = candidate()
+        attempt = {"seq": 7, "stage": "R1", "region": "gate",
+                   "addr": plan["gate"]["base"], "bytes": 16}
+        self.assertEqual(locate_write_error(plan, attempt)["gate_words"], 2)
+        attempt.update(region="f1", addr=plan["frame_slots"][0], bytes=40)
+        self.assertEqual(locate_write_error(plan, attempt)["frame"], 1)
+        attempt.update(stage="R2", region="D1O",
+                       addr=plan["journal_qwords"][3], bytes=8)
+        self.assertEqual(locate_write_error(plan, attempt)["journal"], "D1O")
+        attempt["addr"] = plan["journal_qwords"][2]
+        self.assertFalse(locate_write_error(plan, attempt)["plan_match"])
+
     def test_gate_and_context_write_error_addresses_use_plan_fields(self):
         plan = candidate()
         base = {"seq": 5, "stage": "B2", "region": "gate", "addr": "0x2e88310"}

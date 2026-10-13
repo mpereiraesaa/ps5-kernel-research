@@ -233,6 +233,17 @@ unobserved interval; a missing `done` can also mean the following log send
 failed or its PC record was lost. A retained `done` would falsify the claim
 that this callback remained in flight. The host run paired 85 main reads;
 its added 170 log lines may change timing while the shared gate is patched.
+[inference] The bounded observer handoff reads now emit the same paired
+`KH2R` format at R0 (two reads), R1 (eight), and R2 (five). The classifier
+and layout checker accept and locate these 15 attempts separately from the
+handoff milestones. A retained open R1/R2 bracket narrows a missing handoff
+to that read callback or its following send, subject to transport loss.
+The repeated F1/F2 and journal scans remain unbracketed so the observer
+does not double its PC sends on every poll; a stall in one of those scans
+still cannot be located more closely than its last retained frame/journal
+record or `KH2E`. Same-attempt evidence of a completed read would falsify
+an inference that its callback stayed in flight. No console timing or
+retention test has validated the added handoff sends.
 A larger 12.02 span would emit more lines.
 No console timing or PS5 read callback was exercised in this offline check.
 [inference] A callback may have changed part of a span before returning an
@@ -323,11 +334,12 @@ workspace now also contains `kh2_capture.c/.h` and
 `kh2_capture_host_test.py`. The sampler reads selected kernel-data addresses
 through a supplied callback, emits raw R0/R1/R2 values before reporting a
 mismatch, samples F1/F2 and four journal words, and formats Q1/Q2 after at
-least one successful pass. Its host test generated 11 native lines; with
-the existing B0/B1/B2/A2/D2 fixtures, the classifier accepted all 18
-records. It also exercised a wrong F1 canary, failed read with `KH2E`,
+least one successful pass. Its host test generated 11 native milestones
+and 30 R0/R1/R2 read brackets; with the existing B0/B1/B2/A2/D2 fixtures,
+the classifier accepted all 18 milestones and 15 paired observer reads.
+It also exercised a wrong F1 canary, failed read with `KH2E`,
 failed send (including the `KH2E` path), and premature Q1. The C source SHA-256 is
-`e59fe9d2bf2d5c91cfd4d5be83eb20998ab2619c20ef1001fd077abf74c7856b`.
+`e938883f305114de17ab2ba9a90931413eed602d5a5c6ae64855b35d94285b72`.
 The sampler is **not a synchronized worker**: its Q records depend on a
 main/worker return signal and ownership transfer, which it cannot
 verify on its own. The separate worker schedule below supplies those calls
@@ -412,7 +424,7 @@ main emitter and pthread worker against one mock memory image and one log,
 with callback ownership checks through both transactions, including A2
 and D2 writes. The host test
 completed 20 ordered transcripts with 18 KH2 milestones, 94 `KH2W` lines,
-and 170 `KH2R` lines each; an un-restored journal caused
+and 200 `KH2R` lines each; an un-restored journal caused
 D2 rejection. The source hashes and test name are in `05`. The two
 frame/journal changes are simulated mock writes, so the passing transcripts
 establish callback ordering and record linkage, not a #DB, an SDK pipe
