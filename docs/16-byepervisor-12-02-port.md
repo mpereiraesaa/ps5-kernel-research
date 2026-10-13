@@ -955,10 +955,12 @@ documents `INT1` as a #DB trap with no gate-DPL check. A live #DB that
 does not arrive through the patched gate or returns with TF set would
 falsify the expected trigger behavior on this console.
 
-- **FW/build identity:** setup-only ELF SHA-256
+- **FW/build identity:** first setup-only ELF SHA-256
   `4eb15b696d04fe2be690dc192d4d86698dd8a145e883777b4df883b6b44a7b24`;
-  live INT1 ELF SHA-256
-  `5020d798c24ec649f9ec6885bfe1412ad12a86783279b90926f3771450015bcd`.
+  revised setup-only ELF SHA-256
+  `a8a5bf464f81ab7b8c38d02ead8f60593402a71700d7c8fa8677a65b04e6bf0e`;
+  revised live INT1 ELF SHA-256
+  `b75794ed0624071662c6a5432996c451821c04e77b2d94d6ac8d1b52216a0c22`.
   Both are local payload-tree artifacts and are excluded from this notes repo.
 - **Expected setup-only observation:** all 16 staged frames, IST4 writes,
   and the changed gate read back, then originals and scratch restore;
@@ -972,8 +974,25 @@ falsify the expected trigger behavior on this console.
   then confirm normal UI and network operation. The owner approved
   proceeding with a Kstuff-shaped one-shot and this recovery class on
   2026-10-13. The changed `INT1` trigger and both exact builds are
-  recorded here before any console run. Actual observation and recovery
-  state are pending.
+  recorded here before the live console run.
+
+**First setup-only run (2026-10-13):** [verified-on-console] the first
+setup-only ELF printed `[J1] fw=12.02 cpu=15 all_cpu_frames=16 ...` after
+all 16 frames were staged and read back. The PC received the matching
+`ps5log/1` staged marker. Elfldr timed out after 25 seconds without
+`[J2]` or BYE; three subsequent pings succeeded, so the console did
+not power off. The UI/recovery state is awaiting the owner's check.
+No `INT1` instruction exists in this setup-only ELF, and the live ELF
+was not sent. [inference] One candidate for the payload-thread hang is
+the first build's single 8192-byte `kernel_copyin` during scratch
+restoration, after restoring the gate/IST4 slots; the SDK implements
+this through a pipe `write` (`ps5-payload-sdk/crt/kernel.c:463-493`),
+and this call is larger than every 512-byte staging write that completed.
+There was no marker between gate/IST4 restoration and that write, so
+the location remains unproven. The revised build restores scratch in
+512-byte chunks and emits `[J1r]` only after gate/IST4 restoration;
+failure before `[J1r]` would falsify the proposed location. Its actual
+console result is pending.
 
 ### Frame staging isolation run
 
