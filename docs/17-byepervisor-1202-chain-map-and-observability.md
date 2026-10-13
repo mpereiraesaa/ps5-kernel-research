@@ -704,8 +704,12 @@ available logs do not establish what caused the outage.
 
 **Isolated prearmed Kstuff variant, built offline and not run.**
 [verified-in-tree] Our separate local source
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-265,550-680`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-265,550-708`
 builds the current `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
+`da900d1a52ee3cc71deba8f0b9515469e6feb6206c97969d333aa0fa3c0e3cd0`.
+The unrun v4 source is preserved outside this repo at
+`engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v4.c`;
+its last built ELF had SHA-256
 `f1a07acd27ccceee01083ec4541d47197414e161d443a15935114c74a56c296b`.
 The unrun v3 source is preserved outside this repo at
 `engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v3.c`;
@@ -716,15 +720,19 @@ The prior unrun v2 source is preserved outside this notes repo at
 Rebuilding it at the original source path reproduced its ELF SHA-256
 `39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`;
 v3 corrected the copy-gadget offset (`11` #46); v4 adds a pretrigger
-observer/main handoff. None was run.
+observer/main handoff; v5 adds main-thread patch-phase records. None was run.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
-main thread stages IST4 or changes the gate. After the main thread writes and
-reads back all 16 IST4 slots and the gate, the worker independently reads the
+main thread stages IST4 or changes the gate. [verified-in-tree]
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:620-677`
+has main send `FCM IST4_BEGIN`, one `FCM IST4_DONE slot=0..15` after each
+write and readback, `FCM GATE_BEGIN`, then `FCM GATE_DONE` after the low
+gate qword write and readback. A failed PC send aborts and attempts restore.
+After those records, the worker independently reads the
 full gate and all 16 IST4 values and sends `FC1 GATE_VERIFIED` with raw gate
 qwords, expected qwords, matched count, and first mismatch. The trigger waits
 for that PC send and acknowledgment. [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:212-261,651-680`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:212-261,677-708`
 then has the worker read the selected `0x500`-byte slot, compare its five
 frame canaries and zero destination marker, and send `FC1 PRETRIGGER` with
 the five raw canaries before
@@ -736,7 +744,7 @@ call site and its PC send returned; it does not prove the `ICEBP` instruction
 was fetched. While armed, the worker reads all 16
 preseeded five-word frames and copy markers, sending each first change as
 `FC1 FRAME` or `FC1 MARKER`; successful return joins it before the main
-thread resumes SDK kernel R/W operations. In this second offline build the
+thread resumes SDK kernel R/W operations. In the current offline build the
 worker first reads the selected CPU's `0x500`-byte slot and reports it, then
 sweeps all 16 slots. Each frame/marker record includes `sample=targeted` or
 `sample=sweep`. This reduces the selected frame's first-read latency relative
@@ -746,12 +754,14 @@ shutdown. A timeout or unsafe teardown parks.
 [verified-in-tree] The `FC1` local sequence begins at 1; its stages are
 `READY`, `GATE_VERIFIED`, `PRETRIGGER`, zero or more `FRAME`/`MARKER` records, and
 `QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
-`build=prearmed-v4`, and selected/observer CPU numbers. The exact ELF SHA is
+`build=prearmed-v5`, and selected/observer CPU numbers. The exact ELF SHA is
 recorded above, while `ps5log/1`'s `HELLO` boot token identifies the PC
 session; the version tag is not an ELF hash. `tools/khook_trace_classify.py`
 preserves raw `FC1` fields and sequence issues. With `--pc-same-run`, a
 matching gate/16 IST4 record advances the observed boundary beyond PR #97's
-prepatch `[K1]`. V4 adds separate boundaries for a matching selected-frame
+prepatch `[K1]`. V5 adds boundaries for the contiguous main-thread patch
+prefix: the last IST4 slot read back, gate-write entry, and gate readback.
+It retains v4's separate boundaries for a matching selected-frame
 pretrigger baseline and a linked main-thread `FCM TRIGGER_BEGIN`. A selected
 CPU's changed frame or copy marker narrows it further. Without that operator
 assertion, these records remain visible but do
@@ -765,10 +775,19 @@ failed observer on return using synthetic transcripts.
 `[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
 asserted. A disagreement yields `conflicting_probe_cpu_records` before any
 gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
-For `prearmed-v2`, `prearmed-v3`, and `prearmed-v4` it requires the sample mode and rejects a `targeted`
+For `prearmed-v2` through `prearmed-v5` it requires the sample mode and rejects a `targeted`
 record naming a CPU other than the trigger CPU; v1 records remain readable.
-For v4, a frame/marker needs an earlier accepted `PRETRIGGER` record with
+For v4/v5, a frame/marker needs an earlier accepted `PRETRIGGER` record with
 all five raw canaries matching the selected CPU's staged values.
+For v5, a retained `FCM TRIGGER_BEGIN` advances the classifier only after
+the full ordered patch prefix, verified gate, and pretrigger baseline. A
+missing phase record stops patch-prefix progress at the last contiguous
+readback; its absence does not prove the next write was never attempted.
+The per-slot PC sends lengthen the period between first IST4 write and the
+gate patch; `GATE_DONE` adds a PC send inside the changed-gate window.
+These are unrun diagnostic tradeoffs, not evidence that the window is safe.
+The parser's prefix and truncation behavior is covered by
+`tests/test_khook_trace_classify.py:test_prearmed_v5_patch_phase_prefix_locates_last_readback`.
 The classifier reports a pretrigger mismatch or a returned observer read
 failure after the verified gate separately from a missing delivery record
 (`tools/khook_trace_classify.py` `_fc1_records` and

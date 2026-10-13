@@ -783,7 +783,7 @@ def _fc1_records(pc_text: str) -> dict:
             pass
     pretrigger_verified = bool(
         ready and gate and pretrigger_report and
-        ready["fields"].get("build") == "prearmed-v4" and
+        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5") and
         pretrigger_report["level"] == "MARK" and
         pretrigger_report["seq"] > gate["seq"] and
         pretrigger_report["fields"].get("cpu") ==
@@ -794,7 +794,7 @@ def _fc1_records(pc_text: str) -> dict:
     )
     pretrigger_mismatch = bool(
         ready and gate and pretrigger_report and
-        ready["fields"].get("build") == "prearmed-v4" and
+        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5") and
         pretrigger_report["level"] == "ERR" and
         pretrigger_report["seq"] > gate["seq"] and
         pretrigger_report["fields"].get("cpu") ==
@@ -807,31 +807,80 @@ def _fc1_records(pc_text: str) -> dict:
     )
     if pretrigger_report and not pretrigger_verified and not pretrigger_mismatch:
         issues.append("malformed or out-of-order PRETRIGGER")
-    trigger_reports = []
+    main_reports = []
     for line_index, line in enumerate(pc_text.splitlines()):
         parts = line.split("\t", 3)
         if len(parts) == 4 and parts[3].startswith("FCM "):
-            trigger_reports.append((line_index, parts[2],
-                                    dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3]))))
+            main_reports.append({
+                "line_index": line_index,
+                "level": parts[2],
+                "fields": dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3])),
+            })
+    version = ready["fields"].get("build") if ready else None
+    patch_progress = -1
+    patch_records = [r for r in main_reports
+                     if r["fields"].get("phase") != "TRIGGER_BEGIN"]
+    if version == "prearmed-v5":
+        expected_patch = ([('IST4_BEGIN', None)] +
+                          [('IST4_DONE', str(cpu)) for cpu in range(16)] +
+                          [('GATE_BEGIN', None), ('GATE_DONE', None)])
+        for record in patch_records:
+            next_step = patch_progress + 1
+            fields = record["fields"]
+            if next_step >= len(expected_patch):
+                issues.append("extra FCM patch phase")
+                break
+            expected_phase, expected_slot = expected_patch[next_step]
+            valid = (ready and record["level"] == "MARK" and
+                     record["line_index"] > ready["line_index"] and
+                     (not gate_report or
+                      record["line_index"] < gate_report["line_index"]) and
+                     fields.get("phase") == expected_phase and
+                     fields.get("fw") == "12.02" and
+                     fields.get("build") == version and
+                     fields.get("cpu") == ready["fields"].get("trigger_cpu") and
+                     fields.get("slot") == expected_slot)
+            if not valid:
+                issues.append(f"out-of-order or malformed FCM patch phase at step {next_step}")
+                break
+            patch_progress = next_step
+    elif patch_records:
+        issues.append("FCM patch phase without prearmed-v5 READY")
+    ist4_begin = patch_progress >= 0
+    ist4_last_done = min(patch_progress - 1, 15) if patch_progress >= 1 else None
+    gate_begin = patch_progress >= 17
+    gate_done = patch_progress >= 18
+    patch_complete = gate_done and len(patch_records) == 19
+    if (version == "prearmed-v5" and gate_done and pretrigger_report and
+            pretrigger_report["line_index"] <= patch_records[18]["line_index"]):
+        issues.append("FC1 pretrigger precedes FCM gate readback")
+        pretrigger_verified = False
+        pretrigger_mismatch = False
+    trigger_reports = [r for r in main_reports
+                       if r["fields"].get("phase") == "TRIGGER_BEGIN"]
     if len(trigger_reports) > 1:
         issues.append("duplicate FCM trigger report")
     trigger_begin = False
     if len(trigger_reports) == 1:
-        line_index, level, fields = trigger_reports[0]
+        trigger_report = trigger_reports[0]
+        line_index = trigger_report["line_index"]
+        level = trigger_report["level"]
+        fields = trigger_report["fields"]
         trigger_begin = bool(
             pretrigger_verified and ready and level == "MARK" and
-            ready["fields"].get("build") == "prearmed-v4" and
+            version in ("prearmed-v4", "prearmed-v5") and
             line_index > pretrigger_report["line_index"] and
             fields.get("phase") == "TRIGGER_BEGIN" and
             fields.get("fw") == "12.02" and
-            fields.get("build") == "prearmed-v4" and
+            fields.get("build") == version and
             fields.get("cpu") == ready["fields"].get("trigger_cpu") and
-            fields.get("pretrigger") == "1"
+            fields.get("pretrigger") == "1" and
+            (version != "prearmed-v5" or patch_complete)
         )
         if not trigger_begin:
             issues.append("malformed or unlinked FCM trigger report")
     read_fail_after_gate_before_pretrigger = bool(
-        gate and ready and ready["fields"].get("build") == "prearmed-v4" and
+        gate and ready and version in ("prearmed-v4", "prearmed-v5") and
         not pretrigger_report and
         any(r["seq"] > gate["seq"] for r in read_fail)
     )
@@ -841,7 +890,7 @@ def _fc1_records(pc_text: str) -> dict:
         sample = fields.get("sample")
         version = ready["fields"].get("build") if ready else None
         if sample is None:
-            if version in ("prearmed-v2", "prearmed-v3", "prearmed-v4"):
+            if version in ("prearmed-v2", "prearmed-v3", "prearmed-v4", "prearmed-v5"):
                 issues.append(f"{version} frame or marker lacks sample mode")
                 return False
             return True
@@ -861,12 +910,12 @@ def _fc1_records(pc_text: str) -> dict:
                and r["level"] == "MARK"
                and r["fields"].get("value") == "0x4b53545546464348"
                and valid_sample(r)]
-    if ready and ready["fields"].get("build") == "prearmed-v4":
+    if version in ("prearmed-v4", "prearmed-v5"):
         if not pretrigger_verified or any(
             r["seq"] <= pretrigger_report["seq"] for r in frames + markers
         ):
             if frames or markers:
-                issues.append("v4 frame or marker without preceding verified pretrigger baseline")
+                issues.append("v4/v5 frame or marker without preceding verified pretrigger baseline")
             frames = []
             markers = []
     if any(r["phase"] in ("FRAME", "MARKER") and
@@ -898,6 +947,12 @@ def _fc1_records(pc_text: str) -> dict:
             "pretrigger_verified": pretrigger_verified,
             "pretrigger_mismatch": pretrigger_mismatch,
             "trigger_begin": trigger_begin,
+            "main_patch_progress": patch_progress,
+            "ist4_begin": ist4_begin,
+            "ist4_last_done": ist4_last_done,
+            "gate_begin": gate_begin,
+            "gate_done": gate_done,
+            "patch_complete": patch_complete,
             "read_fail_before_gate_report": read_fail_before_gate,
             "read_fail_after_gate_before_pretrigger":
                 read_fail_after_gate_before_pretrigger,
@@ -1052,6 +1107,14 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
           audit_header.group(1).lower() == "2b3626" and
           int(audit_header.group(4)) == 16):
         boundary = "gate_and_ist_staged_delivery_or_later_unproven"
+    elif pc_same_run_verified and fc1["gate_done"]:
+        boundary = "gate_readback_observer_or_later_unproven"
+    elif pc_same_run_verified and fc1["gate_begin"]:
+        boundary = "gate_write_or_readback_unproven"
+    elif pc_same_run_verified and fc1["ist4_last_done"] is not None:
+        boundary = "ist4_patch_progress_gate_or_later_unproven"
+    elif pc_same_run_verified and fc1["ist4_begin"]:
+        boundary = "ist4_patch_started_first_write_or_later_unproven"
     elif stage or (pc_stage and pc_same_run_verified):
         boundary = "prepatch_staging_seen_gate_patch_or_later_unproven"
     else:
