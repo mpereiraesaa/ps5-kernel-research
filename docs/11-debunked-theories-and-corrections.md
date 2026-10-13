@@ -31,8 +31,28 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 15 | "No `.data` pointer to the ACPI strings ⇒ PS5 dropped/renamed the event path" | **WRONG** — references live in un-dumped `.text`, not `.data` | [verified-on-dump] `12` §3 |
 | 16 | The resume trigger is a **#DB breakpoint** at `acpi_sleep_machdep+0x18e` | **WRONG KIND** — the public loader triggers via a kernel-data **`AcpiGbl_FACS` self-corruption → #GP** (IST6), no breakpoint; `+0x18e` also invalid (#14). | [verified-in-source] `15` §1 |
 | 17 | The public loader's `ACPIGBL_FACS` offsets can be used on 12.02 | **WRONG METHOD** — loader is a different link coordinate (`KERNEL_TEXT=…80210000`) and tops out at 7.61; transfer is invalid. Use the dump-derived `kdata+0x2cb4c80`. | [verified-on-dump] `15` §2–§3 |
+| 18 | The 13.60 IDT/TSS are at data-file offsets `0x2234300`/`0x2236fe0`, and matched syscalls imply `+0x6a340`/`+0x6a328` 12.02 code shifts | **WRONG COORDINATES** — the data-file offsets are `0x2ef4300`/`0x2ef6fe0`; the declared 735 sysent pairs yield `+0xadd70`/`+0xadd58` under dump-specific text bases. The old offsets subtracted the `0xcc0000` text size twice. | [verified-on-dump] `16` cross-dump audit |
 
 ## Detail on the load-bearing ones
+
+### #18 — Cross-dump coordinates must be checked against records [verified-on-dump]
+
+The former `16` audit put the 13.60 IDT at data-file offset
+`0x2234300`. That location contains unrelated data, while
+`0x2ef4300` decodes as IDT gates; the TSS likewise starts at
+`0x2ef6fe0`. Byepervisor's text-relative IDT value `0x3bb4300`
+must have the `0xcc0000` text span subtracted **once** to become a
+data-file offset. Re-reading the 13.60 sysentvec size (`0x2df`) and
+its 735 code-pointer entries against the 12.02 table gives 595
+offset pairs at `+0xadd70` and 140 at `+0xadd58`, under the
+dump-specific text bases recorded in `16`. The earlier reported
+`+0x6a340`/`+0x6a328` shifts are retracted. [inference] The 13.60
+data dump's clustered gadget pointers appear to be staged chain/frame
+residue: the same locations in 12.02 are zero or unrelated. A static
+object definition at those 13.60 locations would falsify this reading.
+
+**Lesson**: inspect a purported structure at its calculated data-file
+offset and confirm its shape before using it to project code addresses.
 
 ### #1 — XOM never "moved" from PTE to NPT [verified-in-tree]
 

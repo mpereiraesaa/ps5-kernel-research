@@ -134,6 +134,10 @@ databases — links and knowledge, never payload material (see
 
 - `[verified-in-tree]` — directly supported by this repository; cite the
   exact file and line.
+- `[verified-on-dump]` — directly supported by a local firmware or memory
+  dump; cite the dump name and byte offset. Never add the dump to this repo.
+- `[verified-on-console]` — observed on the console; cite the research note
+  and the experiment record, including firmware and recovery state.
 - `[public-consensus]` — documented in a cited public source.
 - `[inference]` — derived from evidence; state the reasoning and what
   observation would falsify it.
