@@ -480,30 +480,31 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(result["signals"]["fc1"]["records"][-1]["fields"]["value"],
                          "0x4b53545546464348")
 
-    def test_prearmed_v2_targeted_sample_requires_selected_cpu(self):
-        v2 = self.FC1.replace(b"prearmed-v1", b"prearmed-v2")
+    def test_prearmed_v2_v3_targeted_sample_requires_selected_cpu(self):
         targeted = (b"4\t4000\tMARK\tFC1 seq=3 phase=FRAME cpu=3 "
                     b"sample=targeted rip=0x123 cs=0x43 flags=0x202 "
                     b"rsp=0x456 ss=0x3b\n")
-        result = classify_kstuff_fullchain(
-            self.LIVE_STAGE, pc=self.PC_STAGE + v2 + targeted,
-            pc_same_run_verified=True)
-        self.assertEqual(result["boundary"],
-                         "frame_changed_copy_marker_or_later_unproven")
-        wrong_cpu = targeted.replace(b"cpu=3", b"cpu=7")
-        result = classify_kstuff_fullchain(
-            self.LIVE_STAGE, pc=self.PC_STAGE + v2 + wrong_cpu,
-            pc_same_run_verified=True)
-        self.assertEqual(result["boundary"],
-                         "gate_and_ist_staged_delivery_or_later_unproven")
-        self.assertIn("invalid FC1 sample mode or targeted CPU",
-                      result["signals"]["fc1"]["issues"])
-        no_mode = targeted.replace(b"sample=targeted ", b"")
-        result = classify_kstuff_fullchain(
-            self.LIVE_STAGE, pc=self.PC_STAGE + v2 + no_mode,
-            pc_same_run_verified=True)
-        self.assertEqual(result["boundary"],
-                         "gate_and_ist_staged_delivery_or_later_unproven")
+        for version in (b"prearmed-v2", b"prearmed-v3"):
+            tagged = self.FC1.replace(b"prearmed-v1", version)
+            result = classify_kstuff_fullchain(
+                self.LIVE_STAGE, pc=self.PC_STAGE + tagged + targeted,
+                pc_same_run_verified=True)
+            self.assertEqual(result["boundary"],
+                             "frame_changed_copy_marker_or_later_unproven")
+            wrong_cpu = targeted.replace(b"cpu=3", b"cpu=7")
+            result = classify_kstuff_fullchain(
+                self.LIVE_STAGE, pc=self.PC_STAGE + tagged + wrong_cpu,
+                pc_same_run_verified=True)
+            self.assertEqual(result["boundary"],
+                             "gate_and_ist_staged_delivery_or_later_unproven")
+            self.assertIn("invalid FC1 sample mode or targeted CPU",
+                          result["signals"]["fc1"]["issues"])
+            no_mode = targeted.replace(b"sample=targeted ", b"")
+            result = classify_kstuff_fullchain(
+                self.LIVE_STAGE, pc=self.PC_STAGE + tagged + no_mode,
+                pc_same_run_verified=True)
+            self.assertEqual(result["boundary"],
+                             "gate_and_ist_staged_delivery_or_later_unproven")
 
     def test_prearmed_gate_mismatch_and_nonselected_frame(self):
         bad_gate = self.FC1.replace(b"gate_lo=0x111", b"gate_lo=0x112")

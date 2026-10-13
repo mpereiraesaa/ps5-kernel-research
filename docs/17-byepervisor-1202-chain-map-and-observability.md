@@ -705,8 +705,13 @@ available logs do not establish what caused the outage.
 **Isolated prearmed Kstuff variant, built offline and not run.**
 [verified-in-tree] Our separate local source
 `engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-262,550-652`
-builds `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
-`39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`.
+builds the current `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
+`494491a5fbfb319483459343e7db9b03e94af732a469ca896bcea5d35f77948d`.
+The prior unrun v2 source is preserved outside this notes repo at
+`engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v2.c`.
+Rebuilding it at the original source path reproduced its ELF SHA-256
+`39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`;
+v3 corrects the copy-gadget offset (`11` #46). Neither was run.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
 main thread stages IST4 or changes the gate. After the main thread writes and
@@ -726,7 +731,7 @@ shutdown. A timeout or unsafe teardown parks.
 [verified-in-tree] The `FC1` local sequence begins at 1; its stages are
 `READY`, `GATE_VERIFIED`, zero or more `FRAME`/`MARKER` records, and
 `QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
-`build=prearmed-v2`, and selected/observer CPU numbers. The exact ELF SHA is
+`build=prearmed-v3`, and selected/observer CPU numbers. The exact ELF SHA is
 recorded above, while `ps5log/1`'s `HELLO` boot token identifies the PC
 session; the version tag is not an ELF hash. `tools/khook_trace_classify.py`
 preserves raw `FC1` fields and sequence issues. With `--pc-same-run`, a
@@ -743,7 +748,7 @@ failed observer on return using synthetic transcripts.
 `[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
 asserted. A disagreement yields `conflicting_probe_cpu_records` before any
 gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
-For `prearmed-v2` it requires the sample mode and rejects a `targeted`
+For `prearmed-v2` and `prearmed-v3` it requires the sample mode and rejects a `targeted`
 record naming a CPU other than the trigger CPU; v1 records remain readable.
 
 [verified-in-tree] The worker also emits `FC1 READ_FAIL` if its private-pipe
@@ -780,12 +785,18 @@ layouts agree. Run it with those two paths, for example:
 ```text
 python3 tools/fullchain_layout_check.py \
   /home/manuel/personal/ing_pereira/engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c \
-  /home/manuel/personal/ing_pereira/engineering/third_party/kstuff-lite/ps5-kstuff/structs.inc
+  /home/manuel/personal/ing_pereira/engineering/third_party/kstuff-lite/ps5-kstuff/structs.inc \
+  --offsets r0gdb/prosper0gdb/offsets/12_02.h --ktext-gap 0xd50000
 ```
 
 It checks eight register offsets, the `F−0x28` hardware frame, the
 `+0xe8` entry-iret landing, both pop-all frames, the copy `pop rbp; ret`
 handoff, slot bounds and overlap, and the staged/observer canary formula.
+The optional offset audit also checks IDT, TSS, and four text-relative
+Kstuff entries against the same-firmware public table. [verified-in-tree]
+The historical PR #97 source fails only the copy-entry comparison
+(`0x2efbba` versus `0x2efdba`); the corrected unrun v3 source passes all
+six comparisons. These are address calculations, not 12.02 byte checks.
 The current prearmed source passes geometry with 16 disjoint `0x500` slots
 (`0x5000` total) and **80 distinct canary words**. The unchanged PR #97
 `fullchain_allcpu.c` has the same source geometry but only **20 distinct
