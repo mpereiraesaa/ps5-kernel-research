@@ -148,8 +148,21 @@ Re-verified while producing the above, so later work need not re-derive:
 - No symbol table (`acpi_sleep_machdep`, `khv_startup_mp`, etc.) is
   present in the dump — it is a data dump, not a text/symbol image.
 
+## 5. Update (2026-10-13): the resume trigger is `AcpiGbl_FACS`, not a breakpoint
+
+Follow-on work resolved the *kind* of trigger this route needs. The
+public loader (5.00–7.61) does not arm a `#DB`; it corrupts the ACPICA
+global `AcpiGbl_FACS` in kernel data so the kernel's own
+`AcpiSetFirmwareWakingVector` faults on resume (`#GP`, IDT 13 + IST6).
+The 12.02 `AcpiGbl_FACS` anchor is dump-derived at `kdata+0x2cb4c80`.
+This makes §2's conclusion moot for the trigger path (no
+`acpi_sleep_machdep` instruction is needed) while leaving §1 and §2
+correct as recorded. See `15-facs-global-resume-trigger.md`.
+
 ## Cross-references
 
+- `15-facs-global-resume-trigger.md` — the real trigger kind + the
+  12.02 `AcpiGbl_FACS` anchor.
 - `09-live-kernel-state-and-fsgsbase.md` — ACPI tables/strings section:
   FACS address and string-pointer framing corrected in place.
 - `10-hcall-resume-window-and-noops.md` — launch-chain step 2 and the

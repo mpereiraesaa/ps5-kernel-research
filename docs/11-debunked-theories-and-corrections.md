@@ -29,6 +29,8 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 13 | "FACS wake vector at phys `0x9bf60` is all-zero → PS5 has no FACS wake" | **WRONG ADDRESS** — `0x9bf60` is `PM1a_EVT_BLK`; FACS is `0x7fd6e000` | [verified-on-dump] `12` §1, `09`, `10` |
 | 14 | `acpi_sleep_machdep+0x18e` is a valid #DB breakpoint in the resume window | **WRONG** — `0x18e`=398 B exceeds the function's compiled size | [verified-in-source] `12` §2, `09`, `10` |
 | 15 | "No `.data` pointer to the ACPI strings ⇒ PS5 dropped/renamed the event path" | **WRONG** — references live in un-dumped `.text`, not `.data` | [verified-on-dump] `12` §3 |
+| 16 | The resume trigger is a **#DB breakpoint** at `acpi_sleep_machdep+0x18e` | **WRONG KIND** — the public loader triggers via a kernel-data **`AcpiGbl_FACS` self-corruption → #GP** (IST6), no breakpoint; `+0x18e` also invalid (#14). | [verified-in-source] `15` §1 |
+| 17 | The public loader's `ACPIGBL_FACS` offsets can be used on 12.02 | **WRONG METHOD** — loader is a different link coordinate (`KERNEL_TEXT=…80210000`) and tops out at 7.61; transfer is invalid. Use the dump-derived `kdata+0x2cb4c80`. | [verified-on-dump] `15` §2–§3 |
 
 ## Detail on the load-bearing ones
 
@@ -113,6 +115,34 @@ have been caught by one structural cross-check before touching the
 console. Reinforces #3 (`START_RIP_OFF` typo) and #4 (CR4 bit scan):
 **measurement beats interpretation, and the cheapest measurement is the
 one you do offline.**
+
+### #16/#17 — The resume trigger's *kind*, and one cross-FW transfer trap
+
+The route was described as "arm #DB at `acpi_sleep_machdep+0x18e`".
+Fixing the offset (#14) was not enough: the **mechanism itself** was
+wrong for the public lineage. Full detail in
+`15-facs-global-resume-trigger.md`.
+
+- **#16 — wrong trigger kind.** 5.00–7.61 do not arm a breakpoint. They
+  corrupt the ACPICA global `AcpiGbl_FACS` pointer in kernel data
+  (`kwrite64(ktext+ACPIGBL_FACS, self−8)`), so the kernel's own
+  `AcpiSetFirmwareWakingVector` dereferences the mangled pointer on resume
+  and takes a **#GP** (IDT 13 + TSS IST6). No `acpi_sleep_machdep`
+  instruction is involved. The `#DB`/`+0x18e` plan was our own invention.
+- **#17 — cross-firmware offset transfer.** The loader hardcodes
+  `KERNEL_TEXT = 0xffffffff80210000` and only covers ≤7.61; our dump's
+  kernel-text base is `0xffffffff884c0000` and the firmware is 12.02. Its
+  `ACPIGBL_FACS` values are mechanism evidence only, never a 12.02 offset.
+  The dump-derived anchor is `kdata+0x2cb4c80` (the sole pointer to
+  `dmap+FACS_phys`; `15` §2).
+
+**Shared lesson**: a "place to break" is not the same as "the way the
+firmware faults". Verify the *mechanism class* against a source that
+actually ran on a firmware lineage before transferring any address; and
+never move an offset across a firmware family without a same-firmware
+anchor. This is the same failure family as #13/#14 (a plausible-looking
+constant carried forward without a same-object check) and #5 (a header
+table used on the wrong firmware).
 
 ### #3/#4 — Two lab-wide "measurement beats interpretation" lessons
 
