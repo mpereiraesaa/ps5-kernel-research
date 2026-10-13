@@ -115,14 +115,17 @@ own firmware. There is no held 12.02 ktext image in this audit.
 | `CLD`, `REP_MOVSB` for later AP-copy path | `0x462c1a`, `0x304367` | `CLD` **unknown**. **Table address** `rep_movsb_pop_rbp_ret` at `+0x2efdba` (`12_02.h:15`) has an extra pop and needs a distinct frame; the 11.60 copy chain cannot be pasted. |
 | `OR_RCX_EAX` for persistent hook | unused in 11.60 one-shot path | Not required if the 12.02 proof remains one-shot. |
 | `POP_R8`, `STORE_RCX_R8` | absent/unused in 11.60 | Not required: `5299395/khook.c:75-84` uses RAX stores instead. The RAX store remains unverified on 12.02. |
+| `getuid` DR0 execute target for F2 | Public test uses an interior body instruction | [inference] **Entry-only diagnostic candidate** `ktext+0x3130a0` from 12.02 `sysent[24].sy_call` (`16`, entry-only target). An F2 frame RIP matching this pointer would support delivery to the table entry if DR0/DR7 and dispatch are independently linked. It does not identify the public `getuid` body `+0xe` instruction or validate return. |
 
 [inference] The table covers every gadget class used by the 11.60 arm,
 dispatch, one-shot return, and AP copy path, but does **not** yield an
 executable 12.02 map. A byte-level 12.02 disassembly agreeing with each
 candidate would strengthen it; a differing entry instruction, side effect,
 or stack delta would falsify that substitution. The unresolved pivot,
-`resumectx` tail, store sequence, `pop rsp`, and hook target are blocking
-dependencies for a faithful build. Mark them **unresolved**, not zero or
+`resumectx` tail, store sequence, `pop rsp`, and the public hook's body
+target are blocking dependencies for a faithful build. The data-derived
+`sy_call` entry candidate narrows only an F2 delivery diagnostic. Mark
+the remaining dependencies **unresolved**, not zero or
 borrowed 11.60/13.60 addresses.
 
 ## Failure evidence that survives a failed return

@@ -3,7 +3,7 @@
 All public. Nothing here contains proprietary Sony material; these are
 scene research artifacts and documentation.
 
-## Primary references read for these notes (2026-10-08)
+## Primary references read for these notes
 
 - ps5-linux-loader — https://github.com/ps5-linux/ps5-linux-loader
   - `source/hv_defeat_{0304,0506,0607}.c` — the per-FW NPT-defeat routes
@@ -25,6 +25,10 @@ scene research artifacts and documentation.
   https://github.com/sleirsgoevy/ps4jb-payloads
   (`main.py`: 134 MB kdata dump via r0gdb/copyout; structural-signature
   symbol derivation for rootvnode/IDT/GDT/TSS/kernel_pmap_store).
+- AMD64 Architecture Programmer's Manual, Vol. 2, §13.1.3.1 —
+  https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2
+  (instruction-address breakpoints fault before the instruction executes;
+  the return path must prevent repeat delivery or clear the breakpoint).
 - PS5 Developer wiki:
   - https://psdevwiki.com/ps5/index.php/Kernel
   - https://www.psdevwiki.com/ps5/index.php/Hypervisor

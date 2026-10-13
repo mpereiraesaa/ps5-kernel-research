@@ -461,6 +461,29 @@ calling it the body. The `+0xadd70` cross-dump displacement applies
 to the table **entry** (`0x3130a0 - 0x265330`); it cannot locate the hook
 body or an interior instruction (`11` #30).
 
+#### Entry-only diagnostic target, distinct from the public test hook
+
+[verified-on-dump] Re-running `tools/sysent_trampoline_map.py` on the held
+12.02 data and 13.60 donor images reports `sysent[24].sy_call` at
+`12.02 ktext+0x3130a0`; the 12.02 jump target remains null because no
+matching text image is held. [public-consensus] An AMD64 instruction
+breakpoint compares DR0 with the next instruction address and reports `#DB`
+*before* that instruction executes ([AMD64 APM Vol. 2, §13.1.3.1](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2)).
+
+[inference] The table entry is therefore a **candidate entry marker** for
+classifying a future, separately approved one-shot `getuid` #DB trace:
+if syscall dispatch fetches that exact address after DR0/DR7 are armed,
+an independently captured F2 hardware frame should have RIP equal to
+`ktext+0x3130a0`, regardless of
+whether the entry is a jump to a body elsewhere. This is not the public
+payload's `getuid`-body `+0xe` hook and does not make that body address
+known. It also does not establish 12.02 debug-register setup, gate delivery,
+frame selection, handler register liveness, disarming, or a valid return.
+A same-attempt trace showing the syscall fetches a different entry despite
+the recorded table pointer would falsify this target choice; a missing F2
+record alone would not, because delivery and transport could fail first.
+No console experiment is authorized by this address-only alternative.
+
 This is a piecewise map, not one firmware-wide delta. The 13.60 Kstuff
 anchors `cpu_switch`, `mov_rax_cr0`, `dr2gpr_start`, `gpr2dr_1_start`,
 `gpr2dr_2_start`, and `mov_cr3_rax_mov_ds` all map to 12.02 with the
