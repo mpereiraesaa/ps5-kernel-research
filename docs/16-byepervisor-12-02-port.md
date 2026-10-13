@@ -819,12 +819,13 @@ engine as “proven” would repeat a claim already corrected above.
   `frame-observer pretrigger sampled cpu=9 canary=MATCH` 0.001487 seconds
   later. It received no changed-frame or return marker. The session was
   finalized on server shutdown with two records, no gaps, and no BYE.
-  Three subsequent pings failed.
-- **Recovery state:** the owner hard power-cycled the PS5 and confirmed
-  normal operation. Network reachability returned after startup; a later
-  two-ping check passed.
+  Three subsequent pings failed. **Owner correction:** the console powered
+  off during this attempt; this was not merely an unresponsive console.
+- **Recovery state:** the owner brought the PS5 back up and confirmed normal
+  operation. Network reachability returned after startup; a later two-ping
+  check passed.
 - **Interpretation:** [verified-on-console] in this run the PC received a
-  post-patch canary read before the freeze, so the worker and PC channel
+  post-patch canary read before the power-off, so the worker and PC channel
   were active while the changed gate/IST4 were installed. [inference] the
   main thread had completed both patch readbacks before setting the
   observer phase that allowed this read; a different control-flow order
@@ -833,7 +834,11 @@ engine as “proven” would repeat a claim already corrected above.
   it does not prove the main thread reached TF/NOP. An unrelated #DB during
   the changed-gate window, a failure at the intended trigger, or failure
   later in handler/return processing remain possible. No exception frame
-  was captured and patched-stack delivery remains unvalidated.
+  was captured and patched-stack delivery remains unvalidated. [inference]
+  A fatal exception or panic is more consistent with power-off than a
+  payload thread simply spinning; a console-side record of an orderly
+  shutdown or external power loss would falsify that interpretation. The
+  power-off does not by itself identify NPT.
 
 #### Comparison with Kstuff's kernel-execution path
 
@@ -858,8 +863,9 @@ register/GS handling, and a later return
 Our probe staged a direct userland return at `F+0xc0`
 (`RIP=ist4_evidence_resumed`, `CS=0x43`, flags `0x202`, user RSP,
 `SS=0x3b`), with no `justreturn`/kernel continuation. [inference]
-The frozen probe therefore tested Kstuff's gate target and first
-stack displacement but **did not test the kernel-mode continuation
+The powered-off handshake probe staged Kstuff's gate target and first
+stack displacement, without proving that either executed, and **did not
+test the kernel-mode continuation
 that works in installed Kstuff**. A compiled probe frame showing a
 kernel `justreturn` first return would falsify this distinction.
 Earlier minchain/r0gdb attempts exercised parts of Kstuff's separate
