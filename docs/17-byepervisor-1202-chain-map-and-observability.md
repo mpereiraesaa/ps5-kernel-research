@@ -58,7 +58,7 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 |---|---|---|
 | IDT and common TSS | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:8,10`: `kdata+0x2e88300`, `kdata+0x2e8afe0`; `16` §“Derived 12.02 data and structure offsets” records TSS stride `0x68` from `r0gdb/prosper0gdb/minchain2-build/main.c:72,395`. | Addressed; selected CPU, native gate type/IST, and saved qwords must still be read live. |
 | Scratch | [verified-on-console] The earlier two-page setup at `kdata+0x2099000` was superseded by PR #97's setup-only run: `16` §“Full Kstuff-style continuation probe” records staging/readback/restoration of **16 × `0x500` = `0x5000` bytes** there. [public-consensus] `5299395/include/khook.h:30-37` reserves `0x4000` bytes and begins its big chain at `+0x3a00`. | The tested byte span is large enough for the **reference image by size alone**. The existing all-CPU slots already occupy the entire `0x5000` span, so overlaying that image would collide. A disjoint or redesigned joint layout and independent ownership evidence are still required. |
-| Test hook target | [verified-in-tree] `12_02.h:29` identifies `sysents`; [public-consensus] the 11.60 test uses `getuid + 0xe` (`5299395/main.c:63`). | Function pointer can be located through `sysents`; the **12.02 instruction boundary** and safe resume address are unknown. Do not transfer `+0xe`. |
+| Test hook target | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:29` identifies `sysents`; [public-consensus] the 11.60 test uses `getuid + 0xe` (`5299395/main.c:63`). [verified-on-dump] The 12.02 table's `sysent[24].sy_call` is `ktext+0x3130a0`; the 13.60 donor's `sy_call` is a jump entry, distinct from its getuid body (`16` §“getuid table entry versus hook body”). | Only the 12.02 **table entry** is located. Its instruction bytes, body target, `+0xe` hook boundary, and safe resume address remain unknown. Do not transfer donor body offsets or use `sy_call+0xe` as the hook. |
 | Resume-window hook target and AP init vector | [public-consensus] 11.60 identifies both in its `include/offsets/11_60.h`. | No verified 12.02 addresses. Neither the debunked `acpi_sleep_machdep+0x18e` nor a global text delta supplies one (`11` #14, #18). |
 | `resumectx` layout | [public-consensus] `5299395/include/khook.h:12-15` uses RBP `+0x20`, RSP `+0x28`, RIP `+0x38`, DR7 `+0xa0`. | Candidate FreeBSD lineage only (`16`, PCB table). Validate the 12.02 consumer before a DR7 arm. |
 | Hypervisor AP/VMCB location | [public-consensus] 11.60 discovers a live 16-entry set and validates it before writes. | No 12.02 runtime location or validated population; outside the first khook proof. |
@@ -526,7 +526,9 @@ Compiling this audit ELF validates none of those contracts.
    deltas and clobbers. The current data-only 12.02 dump cannot prove these.
 2. Identify a 12.02 test-hook instruction boundary and resume contract, then
    separately the resume-window `startup_mp` call and AP init vector. A
-   `sysent` function pointer alone does not identify an interior instruction.
+   `sysent` function pointer alone does not identify the getuid body or an
+   interior instruction; the 13.60 donor's pointer first reaches a jump
+   entry (`16` §“getuid table entry versus hook body”; `11` #30).
 3. Freeze a disjoint frame/journal layout and check it offline for all staged
    regions, 16 CPUs if per-CPU landings are used with the shared gate, and
    both #DB transactions. PR #97 demonstrated write/readback/restoration

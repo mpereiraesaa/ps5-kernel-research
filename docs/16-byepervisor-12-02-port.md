@@ -76,7 +76,7 @@ anchors both per boot (we derive both bases).
 | `PMAP_STORE` | 0x3B48FF8 | ✓ in `offsets/12_02.h` (`kernel_pmap_store`) |
 | `IDT_ARRAY` | 0x3BB4300 | ✓ (`idt`, delta +0x2E88300) |
 | `COMMON_TSS` | 0x3BB6FE0 | ✓ (`tss_array`, +0x2E8AFE0) |
-| `SYS_GETUID` | 0x2a8d60 | ✓ via our sysent anchors (746 sy_call entries) |
+| `SYS_GETUID` | 0x2a8d60 (13.60 body) | 12.02 `sysent[24].sy_call` is `ktext+0x3130a0`; its body and `+0xe` hook instruction are **unresolved** without 12.02 text (`11` #30) |
 | `DMPML4I/DMPDPI/PML4PML4I` | pmap self-refs | ✓ functionally — our alias engine resolves PML4/PDP/PD/PT live |
 | `DATA_CAVE` | 0x2D39000 | candidate only — `kh_find_cave` zero-scans, but zero bytes do not establish ownership or cross-boot safety |
 | `HV_MP_STARTUP_CALL` | 0xC16EE0 | **not needed by our trigger** (below) |
@@ -431,6 +431,35 @@ text bases `0xffffffffd3b70000` (13.60) and
 text displacement of `+0xadd70`, and 140 have `+0xadd58`. The earlier
 `+0x6a340`/`+0x6a328` figures used an incorrect base; they must not
 be used for gadget projection.
+
+#### `getuid` table entry versus hook body
+
+[verified-on-dump] The 13.60 donor at
+`kernel-dump-1360-boot1791893784/kernel-data.bin+0x1b6e50` has
+`sysent[24].sy_call = ktext+0x265330`. The instruction at
+`kernel-text.bin+0x265330` is a direct relative jump to
+`ktext+0x2a8d60`. [public-consensus] The public 13.60
+[`offsets/13_60.h:8`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_60.h#L8)
+names that target `SYS_GETUID`, and
+[`main.c:53`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/main.c#L53)
+uses its `+0xe` instruction as a test hook. This is **body** `+0xe`, not
+`sy_call+0xe`. [verified-on-dump] The data-only 12.02 image at
+`kernel-data-only-1202/kernel-data.bin+0x1af4d0` yields
+`sysent[24].sy_call = ktext+0x3130a0`; neighbors 23 and 25 have the same
+`+0x38` and `+0x8` spacing relative to entry 24 as the donor. This is an
+entry location only: the dump has no 12.02 instruction bytes to show whether
+the entry jumps, where it lands, or whether its body has a compatible `+0xe`
+boundary. [inference] Projecting the 13.60 stub-to-body displacement onto
+12.02 would conflate two different code regions; a 12.02 text image showing
+the same displacement and instruction contract would falsify this caution.
+
+Run `tools/sysent_trampoline_map.py` with the two local data images, donor
+text, and the dump-specific text bases recorded above to reproduce the
+entry/jump-target distinction. It leaves the 12.02 jump target null unless a
+matching 12.02 text image is supplied; even then, inspect the target before
+calling it the body. The `+0xadd70` cross-dump displacement applies
+to the table **entry** (`0x3130a0 - 0x265330`); it cannot locate the hook
+body or an interior instruction (`11` #30).
 
 This is a piecewise map, not one firmware-wide delta. The 13.60 Kstuff
 anchors `cpu_switch`, `mov_rax_cr0`, `dr2gpr_start`, `gpr2dr_1_start`,
