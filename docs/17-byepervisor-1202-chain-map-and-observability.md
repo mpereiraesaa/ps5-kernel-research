@@ -312,8 +312,20 @@ the separate worker mock; the resulting 18-record transcript passed the
 classifier. An un-restored journal was rejected at D2. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
 `be3474e7e9c5717de6c170e281b639d9abe226f087d1dd8d43dae5b53d49ae50`;
-it cross-compiled as a PS5 SDK object. Its host SHA callback, expected
-12.02 addresses/values, and mock worker states still require real adapters.
+it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
+and mock worker states still require a real chain.
+
+**Off-tree PS5 callback bridge:** `kh2_ps5_adapter.c/.h` supplies the SDK
+main-read, separate-pipe worker-read, `ps5log` send, CPU pin/check, and
+pipe prepare/finish callbacks. `kh2_sha256.c/.h` supplies the SHA callback;
+its 17 host vectors matched `hashlib`, including padding boundaries and a
+million-byte input. A PS5 SDK smoke ELF linked the bridge, logger, observer
+channel, and all KH2 producer modules. It did not run on a console or
+call those callbacks. The callback source hashes and exact test are in `05`.
+The bridge does not supply staging/restoration writes, a verified 12.02
+layout or gadget bytes, a test-hook boundary, or a return signal. A socket
+send result still needs a retained PC run file and manifest to establish
+transport integrity.
 
 ### Two-transaction observer ownership schedule
 
@@ -349,11 +361,10 @@ checks their raw links and order. The host sampler can format them from mock
 data, but **no integrated 12.02 producer or worker emits them**, so this
 remains an offline log specification, not a verified ownership schedule.
 The host-only worker and main emitter implement source-level handoffs and
-readbacks, but the real CPU pin, pipe open/close, SDK reads, SHA-256 and
-logger adapters, staging/restoration writes, and 12.02 chain remain
-unconnected. An implementation
-with a truly independent kernel read
-primitive and synchronized thread-safe logger would falsify the need for
+readbacks, and the SDK callback bridge links offline. They still need an
+integrated same-attempt owner schedule, staging/restoration writes, and a
+validated 12.02 chain. An implementation with a truly independent kernel
+read primitive and synchronized thread-safe logger would falsify the need for
 this exact ownership transfer, but not the need to capture both frames before
 recovery (`11` #32). The observer CPU's own incidental #DB remains a separate
 shared-gate hazard. This is an offline map only; any live 12.02 build still
