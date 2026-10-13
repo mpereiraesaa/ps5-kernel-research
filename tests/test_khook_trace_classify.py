@@ -47,6 +47,7 @@ def record(stage, **overrides):
                "flags": "0x202", "rsp": "0x8765", "ss": "0x3b",
                **{f"can{i}": hex(i + 11) for i in range(5)}},
         "A2": {"ist_actual": "0x340", "ist_expected": "0x340",
+               "armed_addr": "0x6a0",
                "armed_actual": "0x55", "armed_expected": "0x55"},
         "Q1": {"observer_cpu": "7", "reason": "arm_return",
                "idle": "1", "inflight": "0", "samples": "1"},
@@ -69,13 +70,16 @@ def record(stage, **overrides):
         part = overrides.get("part", "image")
         geometry = {"image": ("0x100", "1280"),
                     "big": ("0x1000", "1536"),
-                    "journal": ("0x700", "256")}
+                    "journal": ("0x600", "512")}
         addr, length = geometry[part]
         raw[stage] = {"part": part, "addr": addr, "bytes": length,
                       "before_sha": {"image": "e" * 64,
                                      "big": "f" * 64,
                                      "journal": "0" * 64}[part],
                       "image_sha": "c" * 64, "readback_sha": "c" * 64}
+        if part == "image":
+            raw[stage].update({"rbp_addr": "0x400", "rip_addr": "0x408",
+                               "rsp_addr": "0x410", "dr7_addr": "0x418"})
         if part == "journal":
             for name, address in (("a1p", "0x700"), ("a1r", "0x708"),
                                   ("d1s", "0x710"), ("d1o", "0x718")):
@@ -426,6 +430,26 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertEqual(result["capture_errors"][0]["operation"], "hash")
         self.assertNotIn("B1", result["observed"])
 
+    def test_context_and_armed_writes_must_fit_restored_b1_spans(self):
+        for changed, reason in (({"rbp_addr": "0x600"},
+                                 "pretrigger rbp address outside context area"),
+                                ({"rip_addr": "0x400"},
+                                 "pretrigger context addresses reused")):
+            result = classify_records(record("B0"),
+                                      record("B1", part="image", **changed))
+            self.assertEqual(result["rejected"][0]["reason"], reason)
+            self.assertNotIn("B1", result["observed"])
+        staged = [record("B0"), *(record("B1", part=part)
+                  for part in ("image", "big", "journal")), record("B2")]
+        for address in ("0x800", "0x700"):
+            result = classify_records(*staged, record("A2", armed_addr=address))
+            self.assertEqual(result["rejected"][0]["reason"],
+                             "armed state outside journal free word")
+            self.assertNotIn("A2", result["observed"])
+        result = classify_records(record("B0"), record("A2"))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "B1 journal missing for armed-state geometry")
+
     def test_handoff_records_require_linked_raw_readbacks(self):
         staged = [record("B0"), *(record("B1", part=part)
                     for part in ("image", "big", "journal"))]
@@ -559,10 +583,10 @@ class OtherClassifierTests(unittest.TestCase):
                 self.assertEqual(result["rejected"][0]["reason"],
                                  "selected IST6 does not point to first frame")
 
-        raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
-               "2\t2\tMARK\t" + record("A2", ist_actual="0x348",
-                                           ist_expected="0x348") + "\n").encode()
-        result = classify(raw)
+        result = classify_records(
+            record("B0"), *(record("B1", part=part)
+                            for part in ("image", "big", "journal")),
+            record("A2", ist_actual="0x348", ist_expected="0x348"))
         self.assertNotIn("A2", result["observed"])
         self.assertEqual(result["rejected"][0]["reason"],
                          "selected IST6 does not point to dispatch frame")
