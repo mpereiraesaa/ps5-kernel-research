@@ -128,6 +128,26 @@ def classify_records(*payloads):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_gate_write_brackets_accept_qwords_and_reject_16_bytes(self):
+        records = [
+            "KH2W stage=B2 cpu=3 region=gate addr=0x508 bytes=8 state=begin",
+            "KH2W stage=B2 cpu=3 region=gate addr=0x508 bytes=8 state=done",
+            "KH2W stage=B2 cpu=3 region=gate addr=0x500 bytes=8 state=begin",
+            "KH2W stage=B2 cpu=3 region=gate addr=0x500 bytes=8 state=done",
+            "KH2W stage=D2 cpu=3 region=gate addr=0x508 bytes=8 state=begin",
+            "KH2W stage=D2 cpu=3 region=gate addr=0x508 bytes=8 state=done",
+            "KH2W stage=D2 cpu=3 region=gate addr=0x500 bytes=8 state=begin",
+            "KH2W stage=D2 cpu=3 region=gate addr=0x500 bytes=8 state=done",
+        ]
+        accepted = classify_records(*records)
+        self.assertEqual([item["addr"] for item in accepted["write_attempts"]],
+                         ["0x508", "0x500", "0x508", "0x500"])
+        self.assertEqual(accepted["rejected"], [])
+        combined = classify_records(
+            "KH2W stage=B2 cpu=3 region=gate addr=0x500 bytes=16 state=begin",
+            "KH2W stage=D2 cpu=3 region=gate addr=0x500 bytes=16 state=begin")
+        self.assertEqual(len(combined["rejected"]), 2)
+
     def test_cli_f2_entry_base_is_added_and_restricted_to_khook(self):
         payloads = (record("B0"), record("B2"),
                     record("F2", rip="0x3140a0"))

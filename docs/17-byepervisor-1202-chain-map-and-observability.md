@@ -385,8 +385,9 @@ B0, the three B1 parts, B2, A2, and D2 through supplied read, SHA-256, and
 send callbacks. It requires a B1 prewrite snapshot for each physical span;
 its write callback wrappers then stage each B1 span in at most `0x500`-byte
 calls, reporting a failed call's address as `KH2E`. The B2 wrapper requires
-four context writes, then all 16 IST6 writes, and the shared gate write last;
-an early gate or IST6 request is rejected (`11` #40). It reports any callback
+four context writes, then all 16 IST6 writes, and separate high- then
+low-qword shared-gate writes last; an early gate, IST6, or low-qword request
+is rejected (`11` #40–#41). It reports any callback
 failure before the final B2 readback. A failed write
 does not authorize a trigger or imply successful restoration.
 [inference] Moving context writes ahead of the gate removes the deliberate
@@ -397,13 +398,22 @@ patch, and the new handler can be reached before B2 readback. A same-attempt
 pre-gate read contradicting any planned context qword would falsify the
 assumption that all four were staged before redirection. No console run has
 tested this sequence.
-Each wrapper sends `KH2W begin` before the supplied write callback and
+[inference] Each gate qword has its own `KH2W` bracket at `gate+8` or `gate+0`; a failed
+callback identifies which qword was attempted. A retained high `done` and
+low `begin` without `done` bounds the failure to the low callback or its
+following send, subject to PC transport retention; a same-attempt low `done`
+would falsify that narrower in-flight reading. [public-consensus] The public
+11.60 installer writes high then low
+([`khook.c:443-454`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L443-L454)).
+[inference] This does not make the intermediate gate state safe or prove either word's
+readback before B2. Each wrapper sends `KH2W begin` before the supplied write callback and
 `KH2W done` only after it returns success. A send failure blocks later
-wrapper writes. The host check exercised 47 paired attempts in its complete
+wrapper writes. The host check exercised 49 paired attempts in its complete
 transcript and a failed `begin` send that invoked no write callback.
 The A2 wrapper requires the main-owned intertrap interval, writes the
 selected IST6 pointer to F2 and then a nonzero free journal word. The D2
-wrapper requires the worker stopped, writes the native gate and all 16 IST6
+wrapper requires the worker stopped, restores native gate high then low as
+separate qwords and all 16 IST6
 words, then three B1 spans in `0x500`-byte chunks and B0 scratch. Failed
 A2/D2 callbacks report `KH2E` and block a wrapper retry. A failed D2
 restoration leaves the actual kernel state unknown until a separate read or
@@ -420,7 +430,7 @@ CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected
 B1/B2/A2/D2 write failures emitted retained `KH2E` without the
 corresponding success record. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`3377dc4535b5afe5cdf98bdce0a5dce7da9584fe1c24ce9747e47fb01fd152c7`;
+`1f82a4e36d3d2eb802fbaab2063a77f8cb4be0de89bbc1c52e12a4783cb799b2`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
@@ -447,7 +457,7 @@ transport integrity.
 main emitter and pthread worker against one mock memory image and one log,
 with callback ownership checks through both transactions, including A2
 and D2 writes. The host test
-completed 20 ordered transcripts with 18 KH2 milestones, 94 `KH2W` lines,
+completed 20 ordered transcripts with 18 KH2 milestones, 98 `KH2W` lines,
 and 200 `KH2R` lines each; an un-restored journal caused
 D2 rejection. The source hashes and test name are in `05`. The two
 frame/journal changes are simulated mock writes, so the passing transcripts

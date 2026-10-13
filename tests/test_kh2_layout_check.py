@@ -171,6 +171,8 @@ class LayoutCheck(unittest.TestCase):
         plan = candidate()
         base = {"seq": 5, "stage": "B2", "region": "gate", "addr": "0x2e88310"}
         self.assertEqual(locate_write_error(plan, base)["word"], 0)
+        self.assertEqual(locate_write_error(plan, {**base, "addr": "0x2e88318",
+                                                        "bytes": 8})["word"], 1)
         context = {**base, "region": "context", "addr": "0x20308"}
         self.assertEqual(locate_write_error(plan, context)["context"], "rip")
         context["addr"] = "0x20320"
