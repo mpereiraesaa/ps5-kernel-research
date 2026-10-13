@@ -738,7 +738,7 @@ engine as “proven” would repeat a claim already corrected above.
   not capture an exception frame and validates none of the four remaining
   live-path boundaries below.
 
-#### Planned post-patch observer calibration (not run)
+#### Post-patch observer calibration (2026-10-13)
 
 - **FW/build:** 12.02,
   `byepervisor_probe_1202_observer_patch_calibration.elf`, SHA-256
@@ -751,14 +751,27 @@ engine as “proven” would repeat a claim already corrected above.
 - **Risk and recovery:** the shared gate points to unverified 12.02 handler
   bytes while only one CPU's IST4 is redirected. The observer read and PC
   send extend the changed-gate interval. An unrelated #DB or a stuck read
-  can freeze the console. The recovery plan is a hard power cycle. This
-  exact build requires fresh owner approval before any console run.
-- **Interpretation:** [inference] a matching PC `sampled` marker followed
-  by restored values and clean exit would establish that the observer was
-  active after patch readback in that run, narrowing the earlier marker
-  gap. A timeout, missing marker, changed canary, or failed restoration
-  would falsify that positive conclusion. No outcome from this no-trigger
-  run can establish #DB delivery or capture an exception frame.
+  can freeze the console. The owner approved this exact build and hard
+  power-cycle recovery plan before the run.
+- **Actual:** elfldr returned P1/P2/P3, `[F1]`, both E1 lines, and
+  `[F2] patch calibration sampled=1 worker=0 PC_log=0; gate, IST4,
+  scratch restored; no #DB`. The PC received READY, `patch-calibration
+  sampled cpu=9 canary=MATCH`, and a final marker reporting restoration,
+  original affinity, and `no_db=1`. The `ps5log/1` manifest recorded
+  three records, no sequence gaps, a clean BYE, and a device span of
+  0.002313 seconds.
+- **Recovery state:** the payload exited normally and two post-run pings
+  passed; no hard power cycle was needed. Console UI was not checked.
+- **Interpretation:** [verified-on-console] the PC received the canary
+  marker and clean completion; elfldr reported restoration. [inference]
+  the worker's canary read occurred after IST4/gate readback and before
+  restoration because the main thread set `OBS_ARMED` only after those
+  readbacks and waited for the worker's completed PC send before restoring.
+  A different control-flow order in the built ELF or a marker emitted
+  without a successful read would falsify this timing claim. This shows
+  the observer can report while those patches are installed; the prior
+  freeze remains unlocated because that run lacked the acknowledgment
+  wait. The calibration did not trigger #DB or capture an exception frame.
 
 ### Frame staging isolation run
 
