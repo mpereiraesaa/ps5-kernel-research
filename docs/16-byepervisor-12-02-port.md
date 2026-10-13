@@ -981,7 +981,9 @@ setup-only ELF printed `[J1] fw=12.02 cpu=15 all_cpu_frames=16 ...` after
 all 16 frames were staged and read back. The PC received the matching
 `ps5log/1` staged marker. Elfldr timed out after 25 seconds without
 `[J2]` or BYE; three subsequent pings succeeded, so the console did
-not power off. The UI/recovery state is awaiting the owner's check.
+not power off. The owner confirmed that the UI was responsive. The
+approved hard power-cycle recovery is pending before another run because
+restoration of the gate and IST4 slots was not observed.
 No `INT1` instruction exists in this setup-only ELF, and the live ELF
 was not sent. [inference] One candidate for the payload-thread hang is
 the first build's single 8192-byte `kernel_copyin` during scratch
