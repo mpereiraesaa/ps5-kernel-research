@@ -321,11 +321,20 @@ pipe prepare/finish callbacks. `kh2_sha256.c/.h` supplies the SHA callback;
 its 17 host vectors matched `hashlib`, including padding boundaries and a
 million-byte input. A PS5 SDK smoke ELF linked the bridge, logger, observer
 channel, and all KH2 producer modules. It did not run on a console or
-call those callbacks. The callback source hashes and exact test are in `05`.
+call those callbacks. The callback source hashes and test name are in `05`.
 The bridge does not supply staging/restoration writes, a verified 12.02
 layout or gadget bytes, a test-hook boundary, or a return signal. A socket
 send result still needs a retained PC run file and manifest to establish
 transport integrity.
+
+**Single-process host rehearsal:** `kh2_integrated_host.c` uses the real
+main emitter and pthread worker against one mock memory image and one log,
+with callback ownership checks through both transactions. The host test
+completed 20 ordered 18-record transcripts; an un-restored journal caused
+D2 rejection. The source hashes and test name are in `05`. The two
+frame/journal changes are simulated mock writes, so the passing transcripts
+establish callback ordering and record linkage, not a #DB, an SDK pipe
+handoff on PS5, or PC retention.
 
 ### Two-transaction observer ownership schedule
 
@@ -360,10 +369,11 @@ The proposed KH2 contract now names R0/R1/Q1/R2/Q2 and the classifier
 checks their raw links and order. The host sampler can format them from mock
 data, but **no integrated 12.02 producer or worker emits them**, so this
 remains an offline log specification, not a verified ownership schedule.
-The host-only worker and main emitter implement source-level handoffs and
-readbacks, and the SDK callback bridge links offline. They still need an
-integrated same-attempt owner schedule, staging/restoration writes, and a
-validated 12.02 chain. An implementation with a truly independent kernel
+The host-only worker and main emitter complete a same-process mock handoff,
+and the SDK callback bridge links offline. A console attempt still needs
+integration with verified 12.02 addresses and gadget bytes, actual
+staging/restoration writes, a return signal, and a retained PC transcript.
+An implementation with a truly independent kernel
 read primitive and synchronized thread-safe logger would falsify the need for
 this exact ownership transfer, but not the need to capture both frames before
 recovery (`11` #32). The observer CPU's own incidental #DB remains a separate
