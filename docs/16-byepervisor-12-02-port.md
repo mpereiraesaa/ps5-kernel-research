@@ -111,11 +111,13 @@ our goal, not our starting point). Our dump-verified alternative
 (docs/10, 2026-10-13): corrupt the `AcpiGbl_FACS` pointer in kernel
 data (`kdata+0x2cb4c80`) so the resume path's dereference faults —
 **#GP fires at the dereference site, wherever that is — no text
-address knowledge needed**. The khook machinery generalizes: their
-`khook.c` hardcodes vector 1 (#DB); ours patches the **#GP gate
-(vector 13)** + IST instead, with the same save/validate/restore
-lifecycle. The chain runs on the #GP instead of the #DB — identical
-otherwise.
+address knowledge needed**. The khook machinery is a candidate pattern:
+their `khook.c` hardcodes vector 1 (#DB), while this route would require
+a **#GP gate (vector 13)** and a selected IST stack with a
+save/validate/restore lifecycle. [public-consensus] The #GP entry frame
+is not interchangeable with #DB's: #GP supplies an error code and #DB
+does not (`11` #20). The chain's stack consumption and return path remain to be
+derived and validated for the selected 12.02 gate setup.
 
 [verified-on-console] The later read-only gate audit below found the
 current vector-13 gate at IST0, so a #GP hook would have to encode a

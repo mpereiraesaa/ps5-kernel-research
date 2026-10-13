@@ -165,9 +165,13 @@ evidence, not as a 12.02 offset.
   produce the fault. No `acpi_sleep_machdep` address is needed. This
   matches `14`'s "A3/no-IDT-breakpoint" direction more closely than the
   interactive A0 substrate.
-- **The exception vector is `#GP` (IST 6), not `#DB`.** The handler to
-  install is IDT vector 13 + TSS `tss_ist6` (`hv_defeat_0607.c:119-127`);
-  `#SX` (30, IST 7) is the loader's secondary/first core.
+- **The trigger uses `#GP`, not `#DB`.** [public-consensus] The public
+  6.50–7.61 loader installs IDT vector 13 and selects TSS `tss_ist6` for its hook
+  (`hv_defeat_0607.c:119-127`); `#SX` (30, IST 7) is its
+  secondary/first core. This is the loader's selected setup, not an
+  observed 12.02 gate layout. [verified-on-console] The later 12.02
+  read-only audit found vector 13 at IST0 (`16` gate-state audit); a replacement
+  stack and the #GP frame/return contract remain unvalidated (`11` #20).
 - **`acpi_sleep_machdep` is no longer load-bearing for the trigger.**
   `12` §2's conclusion still stands (the `+0x18e` breakpoint is invalid),
   but the route no longer needs any `acpi_sleep_machdep` instruction —
@@ -187,9 +191,9 @@ evidence, not as a 12.02 offset.
 - **Mechanism falsifier:** if 12.02's `AcpiSetFirmwareWakingVector`
   null-checks `AcpiGbl_FACS` and the corrupted pointer is never
   dereferenced, no `#GP` fires (the loader relies on it firing).
-- **Not claimed:** that 12.02 uses the *same* two IST vectors; that the
-  FACS `Length > 32` branch is taken; or that the ROP page survives S3 the
-  same way. Those need same-firmware confirmation.
+- **Not claimed:** that the loader's selected IST6/IST7 setup applies
+  to 12.02; that the FACS `Length > 32` branch is taken; or that the
+  ROP page survives S3 the same way. Those need same-firmware confirmation.
 - **Not claimed:** any offset transfer from the loader's coordinate to
   12.02 (see §3).
 

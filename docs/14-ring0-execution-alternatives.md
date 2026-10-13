@@ -10,8 +10,11 @@ Goal being served: **stable ring-0 stepping** so the resume-window work
 resume trigger is *not* a breakpoint. The public lineage corrupts the
 `AcpiGbl_FACS` kernel-data pointer so the kernel's own resume code takes
 a `#GP`; see `15`. That means `acpi_sleep_machdep` is not needed at all,
-and the ideal substrate is a one-shot kernel-data write + a `#GP`/IST6
-handler — the non-interactive end of this inventory.
+and the candidate substrate is a one-shot kernel-data write + a `#GP`
+handler with a selected stack — the non-interactive end of this inventory.
+[public-consensus] The public loader chooses IST6 (`15` §1);
+[verified-on-console] the later 12.02 audit found the current vector-13
+gate at IST0 (`16`). No 12.02 #GP frame/return is validated.
 
 ## What the resume route actually requires from a ring-0 substrate
 
@@ -21,7 +24,7 @@ From `10` and the attachment, the target needs exactly three capabilities:
 |---|---|---|
 | R1 | **Execute VMMCALL from kernel (CPL0, GameOS-guest) context** | the hcall intercept is clear at CPL3, so the HCALL 0x0f must be issued by kernel code |
 | R2 | **Cause a kernel fault inside the resume window** (after `resumectx`, before `acpi_wakeup_cpus`) — e.g. corrupt `AcpiGbl_FACS` so the kernel's own `AcpiSetFirmwareWakingVector` dereferences it (→ `#GP`), per `15` | the window is narrow; the trigger must be timed |
-| R3 | **Take a controlled action when that fault fires** (e.g. via an IST6 `#GP` ROP page) | run the VMMCALL, or pivot to the carrier page |
+| R3 | **Take a controlled action when that fault fires** (e.g. via a selected IST stack and `#GP` ROP page) | run the VMMCALL, or pivot to the carrier page |
 
 Everything else (kernel R/W, CR3 construction, carrier-page write) is already
 covered by the pipe/alias primitives [verified-on-console].
@@ -43,7 +46,8 @@ IDT gate into the mailbox/`gdbstub_main_loop` packet reader (`ring0.c:134-181`, 
 **Update:** the `AcpiGbl_FACS` self-corruption route (`15`) instantiates
 a "passive" trigger — a single kernel-data qword write, no breakpoint, no
 packet reader — which sits between A2 and A3: it still needs a `#GP`
-IDT gate + TSS IST6 handler (like A0/A1/A2), but no interactive session.
+IDT gate and, for this proposed ROP path, a chosen TSS IST stack (like
+A0/A1/A2), but no interactive session.
 It is the concrete form of the non-interactive recommendation below.
 
 A0 is what exists and freezes. A1/A2 are **already in the tree** and are the
