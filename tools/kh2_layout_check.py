@@ -176,43 +176,45 @@ def check(plan):
 def locate_write_error(plan, error):
     """Map a reported failed write address to the candidate plan."""
     address = number(error["addr"])
+    length = number(error["bytes"]) if "bytes" in error else 1
     stage, region = error["stage"], error["region"]
     location = {"seq": error["seq"], "stage": stage, "region": region,
                 "addr": error["addr"], "plan_match": False}
     if stage in ("B1", "D2") and region in plan["b1"]:
         part = plan["b1"][region]
         base, size = number(part["base"]), number(part["size"])
-        if base <= address < base + size:
+        if base <= address and address + length <= base + size:
             location.update(plan_match=True, offset=hex(address - base))
             if region == "image":
                 for landing in plan["landings"]:
-                    start, length = number(landing["base"]), number(landing["size"])
-                    if start <= address < start + length:
+                    start, landing_size = (number(landing["base"]),
+                                           number(landing["size"]))
+                    if start <= address and address + length <= start + landing_size:
                         location["landing_cpu"] = number(landing["cpu"])
                         break
     elif stage in ("B2", "D2") and region == "gate":
         base = number(plan["gate"]["base"])
-        if address in (base, base + 8):
+        if address in (base, base + 8) and address + length <= base + 16:
             location.update(plan_match=True, word=(address - base) // 8)
     elif stage in ("B2", "A2", "D2") and region == "ist6":
         for cpu, item in enumerate(plan["ist_qwords"]):
-            if address == number(item) and (stage != "A2" or
+            if address == number(item) and length <= 8 and (stage != "A2" or
                                             cpu == number(plan["selected_cpu"])):
                 location.update(plan_match=True, cpu=cpu)
                 break
     elif stage == "B2" and region == "context":
         for index, item in enumerate(plan["context_qwords"]):
-            if address == number(item):
+            if address == number(item) and length <= 8:
                 location.update(plan_match=True,
                                 context=("rbp", "rip", "rsp", "dr7")[index])
                 break
     elif stage == "A2" and region == "armed":
-        if address == number(plan["journal_qwords"][4]):
+        if address == number(plan["journal_qwords"][4]) and length <= 8:
             location["plan_match"] = True
     elif stage == "D2" and region == "scratch" and "scratch" in plan:
         scratch = plan["scratch"]
         base, size = number(scratch["base"]), number(scratch["size"])
-        if base <= address < base + size:
+        if base <= address and address + length <= base + size:
             location.update(plan_match=True, offset=hex(address - base))
     return location
 
@@ -278,6 +280,11 @@ def compare_log(plan, raw, manifest=None, geometry=None):
     write_error_locations = [locate_write_error(plan, error)
                              for error in classification["capture_errors"]
                              if error["operation"] == "write"]
+    write_attempt_locations = [locate_write_error(plan, attempt)
+                               for attempt in classification["write_attempts"]]
+    for location, attempt in zip(write_attempt_locations,
+                                 classification["write_attempts"]):
+        location.update(bytes=attempt["bytes"], result=attempt["result"])
     mismatches = []
     comparison_errors = []
     compared_fields = []
@@ -311,7 +318,9 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         status = "comparison_error"
     elif mismatches:
         status = "mismatch"
-    elif classification["rejected"] or classification["capture_errors"] or classification["causal_order_conflict"]:
+    elif (classification["rejected"] or classification["capture_errors"] or
+          classification["open_write_attempts"] or
+          classification["causal_order_conflict"]):
         status = "classifier_rejected_or_capture_error"
     elif not compared_fields:
         status = "no_comparable_records"
@@ -328,6 +337,9 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         "classifier_rejected": classification["rejected"],
         "capture_errors": classification["capture_errors"],
         "write_error_locations": write_error_locations,
+        "write_attempt_locations": write_attempt_locations,
+        "open_write_locations": [item for item in write_attempt_locations
+                                 if item["result"] == "open"],
         "causal_order_conflict": classification["causal_order_conflict"],
         "transport": classification["transport"],
         "integrity": classification["integrity"],

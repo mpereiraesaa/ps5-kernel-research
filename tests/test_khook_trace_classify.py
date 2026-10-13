@@ -125,6 +125,29 @@ def classify_records(*payloads):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_write_brackets_expose_open_callback_without_claiming_execution(self):
+        prefix = f"1\t1000\tMARK\t{record('B0')}\n"
+        begin = ("2\t2000\tMARK\tKH2W stage=B1 cpu=3 region=image "
+                 "addr=0x100 bytes=1280 state=begin\n")
+        open_result = classify((prefix + begin).encode())
+        self.assertEqual(open_result["observed"], {"B0": 1})
+        self.assertEqual(open_result["first_missing_direct_evidence"], "B1")
+        self.assertEqual(open_result["open_write_attempts"][0]["addr"], "0x100")
+        self.assertEqual(open_result["last_write_attempt"]["result"], "open")
+        done = ("3\t3000\tMARK\tKH2W stage=B1 cpu=3 region=image "
+                "addr=0x100 bytes=1280 state=done\n")
+        completed = classify((prefix + begin + done).encode())
+        self.assertEqual(completed["open_write_attempts"], [])
+        self.assertEqual(completed["last_write_attempt"]["result"], "done")
+        failed = classify((prefix + begin +
+                           "3\t3000\tERR\tKH2E stage=B1 cpu=3 "
+                           "operation=write region=image addr=0x100\n").encode())
+        self.assertEqual(failed["write_attempts"][0]["result"], "error")
+        self.assertEqual(failed["open_write_attempts"], [])
+        orphan = classify((prefix + done).encode())
+        self.assertIn("KH2W done without begin",
+                      [item["reason"] for item in orphan["rejected"]])
+
     def test_write_errors_are_retained_without_forging_milestones(self):
         raw = (f"1\t1000\tMARK\t{record('B0')}\n"
                "2\t2000\tERR\tKH2E stage=B1 cpu=3 operation=write "

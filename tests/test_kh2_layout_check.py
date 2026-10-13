@@ -121,6 +121,24 @@ class LayoutCheck(unittest.TestCase):
              "addr": plan["ist_qwords"][7], "plan_match": True, "cpu": 7},
         ])
 
+    def test_open_write_bracket_maps_landing_without_claiming_b1(self):
+        plan = candidate()
+        raw = planned_log(plan, through="B1").splitlines(keepends=True)[0]
+        raw += ("2\t2000\tMARK\tKH2W stage=B1 cpu=0 region=image "
+                "addr=0x1ba00 bytes=1280 state=begin\n").encode()
+        result = compare_log(plan, raw)
+        self.assertEqual(result["comparison_status"],
+                         "classifier_rejected_or_capture_error")
+        self.assertEqual(result["open_write_locations"], [
+            {"seq": 2, "stage": "B1", "region": "image", "addr": "0x1ba00",
+             "plan_match": True, "offset": "0x500", "landing_cpu": 2,
+             "bytes": 1280, "result": "open"},
+        ])
+        self.assertIn("B1.image", result["missing_layout_records"])
+        crossing = {"seq": 3, "stage": "B1", "region": "image",
+                    "addr": "0x1b9f0", "bytes": 32}
+        self.assertNotIn("landing_cpu", locate_write_error(plan, crossing))
+
     def test_gate_and_context_write_error_addresses_use_plan_fields(self):
         plan = candidate()
         base = {"seq": 5, "stage": "B2", "region": "gate", "addr": "0x2e88310"}
