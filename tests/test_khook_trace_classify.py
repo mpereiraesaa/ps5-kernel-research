@@ -1,5 +1,8 @@
 import hashlib
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -100,7 +103,7 @@ def record(stage, **overrides):
     return "KH2 " + " ".join(f"{key}={value}" for key, value in fields.items())
 
 
-def run(*stages, clean=False, gaps=None):
+def run(*stages, clean=False, gaps=None, f2_target=None):
     payloads = []
     for stage in stages:
         if stage == "B1":
@@ -115,7 +118,7 @@ def run(*stages, clean=False, gaps=None):
            (f"BYE seq={len(payloads)} reason=complete\n" if clean else "")).encode()
     manifest = {"clean": clean, "gaps": [] if gaps is None else gaps,
                 "sha256": hashlib.sha256(raw).hexdigest()}
-    return classify(raw, manifest)
+    return classify(raw, manifest, f2_target)
 
 
 def classify_records(*payloads):
@@ -125,6 +128,46 @@ def classify_records(*payloads):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_cli_f2_entry_base_is_added_and_restricted_to_khook(self):
+        payloads = (record("B0"), record("B2"),
+                    record("F2", rip="0x3140a0"))
+        raw = "".join(f"{i}\t{i * 1000}\tMARK\t{payload}\n"
+                      for i, payload in enumerate(payloads, 1))
+        script = Path(__file__).resolve().parents[1] / "tools" / "khook_trace_classify.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log = Path(temp_dir) / "trace.log"
+            log.write_text(raw)
+            command = [sys.executable, str(script), str(log),
+                       "--f2-entry-ktext-base", "0x1000"]
+            completed = subprocess.run(command, capture_output=True, text=True,
+                                       check=True)
+            comparison = json.loads(completed.stdout)["f2_entry_rip_comparison"]
+            self.assertEqual(comparison["expected"], "0x3140a0")
+            self.assertEqual(comparison["status"], "equal")
+            legacy = subprocess.run(command + ["--mode", "kstuff-fullchain"],
+                                    capture_output=True, text=True)
+            self.assertEqual(legacy.returncode, 2)
+            self.assertIn("requires --mode khook", legacy.stderr)
+
+    def test_optional_f2_entry_comparison_preserves_frame_evidence(self):
+        equal = run("B0", "B2", "F2", f2_target=0x4321)
+        self.assertIn("F2", equal["observed"])
+        self.assertEqual(equal["f2_entry_rip_comparison"]["status"], "equal")
+        different = run("B0", "B2", "F2", f2_target=0x3130a0)
+        self.assertIn("F2", different["observed"])
+        self.assertEqual(different["f2_entry_rip_comparison"], {
+            "expected": "0x3130a0", "observed": "0x4321",
+            "status": "different",
+            "scope": "address equality only; DR0/DR7 and syscall dispatch unverified",
+        })
+        missing = run("B0", "B2", f2_target=0x4321)
+        self.assertEqual(missing["f2_entry_rip_comparison"]["status"],
+                         "no_accepted_f2")
+        self.assertIsNone(missing["f2_entry_rip_comparison"]["observed"])
+        self.assertNotIn("f2_entry_rip_comparison", run("B0", "B2", "F2"))
+        with self.assertRaisesRegex(ValueError, "outside 64-bit"):
+            run("B0", f2_target=-1)
+
     def test_read_brackets_expose_unresolved_callback_without_claiming_b0(self):
         begin = ("1\t1000\tMARK\tKH2R stage=B0 cpu=3 region=gate "
                  "addr=0x500 bytes=16 state=begin\n")

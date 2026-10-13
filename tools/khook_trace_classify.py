@@ -21,6 +21,7 @@ CONTROL_STAGES = ("B0", "B1", "R0", "B2", "R1", "Q1", "A2",
                   "R2", "Q2", "D2")
 HANDOFF_STAGES = ("R0", "R1", "Q1", "R2", "Q2")
 FRAME_BYTES = 0x28
+GETUID_ENTRY_1202 = 0x3130A0
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
     "A1P": "journal", "A1R": "journal", "A2": "user",
@@ -320,7 +321,10 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
     return None, None
 
 
-def classify(raw: bytes, manifest: dict | None = None) -> dict:
+def classify(raw: bytes, manifest: dict | None = None,
+             f2_target: int | None = None) -> dict:
+    if f2_target is not None and not 0 <= f2_target <= 0xffffffffffffffff:
+        raise ValueError("F2 target outside 64-bit address range")
     seen = {}
     rejected = []
     capture_errors = []
@@ -335,6 +339,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     frame_preseed = None
     journal_preseed = None
     state = {}
+    f2_rip = None
     for line in raw.decode("utf-8", errors="replace").splitlines():
         read_match = READ_BRACKET.match(line)
         if read_match:
@@ -547,6 +552,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                 seen[stage] = int(seq)
         else:
             seen[stage] = int(seq)
+            if stage == "F2":
+                f2_rip = int(fields["rip"], 16)
 
     ordered = sorted(seen, key=seen.get)
     # Observer reports can arrive later than the corresponding kernel write.
@@ -581,7 +588,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         interpretation = ("earliest missing direct evidence is not proof "
                           "that the stage did not execute")
 
-    return {
+    result = {
         "observed": seen,
         "b1_parts": b1_parts,
         "b1_missing_parts": [part for part in B1_PARTS if part not in b1_parts],
@@ -610,6 +617,15 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         "transport": transport,
         "interpretation": interpretation,
     }
+    if f2_target is not None:
+        result["f2_entry_rip_comparison"] = {
+            "expected": f"0x{f2_target:x}",
+            "observed": None if f2_rip is None else f"0x{f2_rip:x}",
+            "status": ("no_accepted_f2" if f2_rip is None else
+                       "equal" if f2_rip == f2_target else "different"),
+            "scope": "address equality only; DR0/DR7 and syscall dispatch unverified",
+        }
+    return result
 
 
 def _transport(raw: bytes | None, manifest: dict | None) -> str:
@@ -914,10 +930,15 @@ def main() -> None:
     parser.add_argument("--pc-same-run", action="store_true",
                         help="assert PC log and elfldr stdout belong to the same run")
     parser.add_argument("--manifest", type=Path, help="matching ps5logd .json file")
+    parser.add_argument("--f2-entry-ktext-base", type=lambda value: int(value, 0),
+                        help="same-run FW 12.02 text base; compare accepted F2 RIP "
+                             "with base+0x3130a0 without asserting delivery")
     args = parser.parse_args()
     raw = args.log.read_bytes()
     manifest = json.loads(args.manifest.read_text()) if args.manifest else None
     if args.mode == "kstuff-fullchain":
+        if args.f2_entry_ktext_base is not None:
+            parser.error("F2 entry comparison requires --mode khook")
         result = classify_kstuff_fullchain(
             raw, args.audit.read_bytes() if args.audit else None,
             args.pc_log.read_bytes() if args.pc_log else None, manifest,
@@ -925,7 +946,13 @@ def main() -> None:
     else:
         if args.audit or args.pc_log or args.audit_same_attempt or args.pc_same_run:
             parser.error("fullchain-only options require --mode kstuff-fullchain")
-        result = classify(raw, manifest)
+        f2_target = None
+        if args.f2_entry_ktext_base is not None:
+            if not 0 <= args.f2_entry_ktext_base <= (
+                    0xffffffffffffffff - GETUID_ENTRY_1202):
+                parser.error("F2 entry text base outside 64-bit address range")
+            f2_target = args.f2_entry_ktext_base + GETUID_ENTRY_1202
+        result = classify(raw, manifest, f2_target)
     print(json.dumps(result, indent=2))
 
 
