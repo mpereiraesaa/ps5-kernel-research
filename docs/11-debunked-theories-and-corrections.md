@@ -36,8 +36,22 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 20 | The #DB chain can run on #GP with an otherwise identical entry frame | **WRONG FRAME ASSUMPTION** — #GP supplies an error code; #DB does not. No 12.02 #GP chain or return has been validated. | [public-consensus] [AMD64 APM Vol. 2 §§8.2.2, 8.2.14](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2); [verified-in-tree] `docs/16-byepervisor-12-02-port.md:117-120` |
 | 21 | Successful all-CPU IST4/gate setup and Kstuff offsets imply the minimal `INT1` → `justreturn` probe will return | **FALSIFIED AS A RUN PREDICTION** — the setup-only build restored cleanly, but the live one-shot closed without a return marker and left gate/IST4 patched. The failing instruction and cause remain unknown. | [verified-on-console] `16` live one-shot run |
 | 22 | An immediate CPL0→CPL3 `iretq` frame is an adequate first khook probe because the architecture permits it | **UNSUPPORTED EXPERIMENT DESIGN** — the reviewed working implementations use staged kernel continuation before returning to user mode; our direct frame had no such precedent, and the console power-off did not identify the failing step. Architectural legality did not establish this 12.02 path. | [verified-on-console] `16` pretrigger handshake; [public-consensus] Kstuff `kelf.asm`, Byepervisor `khook.c` |
+| 23 | Kstuff's 12.02 `cpu_switch` entry is a verified replacement for Byepervisor's `DBREG_RESUME`, and the 13.60 gadget starts by loading DR0 from `[rdi+0x78]` | **WRONG ENTRY CONTRACT** — `cpu_switch` is only a same-region anchor. In the 13.60 donor, `DBREG_RESUME` starts at `mov dr0,rax`; the preceding RAX load is skipped, because the arm chain supplies DR0 in RAX. The proposed 12.02 address remains a byte-unverified candidate. | [verified-on-dump] 13.60 `kernel-text.bin+0x2529d4..0x252a32`; [public-consensus] Byepervisor `khook.c`; [inference] `16` cross-dump candidate |
 
 ## Detail on the load-bearing ones
+
+### #23 — Region correspondence did not establish a gadget [inference]
+
+The old gadget table in `16` marked `DBREG_RESUME` covered by
+`cpu_switch`. They are not interchangeable entry points. The 13.60
+donor's `+0x2529d8` is three bytes after the load from `[rdi+0x78]`;
+the first executed instruction writes the RAX supplied by the arm chain
+to DR0. It then reads other debug registers and resumes a context,
+including a stack pivot. This correction changes the 12.02 port
+requirement: identify the *exact* entry and complete side effects from
+12.02 bytes before placing it in a chain. A matching 12.02 disassembly
+would support the candidate; a different instruction boundary or
+context layout would falsify it. No console run tested this candidate.
 
 ### #22 — Architectural legality was mistaken for an adequate probe [inference]
 

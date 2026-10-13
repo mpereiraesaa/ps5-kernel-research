@@ -89,7 +89,7 @@ match is missing.
 
 | Their gadget | Semantics | Our 12.02 coverage |
 |---|---|---|
-| `DBREG_RESUME` | resumectx tail (loads DR0-7) | ✓ **`cpu_switch`** — our table's "function whose tail restores DR0/1/2/3/6/7" |
+| `DBREG_RESUME` | resumectx tail (loads DR0–3/6/7, then restores a context and pivots) | **candidate only** — `cpu_switch` anchors the same code region but is not the gadget entry; see the cross-dump audit and chain contract below |
 | `REP_MOVSB` | rep movsb; ret | ✓ close — `rep_movsb_pop_rbp_ret` (adapts with a frame qword) |
 | `RET_TRAMP` | ret | ✓ `nop_ret` |
 | `IRETQ` | iretq | ✓ `doreti_iret` / `pop_all_iret` family |
@@ -437,7 +437,7 @@ sit at these local offsets from the anchors:
 | Byepervisor gadget | 13.60 text offset | Local anchor relation | 12.02 candidate | Assessment |
 |---|---:|---|---:|---|
 | `PIVOT_ADD_RSP28_RET` | `0x25213e` | `cpu_switch - 0x22`; 13.60 dump bytes at `kernel-text.bin+0x25213e` decode as `add rsp,0x28; rep ret` | `0x2ac2de` | [inference] low-confidence adjacency candidate; the gadget is in the preceding code block, so its distance from `cpu_switch` may change |
-| `DBREG_RESUME` | `0x2529d8` | `mov_cr3_rax_mov_ds + 0xe1`; 13.60 dump bytes at `kernel-text.bin+0x2529d8` decode as the DR-register restore tail beginning with `mov rax,[rdi+0x78]; mov dr0,rax` | `0x2acb78` | [inference] strong same-region candidate; 12.02 bytes must confirm the tail and entry contract |
+| `DBREG_RESUME` | `0x2529d8` | `mov_cr3_rax_mov_ds + 0xe1`; 13.60 dump bytes at `kernel-text.bin+0x2529d8` begin with `mov dr0,rax`. The preceding `mov rax,[rdi+0x78]` is **outside** the gadget entry. The chain supplies DR0 in RAX. | `0x2acb78` | [inference] strong same-region candidate; 12.02 bytes must confirm the tail and entry contract |
 | `IRETQ` | `0x257b3d` | exact match to Kstuff `doreti_iret` | `0x2b362d` | [verified-in-tree] address present in `offsets/12_02.h:12`; 12.02 instruction bytes and frame compatibility remain unverified |
 
 The first two are candidate addresses only. Their falsifier is a 12.02
@@ -1116,6 +1116,130 @@ owner emphasized that Byepervisor's user return occurs **only after**
 its staged chain; this minimal two-gadget run is deferred pending a
 reviewed context-preserving chain or independent evidence that its
 shorter path is safe.
+
+### Full-chain contract before another #DB trigger (offline review)
+
+[public-consensus] Byepervisor's [`kh_install` and `kh_trigger`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/main/khook.c)
+use **two different #DB deliveries**. The first is a user-thread,
+TF/NOP arm pass. The same gate pivot lands on `arm_chain`, which sets
+DR0/DR7 through the `resumectx` tail, changes that CPU's IST pointer to
+`disp_chain`, and only then executes a staged `iretq` back to the
+triggering user thread. The later kernel breakpoint lands on
+`disp_chain`: the CPU writes its five-word frame at `F−0x28`, the
+`add rsp,0x28; ret` gate target skips the frame, and the dispatch stub
+pivots to `big_chain`. That chain saves selected registers into its own
+later restore slots, runs the handler, changes the saved return RIP or
+registers as requested, disarms DR7 in one-shot mode, and pivots back
+to an `iretq` qword immediately before the **same hardware frame**.
+An arm-pass success would not validate the later breakpoint pass.
+
+The reference's register preservation is **selective**, not an all-GPR
+snapshot: [public-consensus] `khook.c` saves/restores RDI, RSI, and RDX
+in `big_chain`; other gadgets also change RAX and RCX, and the caller's
+contract must permit those changes. [inference] A benign 12.02 return
+probe needs an explicit live-register contract, or a full trapframe
+capture/restore, before it can claim to preserve its caller. A
+post-return comparison of the agreed registers with their pretrigger
+values would falsify a claimed preservation contract. A console-alive
+marker alone would not prove it.
+
+| Stage required for a faithful one-shot dispatch | 12.02 evidence | Blocking question |
+|---|---|---|
+| #DB gate and per-CPU frame at `F−0x28` | [verified-on-console] changed gate/IST4 values were readable and restorable in setup-only runs; live delivery was not observed | Did #DB actually enter on a prepared CPU's IST4 stack? |
+| Skip the hardware frame and `ret` to the dispatch stub | [inference] `ktext+0x2ac2de` from a 13.60 adjacency; 12.02 bytes unknown | Is the complete `add rsp,0x28; ret` sequence present, with the same stack effect? |
+| Pivot to an isolated, per-CPU big chain | [public-consensus] 13.60 `POP_RSP`/dispatch layout in `khook.c`; no byte-confirmed 12.02 `pop rsp; ret` | Which 12.02 instruction implements this pivot without clobbering the frame? |
+| Save the live registers that later gadgets overwrite | [public-consensus] reference uses `mov rax,rsi/rdi`, stores through RCX, and self-modified restore slots | What are the 12.02 byte-confirmed store/pop/move gadgets and the exact register liveness contract? |
+| Perform a benign kernel continuation, then restore registers | [public-consensus] reference `big_chain` places handler work between save and restore; the earlier two-gadget proposal omitted this stage | What harmless operation gives an observable marker **after** dispatch without requiring console logging from the exception path? |
+| Return through the original hardware frame | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:12-14` names `doreti_iret`; [inference] frame placement and 12.02 instruction bytes remain unconfirmed | Does RSP point at the captured frame before `iretq`, and does the return restore the intended context? |
+| Restore gate, IST4, and scratch after user return | [verified-on-console] setup-only restoration passed; live post-return restoration never ran | Did the return marker arrive, and did the read-back match the saved state? |
+
+The narrowest **full-dispatch** candidate uses one userland `ICEBP`
+(`#DB`) and no hardware breakpoint. [inference] This removes the
+reference's DR7 arm pass from *this* diagnostic while retaining its
+dispatch, live-register save, benign handler, restore, and hardware-frame
+return. It would establish that dispatch class only; it would say
+nothing about arming a kernel breakpoint or the S3 trigger.
+
+The proposed stack contract, with one independent scratch area per
+CPU, is:
+
+1. `F` is the staged IST4 top. The CPU writes the five-word #DB frame
+   at `F−0x28`; the gate target skips to `F` and returns into a
+   dispatch `pop rsp; ret` at `F`, whose next qword selects that CPU's
+   big chain. [inference] A different frame size or pivot stack effect
+   would falsify this layout.
+2. The big chain uses the reference's RDI/RSI/RDX save sequence, writing
+   the live values into its later restore-immediate slots. Its benign
+   handler writes one fixed marker to a separate scratch qword. An
+   independent observer can read the hardware frame and marker even
+   if userland never reaches the return marker. [inference] A changed
+   frame with no handler marker would localize failure to dispatch or
+   earlier big-chain steps; a handler marker with no return marker
+   would localize it to restore/pivot/`iretq` or later user execution.
+3. The chain pops the saved RDI/RSI/RDX, then `pop rsp` selects
+   `F−0x30`, containing one `iretq` gadget. That `ret` leaves RSP at
+   `F−0x28`, so `iretq` consumes the CPU's original frame. The
+   trigger wrapper must declare every other changed caller-saved
+   register (at least RAX/RCX/R8 for this chain) as clobbered; the
+   existing `justreturn_allcpu.c` inline `ICEBP` wrapper does not
+   declare those clobbers and cannot be reused unchanged. [inference]
+   A mismatch in the saved registers, frame, or post-return kernel
+   state would falsify the proposed preservation/return contract.
+
+This is a **design**, not a ready ELF. The required `add rsp,0x28; ret`,
+`pop rsp; ret`, save/store, marker-store, and restore-pop entries still
+need exact 12.02 addresses and byte-level semantics. All-CPU stack
+preparation is needed while the shared gate is changed, even though the
+triggering thread is pinned. The next artifact can be a staged-chain
+builder only after those entries are supported; using guessed offsets
+would repeat the failed live-probe pattern in `11` #21–#22.
+
+[verified-on-dump] The 13.60 donor resolves a subtle arm-chain entry
+contract: its `DBREG_RESUME` address `+0x2529d8` starts at `mov dr0,rax`.
+The preceding load from `[rdi+0x78]` is at `+0x2529d4` and is skipped;
+the reference arm chain deliberately pops its hook address into RAX.
+The tail subsequently loads DR1/2/3/6/7 and restores R15–R12, RBP,
+RSP, and RBX from the context before returning. [inference] The 12.02
+candidate `+0x2acb78` cannot be used merely because `cpu_switch` has
+the expected region offset; a 12.02 instruction read must confirm the
+entry and the full context/RSP side effects. A differing sequence or
+layout would falsify that candidate.
+
+[verified-in-tree] A nearest-anchor scan of Kstuff's
+`r0gdb/prosper0gdb/offsets/13_60.h:12-76` against Byepervisor's
+`include/offsets/13_60.h:26-49` places `POP_RSP` at least `0x8de8`
+bytes from its nearest named text offset; `MOV_RAX_RSI` is at least
+`0xe89b` away and `MOV_RAX_RDI`
+at least `0x1bd66` away. [inference] These gaps are too broad to turn
+the earlier local `cpu_switch` displacement into a defensible 12.02
+address for the dispatch/save gadgets. The missing gadget list above
+remains missing; a local 12.02 disassembly or independent same-function
+anchor would falsify this *lack of derivation* for any one gadget.
+
+[verified-on-dump] The 13.60 Kstuff `push_pop_all_iret` target is a
+jump thunk into a trap entry that reserves `0xe8` bytes, saves GPRs,
+reads state MSRs, calls the kernel trap routine, and jumps into the
+return path. Its `pop_all_iret` counterpart loads GPRs from a complete
+trapframe, conditionally swaps GS for a user return, then executes
+`iretq`. [public-consensus] Kstuff's
+[`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm)
+builds that full frame and its GSBASE/continuation handoff; its
+[`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h)
+names the 12.02 entries. [inference] Neither entry substitutes for
+Byepervisor's isolated save/restore gadgets: `push_pop_all_iret` calls
+the real trap handler, while `pop_all_iret` expects a populated full
+frame. A 12.02 disassembly and an independently justified full-frame
+layout would be needed to use them in a new chain.
+
+**Next construction gate:** derive and byte-check the 12.02 dispatch
+pivot, stack pivot, and save/restore gadget sequences, then specify the
+exact register and hardware-frame images for the chosen trigger. Until
+those contracts are reviewable, the two-gadget ELF remains deferred and
+there is no full-chain ELF to send. The shared #DB gate still presents
+the observed all-CPU risk even if only one thread is pinned; any new
+trigger needs prepared stacks for every CPU that can take #DB, a
+reviewed expected marker/observer plan, fresh owner approval, and the
+hard-power-cycle plus read-only baseline recovery plan.
 
 ### Frame staging isolation run
 
