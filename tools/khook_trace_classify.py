@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Classify direct khook milestone records without inferring missing execution.
+"""Classify raw khook milestones without inferring missing execution.
 
-The input is a ps5log/1 run file. KH1 records are emitted only after a
-separate observer has validated the named frame/journal evidence; this tool
-checks their order and transport integrity, not the underlying kernel bytes.
+The input is a ps5log/1 run file. Proposed KH2 records carry the observer's
+raw frame, journal, and readback fields. This tool checks internal consistency,
+order, and transport integrity, not the underlying kernel bytes.
 """
 
 import argparse
@@ -13,30 +13,171 @@ import re
 from pathlib import Path
 
 
-STAGES = ("B0", "B1", "B2", "F1", "A1", "A2", "F2", "D1", "D2")
+STAGES = ("B0", "B1", "B2", "F1", "A1P", "A1R", "A2", "F2",
+          "D1S", "D1O", "D2")
+B1_PARTS = ("arm", "dispatch", "handler", "frame", "journal")
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
-    "A1": "journal", "A2": "user", "F2": "frame", "D1": "journal",
-    "D2": "user",
+    "A1P": "journal", "A1R": "journal", "A2": "user",
+    "F2": "frame", "D1S": "journal", "D1O": "journal", "D2": "user",
 }
-RECORD = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH1 stage=(\w+) source=(\w+) verified=1(?:\s|$)")
+RECORD = re.compile(r"^(\d+)\t(\d+)\tMARK\tKH2\s+(.+)$")
+HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
+SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
+
+
+def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
+                ist_count: int | None) -> tuple[str | None, int | None]:
+    def number(key: str) -> int:
+        value = fields.get(key, "")
+        if not HEX.fullmatch(value):
+            raise ValueError(f"missing or invalid {key}")
+        return int(value, 16)
+
+    def sha(key: str) -> str:
+        value = fields.get(key, "")
+        if not SHA.fullmatch(value):
+            raise ValueError(f"missing or invalid {key}")
+        return value.lower()
+
+    try:
+        cpu = int(fields.get("cpu", ""))
+        if not 0 <= cpu < 16:
+            raise ValueError("invalid CPU")
+        if baseline and cpu != baseline["cpu"]:
+            raise ValueError("CPU differs from B0")
+        if fields.get("verified") != "1":
+            raise ValueError("verified=1 absent")
+        if stage == "B0":
+            if fields.get("fw") != "12.02":
+                raise ValueError("wrong or missing firmware")
+            sha("build_sha")
+            sha("scratch_sha")
+            number("gate_lo")
+            number("gate_hi")
+            number("ist6")
+            if number("f1_slot") == number("f2_slot"):
+                raise ValueError("frame slots are identical")
+        elif stage == "B1":
+            if fields.get("part") not in B1_PARTS:
+                raise ValueError("missing or unknown image part")
+            number("addr")
+            if int(fields.get("bytes", "0")) <= 0:
+                raise ValueError("image part has no bytes")
+            if sha("image_sha") != sha("readback_sha"):
+                raise ValueError("image/readback hash mismatch")
+        elif stage == "B2":
+            if (number("gate_lo") != number("expected_lo") or
+                    number("gate_hi") != number("expected_hi")):
+                raise ValueError("gate readback differs")
+            if baseline and (number("gate_lo"), number("gate_hi")) == (
+                    baseline["gate_lo"], baseline["gate_hi"]):
+                raise ValueError("gate equals native B0 baseline")
+            count = int(fields.get("ist_count", "0"))
+            if not 1 <= count <= 16 or int(fields.get("ist_matched", "-1")) != count:
+                raise ValueError("IST readback count differs")
+            if sha("ist_image_sha") != sha("ist_readback_sha"):
+                raise ValueError("IST readback hash mismatch")
+            return None, count
+        elif stage in ("F1", "F2"):
+            if baseline is None:
+                raise ValueError("B0 baseline missing for frame address")
+            expected_slot = baseline["f1_slot" if stage == "F1" else "f2_slot"]
+            if number("slot") != expected_slot:
+                raise ValueError("frame slot differs from B0")
+            actual = [number(key) for key in ("rip", "cs", "flags", "rsp", "ss")]
+            preseed = [number(f"can{i}") for i in range(5)]
+            if actual == preseed:
+                raise ValueError("frame canary unchanged")
+        elif stage in ("A1P", "A1R", "D1S", "D1O"):
+            number("addr")
+            before, after, expected = (number(key) for key in
+                                       ("before", "after", "expected"))
+            if before == after or after != expected:
+                raise ValueError("journal transition not verified")
+        elif stage == "A2":
+            if (number("ist_actual") != number("ist_expected") or
+                    number("armed_actual") != number("armed_expected")):
+                raise ValueError("arm-return readback differs")
+            if number("armed_actual") == 0:
+                raise ValueError("arm-return state is zero")
+        elif stage == "D2":
+            if fields.get("returned") != "1" or fields.get("gate_restored") != "1" or (
+                    fields.get("scratch_restored") != "1"):
+                raise ValueError("return or restoration absent")
+            restored = int(fields.get("ist_restored", "0"))
+            if restored < 1 or (ist_count is not None and restored != ist_count):
+                raise ValueError("IST restoration count differs")
+            if baseline and ((number("gate_lo"), number("gate_hi"),
+                              number("ist6"), sha("scratch_readback_sha")) !=
+                             (baseline["gate_lo"], baseline["gate_hi"],
+                              baseline["ist6"], baseline["scratch_sha"])):
+                raise ValueError("restoration readback differs from B0")
+    except (TypeError, ValueError) as error:
+        return str(error), None
+    return None, None
 
 
 def classify(raw: bytes, manifest: dict | None = None) -> dict:
     seen = {}
     rejected = []
+    b1_parts = {}
+    b1_regions = []
+    baseline = None
+    ist_count = None
+    journal_addrs = set()
     for line in raw.decode("utf-8", errors="replace").splitlines():
+        if "\tMARK\tKH1 " in line:
+            rejected.append({"reason": "KH1 lacks required raw evidence"})
+            continue
         match = RECORD.match(line)
         if not match:
             continue
-        seq, _, stage, source = match.groups()
+        seq, _, payload = match.groups()
+        fields = dict(re.findall(r"\b(\w+)=([^\s]+)", payload))
+        stage, source = fields.get("stage"), fields.get("source")
         if source != SOURCES.get(stage):
             rejected.append({"seq": int(seq), "stage": stage, "reason": "wrong source"})
             continue
-        if stage in seen:
+        if stage in seen or (stage == "B1" and fields.get("part") in b1_parts):
             rejected.append({"seq": int(seq), "stage": stage, "reason": "duplicate"})
             continue
-        seen[stage] = int(seq)
+        reason, count = _raw_fields(stage, fields, baseline, ist_count)
+        if reason:
+            rejected.append({"seq": int(seq), "stage": stage, "reason": reason})
+            continue
+        if stage == "B1":
+            start = int(fields["addr"], 16)
+            end = start + int(fields["bytes"])
+            if any(start < old_end and old_start < end for old_start, old_end
+                   in b1_regions):
+                rejected.append({"seq": int(seq), "stage": stage,
+                                 "reason": "image parts overlap"})
+                continue
+            b1_regions.append((start, end))
+        if stage in ("A1P", "A1R", "D1S", "D1O"):
+            address = int(fields["addr"], 16)
+            if address in journal_addrs:
+                rejected.append({"seq": int(seq), "stage": stage,
+                                 "reason": "journal address reused"})
+                continue
+            journal_addrs.add(address)
+        if stage == "B0":
+            baseline = {"cpu": int(fields["cpu"]),
+                        "gate_lo": int(fields["gate_lo"], 16),
+                        "gate_hi": int(fields["gate_hi"], 16),
+                        "ist6": int(fields["ist6"], 16),
+                        "scratch_sha": fields["scratch_sha"].lower(),
+                        "f1_slot": int(fields["f1_slot"], 16),
+                        "f2_slot": int(fields["f2_slot"], 16)}
+        if stage == "B2":
+            ist_count = count
+        if stage == "B1":
+            b1_parts[fields["part"]] = int(seq)
+            if len(b1_parts) == len(B1_PARTS):
+                seen[stage] = int(seq)
+        else:
+            seen[stage] = int(seq)
 
     ordered = sorted(seen, key=seen.get)
     # Compare the two orderings directly; a skipped stage is a coverage gap,
@@ -65,6 +206,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
 
     return {
         "observed": seen,
+        "b1_parts": b1_parts,
+        "b1_missing_parts": [part for part in B1_PARTS if part not in b1_parts],
         "first_missing_direct_evidence": first_missing,
         "later_direct_evidence": later,
         "out_of_order": out_of_order,

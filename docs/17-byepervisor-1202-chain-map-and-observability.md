@@ -141,23 +141,37 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | B1 image staged | User-mode write/readback of each disjoint arm, dispatch, handler, and frame region; log their sizes and independent checksums. | Staging completed; no #DB implication. |
 | B2 gate armed | User-mode gate/IST readback plus a final pretrigger `ps5log/1` record. | Patch was observed before the deliberate first trap; does not prove the trap ran. |
 | F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. A **pre-armed** independent observer captures raw RIP/CS/RFLAGS/RSP/SS without loading a new ELF after a stall. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
-| A1 arm continuation | A first in-chain kernel-data marker **after** a verified pivot/store and a second after `DBREG_RESUME` continuation, if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
+| A1P / A1R arm continuation | Separate in-chain kernel-data markers **after** a verified pivot/store (A1P) and after `DBREG_RESUME` continuation (A1R), if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
 | A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the dispatch IST pointer and journal. | First return completed and dispatch stack was selected. |
 | F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. The pre-armed observer samples independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
-| D1 dispatch/handler | In-chain marker only **after** the required interrupted registers are saved and a 12.02 liveness review proves the marker's RAX/RCX clobbers harmless; later marker after the test oracle store and before the resume tail. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
+| D1S / D1O dispatch/handler | Separate in-chain markers **after** the required interrupted registers are saved (D1S) and after the test oracle store but before the resume tail (D1O). A 12.02 liveness review must prove the marker's RAX/RCX clobbers harmless. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
 | H1 AP phase | Separate `entered`, selected-VMCB count, write count, verify count, and `done` evidence, following the 11.60 read-before-write validation pattern. | Only a full expected set and readback can support a 12.02 AP claim. |
 
-**Proposed host log contract, not yet emitted by a 12.02 chain.** After
-independently checking each observation, a user-mode observer would send a
-`ps5log/1` `MARK` record with text `KH1 stage=F1 source=frame verified=1`
-(likewise `B0`, `B1`, `B2`, `A1`, `A2`, `F2`, `D1`, `D2`). `B*`, `A2`, and
-`D2` use `source=user`; `F*` uses `source=frame`; `A1`/`D1` use
-`source=journal`. The source tag states where the observer obtained the
-evidence; `verified=1` must follow raw readback and comparison against the
-recorded preseed, not mere receipt of a value. Preserve the raw values,
-canaries, layout version, and build hash alongside these records. The AP
-phase has a separate evidence set and is not inferred from `D2`.
+**Proposed KH2 host log contract, not yet emitted by a 12.02 chain.** A
+user-mode observer sends `ps5log/1` `MARK` lines beginning `KH2 stage=…
+source=… cpu=… verified=1`. The source tag names where it read the evidence:
+`B*`, `A2`, and `D2` use `user`; `F*` uses `frame`; `A1P`, `A1R`, `D1S`, and
+`D1O` use `journal`. `verified=1` alone is never accepted; each stage carries
+the raw values below. All addresses and 64-bit words use `0x` hex, all
+SHA-256 values use 64 hex digits, and CPU is a decimal 0–15. These checks
+test internal consistency; instruction-byte validation and independent
+same-attempt capture are separate requirements.
+
+| Stage | Required KH2 fields after the common header | Host check |
+|---|---|---|
+| B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two distinct planned frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
+| B1 | Five records, one each with `part=arm`, `dispatch`, `handler`, `frame`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…` | Each part has positive length, matching staged/readback hashes, and a region disjoint from the other four; only all five count as B1. |
+| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=…` | Gate words agree and differ from the B0 native pair; the count of matching IST slots equals the planned count (1–16), and the IST image hash matches its readback. |
+| F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; the raw five-word frame differs from its five-word canary. A plausible hardware frame still needs human review. |
+| A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | The journal word changed and equals the expected marker at a distinct address for each milestone. Marker ownership and gadget placement still need independent proof. |
+| A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The dispatch IST and armed-state readbacks agree, and the armed state is nonzero. |
+| D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=…` | The return/restoration assertions are present; the restored IST count equals B2's count when available, and selected gate/IST/scratch readbacks equal B0. The AP phase has its own evidence set. |
+
+Legacy bare `KH1 … verified=1` records are rejected because they omit the
+frame, journal, and readback values. A KH2 line can still be false if its
+producer fabricated or sampled the wrong address; the classifier cannot
+authenticate a kernel event from text alone.
 
 `tools/khook_trace_classify.py RUN.log --manifest RUN.json` checks this
 proposed record order, the ps5logd manifest's gaps/clean flag, and the
@@ -186,7 +200,7 @@ running before the trigger; a later trace
 showing an intermediate marker would falsify this record inventory.
 
 The classifier accepts those **actual** records separately from the
-proposed two-transaction `KH1` format:
+proposed two-transaction `KH2` format:
 
 ```text
 python3 tools/khook_trace_classify.py elfldr.log --mode kstuff-fullchain \

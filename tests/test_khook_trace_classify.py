@@ -9,13 +9,57 @@ from khook_trace_classify import (  # noqa: E402
 )
 
 
+def record(stage, **overrides):
+    common = {"cpu": "3", "verified": "1"}
+    raw = {
+        "B0": {"fw": "12.02", "build_sha": "a" * 64,
+               "scratch_sha": "d" * 64,
+               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x140",
+               "f1_slot": "0x118", "f2_slot": "0x318"},
+        "B2": {"gate_lo": "0x333", "expected_lo": "0x333",
+               "gate_hi": "0x444", "expected_hi": "0x444",
+               "ist_count": "16", "ist_matched": "16",
+               "ist_image_sha": "b" * 64, "ist_readback_sha": "b" * 64},
+        "F1": {"slot": "0x118", "rip": "0x1234", "cs": "0x43",
+               "flags": "0x202", "rsp": "0x5678", "ss": "0x3b",
+               **{f"can{i}": hex(i + 1) for i in range(5)}},
+        "F2": {"slot": "0x318", "rip": "0x4321", "cs": "0x43",
+               "flags": "0x202", "rsp": "0x8765", "ss": "0x3b",
+               **{f"can{i}": hex(i + 11) for i in range(5)}},
+        "A2": {"ist_actual": "0x340", "ist_expected": "0x340",
+               "armed_actual": "0x55", "armed_expected": "0x55"},
+        "D2": {"returned": "1", "gate_restored": "1",
+               "scratch_restored": "1", "ist_restored": "16",
+               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x140",
+               "scratch_readback_sha": "d" * 64},
+    }
+    if stage == "B1":
+        raw[stage] = {"part": "arm", "addr": "0x1000", "bytes": "128",
+                      "image_sha": "c" * 64, "readback_sha": "c" * 64}
+    if stage in ("A1P", "A1R", "D1S", "D1O"):
+        addr = {"A1P": "0x700", "A1R": "0x708",
+                "D1S": "0x710", "D1O": "0x718"}[stage]
+        raw[stage] = {"addr": addr, "before": "0x0",
+                      "after": "0x55", "expected": "0x55"}
+    fields = {"stage": stage, "source": SOURCES[stage], **common,
+              **raw.get(stage, {}), **overrides}
+    return "KH2 " + " ".join(f"{key}={value}" for key, value in fields.items())
+
+
 def run(*stages, clean=False, gaps=None):
-    lines = [f"{i}\t{i * 1000}\tMARK\tKH1 stage={stage} "
-             f"source={SOURCES[stage]} verified=1\n"
-             for i, stage in enumerate(stages, 1)]
+    payloads = []
+    for stage in stages:
+        if stage == "B1":
+            payloads.extend(record(stage, part=part, addr=hex(0x1000 + 0x100 * i))
+                            for i, part in enumerate(
+                                ("arm", "dispatch", "handler", "frame", "journal")))
+        else:
+            payloads.append(record(stage))
+    lines = [f"{i}\t{i * 1000}\tMARK\t{payload}\n"
+             for i, payload in enumerate(payloads, 1)]
     raw = ("HELLO ps5log/1 title=TEST app=khook boot=0x1\n" +
            "".join(lines) +
-           (f"BYE seq={len(stages)} reason=complete\n" if clean else "")).encode()
+           (f"BYE seq={len(payloads)} reason=complete\n" if clean else "")).encode()
     manifest = {"clean": clean, "gaps": [] if gaps is None else gaps,
                 "sha256": hashlib.sha256(raw).hexdigest()}
     return classify(raw, manifest)
@@ -281,7 +325,7 @@ class OtherClassifierTests(unittest.TestCase):
     def test_reversed_or_wrong_source_record_is_flagged(self):
         result = run("B1", "B0", clean=True)
         self.assertTrue(result["out_of_order"])
-        raw = b"1\t1\tMARK\tKH1 stage=F1 source=user verified=1\n"
+        raw = ("1\t1\tMARK\t" + record("F1", source="user") + "\n").encode()
         result = classify(raw)
         self.assertNotIn("F1", result["observed"])
         self.assertEqual(result["rejected"][0]["reason"], "wrong source")
@@ -289,10 +333,48 @@ class OtherClassifierTests(unittest.TestCase):
     def test_manifest_hash_or_sequence_gap_degrades_transport(self):
         result = run("B0", clean=True, gaps=[{"expected": 2, "got": 3}])
         self.assertEqual(result["transport"], "incomplete")
-        raw = b"1\t1\tMARK\tKH1 stage=B0 source=user verified=1\n"
+        raw = ("1\t1\tMARK\t" + record("B0") + "\n").encode()
         result = classify(raw, {"clean": True, "gaps": [], "sha256": "0" * 64})
         self.assertEqual(result["integrity"], "mismatch")
         self.assertEqual(result["transport"], "incomplete")
+
+    def test_kh1_bare_assertion_and_incomplete_b1_are_not_milestones(self):
+        old = b"1\t1\tMARK\tKH1 stage=F1 source=frame verified=1\n"
+        result = classify(old)
+        self.assertEqual(result["observed"], {})
+        self.assertIn("KH1 lacks required raw evidence", result["rejected"][0]["reason"])
+        partial = ("1\t1\tMARK\t" + record("B1") + "\n").encode()
+        result = classify(partial)
+        self.assertNotIn("B1", result["observed"])
+        self.assertEqual(len(result["b1_missing_parts"]), 4)
+
+    def test_unchanged_frame_and_wrong_journal_value_are_rejected(self):
+        same = record("F1", rip="0x1", cs="0x2", flags="0x3",
+                      rsp="0x4", ss="0x5")
+        raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
+               "2\t2\tMARK\t" + same + "\n" +
+               "3\t3\tMARK\t" + record("A1P", after="0x56") + "\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["observed"], {"B0": 1})
+        self.assertIn("frame canary unchanged", result["rejected"][0]["reason"])
+        self.assertIn("journal transition not verified", result["rejected"][1]["reason"])
+
+    def test_cross_stage_readbacks_and_disjoint_evidence(self):
+        lines = [record("B0"), record("B1"),
+                 record("B1", part="dispatch", addr="0x1040"),
+                 record("B2", gate_lo="0x111", expected_lo="0x111",
+                        gate_hi="0x222", expected_hi="0x222"),
+                 record("A1P"), record("A1R", addr="0x700"),
+                 record("D2", scratch_readback_sha="e" * 64)]
+        raw = "".join(f"{i}\t{i}\tMARK\t{value}\n"
+                      for i, value in enumerate(lines, 1)).encode()
+        result = classify(raw)
+        self.assertEqual(result["observed"], {"B0": 1, "A1P": 5})
+        reasons = [entry["reason"] for entry in result["rejected"]]
+        self.assertIn("image parts overlap", reasons)
+        self.assertIn("gate equals native B0 baseline", reasons)
+        self.assertIn("journal address reused", reasons)
+        self.assertIn("restoration readback differs from B0", reasons)
 
 
 if __name__ == "__main__":
