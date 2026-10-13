@@ -222,6 +222,23 @@ comparison (`11` #27). The
 classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
 real 12.02 run has yet produced this record format.
 
+**Native format scaffold, built and host-tested offline:** the separate local
+payload workspace now contains `kh2_trace_format.c/.h` and
+`kh2_trace_format_host_test.py` under
+`engineering/payloads/byepervisor_probe_1202/`. The pure C formatter
+generates bounded KH2 text for `ps5log/1` without kernel reads or writes.
+The host check compiled it with `cc`, matched every one of the 11 stage
+formats and 13 records (including all B1 parts) against the classifier's
+fixture, and classified the resulting complete transcript with no rejected
+record. The formatter source SHA-256 is
+`40835ec33e7c3d9e0bfe2f75c32e4ea7f79880928ff816ee09969cd0e0ccda72`.
+This is a **formatter**, not a KH2 producer: no 12.02 chain supplies its
+raw fields, no prearmed KH2 frame/journal observer is integrated, and no
+console experiment has run. A successful `ps5log_line` call means the
+client accepted a send, while only a retained PC log and matching manifest
+show what reached `ps5logd` before a possible shutdown. A generated fixture
+does not establish any kernel milestone.
+
 ### Pinned 11.60 marker placement arithmetic
 
 [public-consensus] In commit `5299395`, `kh_chain_store` emits five qwords
