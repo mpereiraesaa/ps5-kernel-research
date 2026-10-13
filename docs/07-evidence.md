@@ -1247,3 +1247,119 @@ cycle), not another ring-0 session.
 - Session parked over the patched IDT/TSS window (ring-0 entry ran);
   owner power-cycle pending/performed. Client terminated after the
   console was unreachable (safe: socket already dead).
+
+## 2026-10-13 — Kstuff Lite observability build and elfldr attempt
+
+- **Target/build**: owned PS5, FW 12.02 (`0x12020000`); EchoStretch
+  `kstuff-lite` checkout at upstream commit `48cd2c4`; built with
+  `KSTUFF_OBS=1` and the local PS5 payload SDK. The clean worktree is
+  under the lab payload tree; generated ELFs and binaries are not copied
+  into this findings repository.
+- **Expected**: launch the observability-enabled payload through the
+  existing elfldr, then run `debug-reader.elf` and see `attached` plus
+  metrics/snapshot output.
+- **Build result**: `payload.elf` and `debug-reader.elf` built. The full
+  `ci-ps5-kstuff-ldr.sh` pipeline stopped before producing
+  `ps5-kstuff-ldr/kstuff.elf` because this SDK install lacks
+  `sqlite3.h`, `-lz`, and `-lsqlite3`. This did not prevent building
+  Kstuff Lite's payload or reader.
+- **Delivery/result**: stock `payload.elf` is ET_EXEC (entry
+  `0x404000`) and elfldr returned `Error spawning payload`, consistent
+  with the ET_EXEC fixed-address collision already recorded above in
+  this log. A locally relinked ET_DYN candidate was accepted by elfldr
+  (SHA-256
+  `05db8342cdb49b9ad9b120cb31406ceecf73015dd9d3410cf0e3998a909cb722`),
+  but the reader printed `debug-reader: ps5-kstuff is not loaded`; no
+  metrics were collected. The reader's `KEKCALL_CHECK` is the same
+  loaded-state check Kstuff Lite uses at startup (upstream
+  `ps5-kstuff/debug-reader.c` and `ps5-kstuff/main.c`, commit
+  `48cd2c4`).
+- **Interpretation** [inference]: the ET_DYN launch did not leave
+  Kstuff Lite's check syscall active, so this attempt does not validate
+  successful initialization or provide the requested metrics. This
+  would be falsified by a subsequent reader run reporting `attached`
+  and returning a live snapshot from this build.
+- **Recovery state**: console remained responsive to elfldr and klog
+  requests; no freeze or panic was observed and no power-cycle was
+  needed. The experiment did not establish that Kstuff Lite was loaded.
+
+### Follow-up — send the installed v1.11 ELF through elfldr
+
+- **Artifact**: read-only FTP retrieval of the on-console
+  `kstuff-lite_v1.11.elf` produced a 1,737,080-byte ELF with type ET_DYN,
+  entry `0xf1eb8`, SHA-256
+  `ea14edbfe18ddc04f10dc09c4b1bf0c26e95b34a115a797722d6eda6298769c7`.
+- **Delivery/result** [verified-on-console]: sent that exact file to the
+  external elfldr listener on 9021. elfldr accepted it; output reached
+  `patching app.db` and `Patching shellui instance`. The deploy client
+  remained connected because this Kstuff Lite loader starts resident
+  ShellUI and USB-monitor threads. After detaching the host-side sender,
+  the debug reader reported `attached`, then
+  `shared_area snapshot failed: 91`.
+- **Interpretation** [inference]: the installed file is the loader ELF
+  wrapper, unlike our raw ET_EXEC payload and custom relink. It runs
+  through elfldr and leaves the Kstuff loaded-state check active.
+  Snapshot error 91 means
+  this reader did not obtain observability data from the installed
+  build; it does not negate the successful loaded-state check. This is
+  consistent with the installed v1.11 build lacking the observability
+  snapshot support, and would be falsified by a reader snapshot
+  succeeding against that same installed build.
+- **Payload Manager path** [public-consensus]: its launcher source
+  connects to `127.0.0.1:9021` and streams the selected ELF, so the UI
+  and our external sender both use elfldr. The UI does not provide a
+  separate kernel-payload loader
+  ([`ps5_launcher.c`](https://github.com/itsPLK/ps5-payload-manager/blob/main/src/ps5_launcher.c)).
+- **Recovery state**: the Payload Manager endpoint returned HTTP 200
+  after the send; no freeze or panic occurred. No power-cycle was
+  needed.
+
+### Observability wrapper build completed
+
+- **Build result**: completed the intended
+  `ps5-kstuff-ldr/kstuff.elf` ET_DYN wrapper with `KSTUFF_OBS=1` after
+  compiling the public FreeBSD SQLite amalgamation as a temporary
+  PS5-target object and passing its header path to the wrapper build.
+  The wrapper sources do not call zlib, so the unused `-lz` link flag
+  was omitted. No source or generated payload was added to this repo.
+- **Artifact identity**: wrapper SHA-256
+  `c570617aaf237e6b2de782bc92739db89e7c93bc1a9b9a5859cc5e789e093cd7`;
+  the accompanying `debug-reader.elf` is SHA-256
+  `1bc1d70df6493b7302900df1230632270bc2bfd4eb06fd5108373e3651060ffd`.
+  The clean build worktree is under the lab payload tree.
+- **Run state at build completion**: this observability-enabled wrapper
+  had not yet been sent. The PS5 currently has the stock Kstuff instance
+  active, so its
+  already-loaded check would short-circuit installation. A clean boot
+  with stock Kstuff autoload skipped is needed before testing this
+  wrapper and reader together.
+
+### Observability-enabled run on FW 12.02
+
+- **Build/target**: owned PS5, FW 12.02 (`0x12020000`); wrapper
+  `kstuff.elf` SHA-256
+  `c570617aaf237e6b2de782bc92739db89e7c93bc1a9b9a5859cc5e789e093cd7`,
+  debug reader SHA-256
+  `1bc1d70df6493b7302900df1230632270bc2bfd4eb06fd5108373e3651060ffd`;
+  both from the `KSTUFF_OBS=1` build described above.
+- **Expected**: wrapper installs Kstuff, then the reader attaches and
+  returns live observation snapshots.
+- **Observed** [verified-on-console]: elfldr output reached successful
+  ShellUI patching. The reader then printed `debug-reader: attached` and
+  returned eight snapshots (290 lines) over the short capture. Between
+  the first and last snapshots, `uelf_main entries` rose from 3,937 to
+  4,301; `gadget_fail`, `trap_read_fail`, `jr_read_fail`,
+  `trap_write_fail`, `v2p_fail`, `in_fail`, `out_fail`, and ioctl
+  metadata overflows stayed at zero. `obs snapshots` rose from 31 to 45
+  because two reader instances were running concurrently. Crypto and
+  PPR request counters remained zero during this short startup capture.
+- **Interpretation**: this confirms the observability-enabled wrapper
+  loaded through elfldr and the debug reader retrieved its shared
+  metrics. These are cumulative startup/session counters, not an
+  isolated performance benchmark.
+- **Recovery state**: no freeze or panic occurred. The host-side reader
+  sender was detached after collecting the capture. The two reader
+  processes were then stopped through Payload Manager; `kstuff.elf`,
+  elfldr, and Payload Manager remained running. No power-cycle was
+  needed. Complete transient capture:
+  `/tmp/kstuff_obs_metrics_capture.log`.
