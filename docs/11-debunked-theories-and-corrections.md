@@ -35,8 +35,26 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 19 | The 12.02 dump's shared v1/v9/v13/v179 `add_rsp_iret` target proves Sony's native dismiss-stub layout | **WRONG BASELINE** — the owner confirms kstuff was running during the dump. A later live read-only audit with no kstuff running reported four distinct targets and IST0 for v9/v13/v179. Neither snapshot alone proves pristine firmware state. | [verified-on-console] `16` gate-state audit; [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:12-14` |
 | 20 | The #DB chain can run on #GP with an otherwise identical entry frame | **WRONG FRAME ASSUMPTION** — #GP supplies an error code; #DB does not. No 12.02 #GP chain or return has been validated. | [public-consensus] [AMD64 APM Vol. 2 §§8.2.2, 8.2.14](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2); [verified-in-tree] `docs/16-byepervisor-12-02-port.md:117-120` |
 | 21 | Successful all-CPU IST4/gate setup and Kstuff offsets imply the minimal `INT1` → `justreturn` probe will return | **FALSIFIED AS A RUN PREDICTION** — the setup-only build restored cleanly, but the live one-shot closed without a return marker and left gate/IST4 patched. The failing instruction and cause remain unknown. | [verified-on-console] `16` live one-shot run |
+| 22 | An immediate CPL0→CPL3 `iretq` frame is an adequate first khook probe because the architecture permits it | **UNSUPPORTED EXPERIMENT DESIGN** — the reviewed working implementations use staged kernel continuation before returning to user mode; our direct frame had no such precedent, and the console power-off did not identify the failing step. Architectural legality did not establish this 12.02 path. | [verified-on-console] `16` pretrigger handshake; [public-consensus] Kstuff `kelf.asm`, Byepervisor `khook.c` |
 
 ## Detail on the load-bearing ones
+
+### #22 — Architectural legality was mistaken for an adequate probe [inference]
+
+The direct user-return frame was chosen to reduce gadget dependencies.
+That was a hypothesis, not a behavior established by the public payloads
+we were using. Kstuff's first `iretq` enters kernel `justreturn` and a
+longer continuation (`ps5-kstuff/kelf.asm:245-295`). Byepervisor's
+`khook.c:358-386` does contain a CPL0→CPL3 `iretq`, but it follows an
+arm chain that sets debug state and IST; its dispatch path also saves
+registers and builds a resume tail (`khook.c:250-292, 397-449`). Our
+first staged `iretq` instead targeted user code immediately. The
+handshake attempt powered off without a captured exception frame, so
+it does **not** prove that the immediate return itself failed. It proves
+that choosing that frame was not justified by the working examples.
+A captured trace showing the direct frame completed and a later,
+independent fault powered off the console would falsify a claim that
+the direct frame caused that run's failure.
 
 ### #21 — Setup-only success did not predict a live return [verified-on-console]
 

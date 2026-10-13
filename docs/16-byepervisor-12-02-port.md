@@ -883,6 +883,17 @@ register/GS handling, and a later return
 Our probe staged a direct userland return at `F+0xc0`
 (`RIP=ist4_evidence_resumed`, `CS=0x43`, flags `0x202`, user RSP,
 `SS=0x3b`), with no `justreturn`/kernel continuation. [inference]
+This was chosen to reduce gadget dependencies, but the reviewed working
+sources did not validate an immediate first return to userland. The
+architecture permits a CPL0→CPL3 `iretq`; that fact did not establish
+that this 12.02 frame, delivery path, and hypervisor state were valid.
+Byepervisor's
+[`khook.c`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/main/khook.c#L358-L386)
+also returns to user mode via `iretq`, but **after** a staged arm chain;
+its dispatch path builds a separate register-preserving resume tail.
+This corrects the overbroad idea that no public payload has a
+kernel-to-user return, while preserving the narrower gap: no reviewed
+working source validated our immediate first-frame return.
 The powered-off handshake probe staged Kstuff's gate target and first
 stack displacement, without proving that either executed, and **did not
 test the kernel-mode continuation
