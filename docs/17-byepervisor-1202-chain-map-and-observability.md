@@ -139,10 +139,10 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 |---|---|---|
 | B0 native baseline | User-mode read-only gate, all relevant IST slots, scratch/journal; `ps5log/1` with FW, build hash, boot identity without console identifiers, pinned CPU. | Starting state for this boot. |
 | B1 image staged | User-mode write/readback of three **physical** spans: the small image containing arm, dispatch, and frame slots; the big chain; and a separate preseeded journal. Log sizes and independent checksums. | Staging completed; no #DB implication. |
-| B2 final pretrigger state | After all `kh_trigger`-style RBP/RIP/RSP writes, read back the selected gate/IST, those three fields, and the planned DR7 value; send the final pretrigger `ps5log/1` record before setting TF. | Gate and return context were observed before the deliberate first trap; does not prove the trap ran. |
+| B2 final pretrigger state | After all `kh_trigger`-style RBP/RIP/RSP writes, read back the selected gate/IST, those three fields, and the planned DR7 value; send the final pretrigger `ps5log/1` record before setting TF. | Gate, selected IST6 pointer to the first frame, and return context were observed before the deliberate first trap; does not prove the trap ran. |
 | F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. A **pre-armed** independent observer captures raw RIP/CS/RFLAGS/RSP/SS without loading a new ELF after a stall. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
 | A1P / A1R arm continuation | Separate in-chain kernel-data markers **after** a verified pivot/store (A1P) and after `DBREG_RESUME` continuation (A1R), if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
-| A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the dispatch IST pointer and journal. | First return completed and dispatch stack was selected. |
+| A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the selected dispatch IST6 pointer and journal. | First return completed and the selected IST6 pointed to the planned dispatch frame. |
 | F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. The pre-armed observer samples independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
 | D1S / D1O dispatch/handler | Separate in-chain markers **after** the required interrupted registers are saved (D1S) and after the test oracle store but before the resume tail (D1O). A 12.02 liveness review must prove the marker's RAX/RCX clobbers harmless. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
@@ -164,10 +164,10 @@ earlier one in the host parse.
 |---|---|---|
 | B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two aligned, nonoverlapping planned five-word frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
 | B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…`. The journal record also has `<stage>_addr=… <stage>_before=…` for each of `a1p`, `a1r`, `d1s`, `d1o`. | Each physical write span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. Both B0 frame slots fit wholly inside `image`. The journal preseed words occupy distinct aligned qwords inside its region. |
-| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
+| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… ist6_actual=… ist6_expected=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. The selected IST6 readback and expectation must both equal `B0.f1_slot+0x28` and differ from native `B0.ist6`. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
 | F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; all five reported canaries match that frame's independent B2 readback, and the raw five-word frame differs. A plausible hardware frame still needs human review. |
 | A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | Address and `before` match that marker's B1 journal preseed; the word changed and equals the expected marker. Marker ownership and gadget placement still need independent proof. |
-| A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The dispatch IST and armed-state readbacks agree, and the armed state is nonzero. |
+| A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The selected dispatch IST6 and armed-state readbacks agree; the IST value must equal `B0.f2_slot+0x28` and differ from native `B0.ist6`, and the armed state is nonzero. |
 | D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=…` | The return/restoration assertions are present; the restored IST count equals B2's count when available, and selected gate/IST/scratch readbacks equal B0. The AP phase has its own evidence set. |
 
 Legacy bare `KH1 … verified=1` records are rejected because they omit the
@@ -195,6 +195,16 @@ delivery. B2 closes that *logging* gap by reading the final fields before
 TF; it does not validate the 12.02 `resumectx` consumer or guarantee safe
 delivery. A future trace showing the final fields differ despite B2 claiming
 equality would falsify the proposed readback or its address calculation.
+
+[inference] The pinned two-frame geometry places each five-qword hardware
+frame immediately below its IST6 top, so the selected pretrigger pointer must
+be `f1_slot+0x28` and the selected post-arm pointer must be `f2_slot+0x28`.
+Hash/count equality for an IST write can be true even if the image contains
+the native pointer or a wrong stack address. KH2 therefore records the
+selected qword separately in B2 and A2 (`11` #31). A finalized 12.02 layout
+that deliberately uses another frame size or stack placement would falsify
+these equations and require a new contract/layout version before use; this
+check does not validate the still unknown 12.02 pivot instruction.
 
 `tools/khook_trace_classify.py RUN.log --manifest RUN.json` compares this
 proposed phase order with **report arrival order**, checks the ps5logd manifest's gaps/clean flag, and the

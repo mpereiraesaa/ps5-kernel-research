@@ -44,8 +44,19 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 28 | The 11.60 khook's arm, dispatch, handler, and frame are five disjoint physical B1 writes, and gate readback alone is its final preparation step | **WRONG STAGING MODEL** — the first `0x500` image contains arm/dispatch/frame material; the big chain is a separate write. After installation, `kh_trigger` still patches saved RBP and arm RIP/RSP before TF. A closer port needs a final context readback to bound this preparation gap. | [public-consensus] `5299395/khook.c:390-478`; [verified-in-tree] `docs/17-byepervisor-1202-chain-map-and-observability.md` KH2 contract |
 | 29 | A KH2 frame or journal report proves a change merely because its own `before` and `after` values differ | **UNLINKED BASELINE** — a later report can supply any canary or `before` word. B2 must read the frame canaries before triggering, and B1 must read the journal preseed; later reports must match those earlier samples before claiming a change. | [verified-in-tree] `tools/khook_trace_classify.py` `_raw_fields` and `classify`, `tests/test_khook_trace_classify.py`; [inference] same-attempt baseline linkage is required for a change claim |
 | 30 | The 12.02 `sysent[24].sy_call` pointer identifies the `getuid` body, so its `+0xe` instruction is a usable test hook | **ENTRY/BODY CONFLATION** — 13.60 `sy_call` names a jump entry at `ktext+0x265330`, while its getuid body is `ktext+0x2a8d60`. 12.02 data locates only its entry at `ktext+0x3130a0`; no 12.02 text is held to resolve the body or instruction boundary. The old `746` sysent count was also wrong; the 13.60 declared count is 735. | [verified-on-dump] `kernel-dump-1360-boot1791893784/kernel-data.bin+0x1b6e50`, `kernel-text.bin+0x265330`, `kernel-data-only-1202/kernel-data.bin+0x1af4d0`; [verified-in-tree] `tools/sysent_trampoline_map.py:15-77`, `docs/16-byepervisor-12-02-port.md` §“getuid table entry versus hook body” |
+| 31 | A matching IST image/readback hash and `ist_matched` count prove the selected #DB stack points to the intended arm or dispatch frame | **UNLINKED STACK POINTER** — those checks can match an unchanged native pointer or the wrong staged address. KH2 B2 now requires the selected IST6 qword to equal `f1_slot+0x28` before TF; A2 requires `f2_slot+0x28` after the arm return, both different from B0's native pointer. | [verified-in-tree] `tools/khook_trace_classify.py:108-112,149-158`, `tests/test_khook_trace_classify.py:428-452`; [public-consensus] [`5299395/khook.c:341-345,371-376,443-454`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L341-L454); [inference] selected-pointer equality is required for the proposed frame placement |
 
 ## Detail on the load-bearing ones
+
+### #31 — Read back the selected stack qword [inference]
+
+The old KH2 B2 and A2 records could claim that an IST array write matched its
+own image while the selected CPU still pointed elsewhere. That would move a
+failure caused by bad preparation into the apparent #DB delivery window.
+The revised contract links both selected IST6 readbacks to B0's frame slots.
+A different validated 12.02 frame placement would falsify these particular
+`+0x28` equations and require updating the layout version. The check still
+does not establish the pivot bytes or prove #DB fired.
 
 ### #30 — A syscall table entry need not be the hook body [inference]
 

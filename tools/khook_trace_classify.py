@@ -18,6 +18,7 @@ STAGES = ("B0", "B1", "B2", "F1", "A1P", "A1R", "A2", "F2",
 B1_PARTS = ("image", "big", "journal")
 JOURNAL_STAGES = ("A1P", "A1R", "D1S", "D1O")
 USER_STAGES = ("B0", "B1", "B2", "A2", "D2")
+FRAME_BYTES = 0x28
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
     "A1P": "journal", "A1R": "journal", "A2": "user",
@@ -61,7 +62,8 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             number("ist6")
             f1_slot, f2_slot = number("f1_slot"), number("f2_slot")
             if f1_slot % 8 or f2_slot % 8 or (
-                    f1_slot < f2_slot + 0x28 and f2_slot < f1_slot + 0x28):
+                    f1_slot < f2_slot + FRAME_BYTES and
+                    f2_slot < f1_slot + FRAME_BYTES):
                 raise ValueError("frame slots overlap or are unaligned")
         elif stage == "B1":
             if baseline is None:
@@ -75,7 +77,7 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("image/readback hash mismatch")
             if fields["part"] == "image":
                 start, end = number("addr"), number("addr") + int(fields["bytes"])
-                if any(slot < start or slot + 0x28 > end for slot in
+                if any(slot < start or slot + FRAME_BYTES > end for slot in
                        (baseline["f1_slot"], baseline["f2_slot"])):
                     raise ValueError("frame slot outside staged image")
             if fields["part"] == "journal":
@@ -103,6 +105,11 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("IST readback count differs")
             if sha("ist_image_sha") != sha("ist_readback_sha"):
                 raise ValueError("IST readback hash mismatch")
+            arm_ist = baseline["f1_slot"] + FRAME_BYTES
+            if (number("ist6_actual") != number("ist6_expected") or
+                    number("ist6_actual") != arm_ist or
+                    arm_ist == baseline["ist6"]):
+                raise ValueError("selected IST6 does not point to first frame")
             for name in ("rbp", "rip", "rsp", "dr7"):
                 if number(f"{name}_actual") != number(f"{name}_expected"):
                     raise ValueError(f"pretrigger {name} readback differs")
@@ -140,9 +147,15 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             if before == after or after != expected:
                 raise ValueError("journal transition not verified")
         elif stage == "A2":
+            if baseline is None:
+                raise ValueError("B0 baseline missing for dispatch IST")
             if (number("ist_actual") != number("ist_expected") or
                     number("armed_actual") != number("armed_expected")):
                 raise ValueError("arm-return readback differs")
+            dispatch_ist = baseline["f2_slot"] + FRAME_BYTES
+            if (number("ist_actual") != dispatch_ist or
+                    dispatch_ist == baseline["ist6"]):
+                raise ValueError("selected IST6 does not point to dispatch frame")
             if number("armed_actual") == 0:
                 raise ValueError("arm-return state is zero")
         elif stage == "D2":
