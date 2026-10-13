@@ -928,16 +928,52 @@ per-CPU entry/continuation/return path that preserves each interrupted
 context; only then can a changed shared gate be armed. This is a new
 console-risky build, not a reuse of the approved handshake ELF.
 
-The proposed observation is one TF/NOP on the selected CPU, with a PC
-marker after the observer acknowledges the patched state and a marker
-only after the full return and restoration. Readback can establish the
-staged per-CPU frames, IST4 slots, and gate values; it cannot establish
-that #DB entered the intended stack. A frame or entry marker tied to
-the selected CPU is still required for that boundary. Risk: a bad
-continuation or an incidental #DB on another CPU can panic or power off
-the console. Recovery: hard power-cycle and confirm normal UI/network
-operation. Under `AGENTS.md`, the owner must approve the exact FW 12.02
-build identity and this recovery plan before it is sent.
+[inference] There is a smaller **no-op return** candidate than Kstuff's
+full KELF handoff: make the first staged `iretq` enter `justreturn` with
+kernel RSP pointing at the five words the CPU pushed at `IST4−0x28`.
+The public FreeBSD 11
+[`justreturn` handler](https://www.mail-archive.com/svn-src-all@freebsd.org/msg141708.html)
+preserves its scratch registers, acknowledges the interrupt, and jumps to
+`doreti_iret`, which would consume that saved hardware frame and resume
+the interrupted context. Kstuff's subsequent GS/CR3/register chain is
+needed for its UELF handoff; this candidate performs no such handoff.
+12.02 `justreturn` bytes have not been read, so a disassembly showing a
+different control flow or a captured post-`justreturn` stack differing
+from the hardware frame would falsify this candidate.
+
+The separate offline build `byepervisor_probe_1202_justreturn_allcpu.c`
+stages 16 disjoint 0x200-byte frame regions across two zero-checked
+candidate scratch pages, saves/writes each CPU's IST4 as a qword, and
+changes the shared #DB gate last. Its first return frame uses Kstuff's
+12.02 `justreturn` offset `ktext+0x2b3400`, kernel `CS=0x20`, flags `2`,
+and RSP=`IST4−0x28`; the existing `add_rsp_iret` target is
+`ktext+0x2b3626`. [inference] `INT1`/ICEBP supplies a one-shot #DB with
+TF clear in the saved frame, avoiding the repeated trap a TF/NOP would
+cause on this no-op return path. Intel's
+[instruction reference](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf)
+documents `INT1` as a #DB trap with no gate-DPL check. A live #DB that
+does not arrive through the patched gate or returns with TF set would
+falsify the expected trigger behavior on this console.
+
+- **FW/build identity:** setup-only ELF SHA-256
+  `4eb15b696d04fe2be690dc192d4d86698dd8a145e883777b4df883b6b44a7b24`;
+  live INT1 ELF SHA-256
+  `5020d798c24ec649f9ec6885bfe1412ad12a86783279b90926f3771450015bcd`.
+  Both are local payload-tree artifacts and are excluded from this notes repo.
+- **Expected setup-only observation:** all 16 staged frames, IST4 writes,
+  and the changed gate read back, then originals and scratch restore;
+  no intentional #DB. A failed guard exits without arming.
+- **Expected live observation:** one `INT1`, return through kernel
+  `justreturn` and the saved hardware frame, then gate/IST4/scratch
+  restoration and a `MATCH` on saved RIP/CS/RSP/SS and clear TF.
+- **Risk/recovery:** the shared gate and all 16 IST4 slots change briefly.
+  An incidental #DB during staging, a wrong 12.02 `justreturn` contract,
+  or a bad frame can panic or power off the console. Hard power-cycle,
+  then confirm normal UI and network operation. The owner approved
+  proceeding with a Kstuff-shaped one-shot and this recovery class on
+  2026-10-13. The changed `INT1` trigger and both exact builds are
+  recorded here before any console run. Actual observation and recovery
+  state are pending.
 
 ### Frame staging isolation run
 
