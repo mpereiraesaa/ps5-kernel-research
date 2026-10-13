@@ -615,6 +615,22 @@ class OtherClassifierTests(unittest.TestCase):
                          "journal restoration differs from B1 prewrite")
         self.assertNotIn("D2", result["observed"])
 
+    def test_d2_requires_accepted_b2_ist_count(self):
+        staged = [record("B0"), *(record("B1", part=part)
+                  for part in ("image", "big", "journal"))]
+        missing = classify_records(*staged, record("D2"))
+        self.assertNotIn("D2", missing["observed"])
+        self.assertEqual(missing["rejected"][0]["reason"],
+                         "B2 IST count missing for restoration comparison")
+        self.assertEqual(missing["rejected"][0]["stage"], "D2")
+        mismatch = classify_records(*staged, record("B2"),
+                                    record("D2", ist_restored="15"))
+        self.assertNotIn("D2", mismatch["observed"])
+        self.assertEqual(mismatch["rejected"][0]["reason"],
+                         "IST restoration count differs")
+        accepted = classify_records(*staged, record("B2"), record("D2"))
+        self.assertIn("D2", accepted["observed"])
+
     def test_b1_hash_error_is_not_a_staging_record(self):
         raw = ("1\t1000\tMARK\t" + record("B0") + "\n" +
                "2\t2000\tERR\tKH2E stage=B1 cpu=3 operation=hash "

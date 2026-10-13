@@ -184,6 +184,12 @@ earlier one in the host parse.
 | Q2 | `observer_cpu=… reason=syscall_return idle=1 inflight=0 samples=…` | Worker reports quiescence after the second return signal. Main waits for acknowledgment before D2 restoration and logging. |
 | D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=… image_restored_sha=… big_restored_sha=… journal_restored_sha=…` | The return/restoration assertions are present; restored IST count equals B2's count, selected gate/IST/scratch readbacks equal B0, and each B1 span's final hash equals its prewrite `before_sha`. B1/A2 geometry links the later context and armed-state writes to restored spans (`11` #33–#34). The AP phase has its own evidence set. |
 
+[verified-in-tree] `tools/khook_trace_classify.py:301-323` requires an
+accepted B2 count before accepting D2, then checks exact `ist_restored`
+equality (`11` #43). A retained D2 line after a missing B2 is preserved in
+the raw log and listed in `rejected`; it cannot establish all-CPU
+restoration from its self-reported positive count alone.
+
 The planned phase order is `B0 B1 R0 B2 R1 F1 A1P A1R Q1 A2 R2 F2
 D1S D1O Q2 D2`; B1 has three physical-part records. Frame and journal
 reports can arrive later than their kernel writes. The `R*`/`Q*` records are
