@@ -44,11 +44,13 @@ The proof used this sequence:
    public lineage does **not** arm a `#DB` breakpoint. 5.00–7.61 corrupt
    the ACPICA global `AcpiGbl_FACS` in kernel data (`kwrite64(ptrslot,
    ptslot−8)`), so the kernel's own `AcpiSetFirmwareWakingVector`
-   dereferences the mangled pointer on resume and takes a **#GP** (IDT 13
-   + TSS IST6). No `acpi_sleep_machdep` instruction is involved. `0x18e`
-   is also invalid (`11` #14, `12` §2). The 12.02 `AcpiGbl_FACS` anchor
-   is dump-derived at `kdata+0x2cb4c80`. See `15` §1–§2 and `11` #16.
-3. The #GP ROP chain (IST6) invokes `HCALL 0x0f(core=15,
+   dereferences the mangled pointer on resume and takes a **#GP** (IDT 13;
+   that loader configures IST6 for its hook). No `acpi_sleep_machdep`
+   instruction is involved. `0x18e` is also invalid (`11` #14, `12` §2).
+   The 12.02 `AcpiGbl_FACS` anchor is dump-derived at
+   `kdata+0x2cb4c80`. See `15` §1–§2 and `11` #16.
+3. The proposed #GP ROP chain (with a selected IST stack; the loader
+   precedent uses IST6) would invoke `HCALL 0x0f(core=15,
    RIP=0x3ffff000, CR3=0x68000)` from kernel context.
 4. Core 15 launches at 0x3ffff000 with CR3=0x68000. It never fetches
    GameOS kernel text, so the vcore's `cur_npt` stays at 0 (root 0).
@@ -278,9 +280,12 @@ Three generations, all superseded on 5.00+ by our resume-window route:
 3. **5.00-7.61**: IDT gate patching + IST ROP + APICBASE wrmsr trigger
 
 Our route (12.02): `AcpiGbl_FACS` self-corruption (`kdata+0x2cb4c80`,
-candidate) → `#GP` on resume → IST6 ROP chain → HCALL 0x0f → AP on
-root 0 → VMCB write. (The old `#DB`/`+0x18e` framing was the wrong
-trigger *kind*; see `15` §1 and `11` #16.)
+candidate) → `#GP` on resume → proposed gate/IST chain → HCALL 0x0f →
+AP on root 0 → VMCB write. [verified-on-console] The 12.02 read-only
+audit found vector 13 at IST0; the loader's IST6 is a chosen hook setup,
+not that observed gate state. The #GP frame and return path remain unvalidated (`16`,
+`11` #20). (The old `#DB`/`+0x18e` framing was the wrong trigger
+*kind*; see `15` §1 and `11` #16.)
 
 ## Next research steps
 

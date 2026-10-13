@@ -304,9 +304,10 @@ come from kernel context during the resume window:
    breakpoint. **CORRECTION (2026-10-13):** the public 5.00–7.61 lineage
    corrupts the ACPICA global `AcpiGbl_FACS` (`kwrite64(slot, slot−8)`);
    the kernel's own `AcpiSetFirmwareWakingVector` then dereferences the
-   mangled pointer on resume → `#GP` (IDT 13 + TSS IST6). The old
-   `#DB` at `acpi_sleep_machdep+0x18e` was the wrong trigger *kind*
-   (`11` #16), and `0x18e` is also out of the function (`12` §2). The
+   mangled pointer on resume → `#GP` (IDT 13; that loader selects TSS
+   IST6 for its hook). The old `#DB` at `acpi_sleep_machdep+0x18e`
+   was the wrong trigger *kind* (`11` #16), and `0x18e` is also out of
+   the function (`12` §2). The
    12.02 `AcpiGbl_FACS` anchor is dump-derived at `kdata+0x2cb4c80`
    (`15` §2).
 2. The #GP fires after resumectx but before acpi_wakeup_cpus
@@ -314,11 +315,13 @@ come from kernel context during the resume window:
    context where the intercept is (presumably) enabled
 4. HCALL 0x0f launches the AP on root 0
 
-The build chain: ring-0 session → install the `#GP` IDT gate + TSS
-IST6 handler + corrupt `AcpiGbl_FACS` (`kdata+0x2cb4c80` candidate) →
-owner enters rest mode → owner resumes → `#GP` fires → ROP invokes the
-hcall → AP launches at the carrier page. (The old `#DB`/DR0 framing was
-the wrong trigger kind; see `15` §1.)
+The proposed 12.02 chain: ring-0 entry → install a `#GP` IDT gate with
+a separately validated stack/return path + corrupt `AcpiGbl_FACS`
+(`kdata+0x2cb4c80` candidate) → owner enters rest mode → owner resumes
+→ `#GP` fires → ROP invokes the hcall → AP launches at the carrier page.
+(The old `#DB`/DR0 framing was
+the wrong trigger kind; see `15` §1. The read-only 12.02 gate audit and
+frame caveat are in `16` and `11` #20.)
 
 ## 2026-10-12 — ACPI text region mapping from the dump
 

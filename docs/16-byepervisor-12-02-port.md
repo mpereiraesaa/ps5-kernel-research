@@ -111,11 +111,21 @@ our goal, not our starting point). Our dump-verified alternative
 (docs/10, 2026-10-13): corrupt the `AcpiGbl_FACS` pointer in kernel
 data (`kdata+0x2cb4c80`) so the resume path's dereference faults —
 **#GP fires at the dereference site, wherever that is — no text
-address knowledge needed**. The khook machinery generalizes: their
-`khook.c` hardcodes vector 1 (#DB); ours patches the **#GP gate
-(vector 13)** + IST instead, with the same save/validate/restore
-lifecycle. The chain runs on the #GP instead of the #DB — identical
-otherwise.
+address knowledge needed**. The khook machinery is a candidate pattern:
+their `khook.c` hardcodes vector 1 (#DB), while this route would require
+a **#GP gate (vector 13)** and a selected IST stack with a
+save/validate/restore lifecycle. [public-consensus] The #GP entry frame
+is not interchangeable with #DB's: #GP supplies an error code and #DB
+does not (`11` #20). The chain's stack consumption and return path remain to be
+derived and validated for the selected 12.02 gate setup.
+
+[verified-on-console] The later read-only gate audit below found the
+current vector-13 gate at IST0, so a #GP hook would have to encode a
+new IST index in that gate and prepare the corresponding TSS slot.
+[inference] The old dump's vector-13 IST3 entry was patch-state data;
+a clean boot reproducing IST3 without a prior gate-changing payload
+would falsify that explanation. No #GP frame or return behavior is
+validated by the #DB-only setup probes.
 
 #### Correction (owner review, 2026-10-13): the engine is NOT proven
 
@@ -216,27 +226,27 @@ DR7-style test would additionally need the PCB-layout assumption and
 12.02 `resumectx` tail address described in the offset audit; the FACS
 trigger itself does not require those.
 
-#### Rungs 1-2 results (2026-10-13): the IST-class death theories are falsified [verified-on-console]
+#### Rungs 1-2 results (2026-10-13): a kstuff-era gate snapshot [verified-on-console]
 
 The `idtdump` diagnostic (pure CPL3 `copyout` reads, the `facs_read`
-class) measured the whole interrupt surface:
+class) measured the interrupt surface **at that time**. The owner has
+since clarified that the 12.02 data dump was captured with kstuff
+running. The dump and this earlier live snapshot must not be used as
+evidence of unpatched Sony gate targets; see correction #19 in `11`
+and the later read-only audit below.
 
-- **only 4 gates use IST3/4/6** — vectors 1, 9, 13, 179: *the same
-  four vectors `r0gdb_setup` patches*. No other gate shares the
-  patched IST indexes (NMI=v2→IST2, #DF=v8→IST1, v30→IST5,
-  v3→IST7). The cross-vector IST-redirection theory is falsified;
-  the 48-write maximalism was redundant, not hazardous
-- **all four of v1/v9/v13/v179 share one handler** — kdata−0xA9C9DA
-  = our own `add_rsp_iret` gadget (doreti_iret−7): Sony implements
-  #DB/vector-9/#GP/vector-179 as a shared `add rsp,0xe8; iretq`
-  **dismiss-stub** — those exceptions are deliberately neutered on
-  12.02 (skip the frame and return; the faulting event is dismissed).
-  That is why the kstuff lineage patches them, and it validates the
-  port's #GP trigger design on a vector the kernel normally dismisses
-- **vector 3 (int3) is the only naturally-DPL3 gate** (IST7, the
-  dismiss-stub)
-- **vector 179's IST6 slot is one shared direct-map address on all
-  16 CPUs** (the dmap region, same region as the elfldr kpipe)
+- **four gates used IST3/4/6 in that snapshot** — vectors 1, 9, 13,
+  179. This did not establish the unpatched layout or falsify an IST
+  redirection hazard in a different gate state.
+- **v1/v9/v13/v179 shared `ktext+0x2b3626` in that snapshot** — the
+  `add_rsp_iret` address in `r0gdb/prosper0gdb/offsets/12_02.h:12-14`.
+  [inference] This is consistent with kstuff/r0gdb-style gate patching,
+  not proof that Sony routes those vectors to a dismiss stub. A clean
+  boot gate audit that reproduces these four targets would falsify the
+  patch-state explanation.
+- **vector 3 was the only naturally-DPL3 gate observed**, with IST7.
+- **vector 179's IST6 slot held one shared direct-map address across
+  all 16 CPUs** in that snapshot.
 - **5-second IST-stack activity monitor** (before/after/diff over
   all 7 IST stacks × 16 CPUs): **all quiet except IST7 on cpus
   0/1/2/6 — vector 3 (int3) fires naturally and regularly** (small
@@ -245,11 +255,11 @@ class) measured the whole interrupt surface:
 
 Consequences:
 
-- the **natural-event-on-a-patched-vector theory is falsified**
-  (nothing fires v1/v9/v13/v179 naturally — the consistent
-  ~100–250 ms session deaths had no natural interrupt source)
-- the port must **never patch v3/ist7** (the only active vector);
-  the port's v13 target is measured-quiet — favorable
+- no activity was detected on v1/v9/v13/v179 during that five-second
+  window; this bounds only that observation, not rare events or the
+  current gate state.
+- v3/IST7 was active in that window, so using it as a scratch entry
+  remains hazardous. The v13 quiet result is scoped to that snapshot.
 - the remaining death-cause candidates: (a) the TSS
   read-modify-write race (`r0gdb_setup` rewrites the whole 0x68-byte
   TSS per CPU ×16, and the scheduler updates TSS rsp0 on every
@@ -549,6 +559,110 @@ engine as “proven” would repeat a claim already corrected above.
   output path completed without an immediate freeze in this run. It does not
   rule out a delayed effect under other conditions or establish that the later
   frame/gate path is safe.
+
+### #DB gate-state correction and read-only audit (2026-10-13)
+
+- **FW:** 12.02 (`0x12020000`), reported by both payloads. The owner
+  reports that kstuff was **not running** for these runs and confirms the
+  earlier 12.02 dump **was taken with kstuff running**.
+- **Guarded IST4 build:** `byepervisor_probe_1202_ist4_delivery.elf`,
+  SHA-256 `2a4419d36ef39a004d76011719f857cc94b170db62445c4ba0463f99a284458f`.
+  Expected: accept the previously observed `ktext+0x2b3626` #DB
+  target, stage a frame, patch only the selected CPU's IST4, then
+  report a captured hardware frame after one TF/NOP #DB. Actual:
+  `[E0] original #DB target ... != expected stub ...`; the live target
+  was `ktext+0x3188b0`. The guard returned **before scratch or IST4
+  writes and before the #DB trigger**. The sender's missing expected
+  success marker is explained by this deliberate early return.
+- **Read-only audit build:** `byepervisor_probe_1202_readonly.elf`,
+  SHA-256 `db197575f6cfa7e4b89623d37545855cc33c20633be08f4aa5228dcaef1044b6`.
+  Expected: read preflight state and print the four gate entries, with
+  no kernel write or exception trigger. Actual: it completed T00–T08,
+  printed P1–P3 and the following gate records, then returned the
+  explicit read-only completion marker:
+
+  | Vector | IST | Target relative to live `ktext` |
+  |---|---:|---:|
+  | 1 (#DB) | 4 | `+0x3188b0` |
+  | 9 | 0 | `+0x318b68` |
+  | 13 (#GP) | 0 | `+0x318b88` |
+  | 179 | 0 | `+0x3189e0` |
+
+- **Recovery:** both payloads exited without a trigger or kernel
+  write; the console remained reachable and no hard power cycle was
+  required. The standing recovery plan for a freeze was a hard power
+  cycle. Other console services were not checked.
+- **Interpretation:** [verified-on-console] the earlier common
+  `ktext+0x2b3626` target and IST3/4/6 map do **not** describe these
+  four live gates. [inference] Kstuff patching explains the older
+  common-target snapshot, given the owner's dump provenance and
+  `r0gdb`'s `add_rsp_iret` offset. A clean boot showing the same
+  common target without any prior patch would falsify that explanation.
+  The read-only audit does not establish the instruction bytes or
+  return contract at `ktext+0x3188b0`, and the guarded IST4 build
+  provides **no evidence of #DB delivery or IST4 selection**. It must
+  not be rerun by removing the target guard; any live trigger needs a
+  separately reviewed frame and return path plus owner approval.
+
+### Patched-gate IST4 delivery attempt (2026-10-13)
+
+- **FW/build:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_patched_ist4_delivery.elf`, SHA-256
+  `86fb2394cd4e541a4685d01b93b92dd8cb435acefa9fd2ec9320ea53668725ab`.
+  The owner explicitly approved this changed-gate build and the hard
+  power-cycle recovery plan after the earlier guarded build refused.
+- **Expected:** require the audited live v1 target
+  `ktext+0x3188b0`, single-CPU affinity, IST4, and zero scratch;
+  stage a canary and five-word user return frame; point that CPU's
+  IST4 at scratch; retarget the shared #DB gate's low qword to the
+  kstuff `add_rsp_iret` offset `ktext+0x2b3626`; issue one TF/NOP
+  #DB; restore and verify gate, IST4, and scratch; print E2 hardware
+  frame and E3 `MATCH`. This design still depends on an unverified
+  12.02 instruction/return contract at the kstuff stub. The shared
+  gate also exposes other CPUs during the short patch window.
+- **Actual:** preflight printed P1/P2/P3 and two E1 lines. E1 reported
+  CPU 15 with a single-CPU affinity mask and stated the intended
+  IST4 pointer, hardware-frame address, return-frame address, and
+  one-qword gate swap. No E2 or E3 appeared. The sender timed out
+  after 30 seconds; a subsequent three-ping check received no replies.
+- **Recovery state:** console unreachable after the run; the owner
+  performed the agreed hard power cycle and confirmed normal operation.
+  A later two-ping check also succeeded.
+- **Interpretation:** [verified-on-console] the checks and staging
+  reached E1, followed by a freeze before the return marker.
+  [inference] The failure lies somewhere after E1: IST4 write/readback,
+  gate write/readback, #DB delivery, stub/`iretq` return, or early
+  restoration. The lack of an E2 marker does **not** prove #DB reached
+  the patched CPU or IST4 slot. Evidence of a hardware frame is still
+  absent; the experiment does not validate step 1 of the boundary below.
+
+### Exact-value IST4/#DB write isolation run (2026-10-13)
+
+- **FW/build:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_patch_only_ist4_gate.elf`, SHA-256
+  `8f61011a969f2928e8aad53a8b472448236865349b944797c560e3445b940ac0`.
+  The owner explicitly approved this exact build and a hard
+  power-cycle recovery plan after the frozen attempt.
+- **Expected:** repeat the frozen build's preflight and frame staging,
+  write/read back the same changed selected-CPU IST4 qword and
+  shared #DB gate low qword targeting `ktext+0x2b3626`, restore and
+  verify the original full gate, IST4, and scratch, then emit S2 and
+  exit without a TF/#DB trigger.
+- **Actual:** E1 reported CPU 15 and a single-CPU affinity mask. S2
+  printed the changed IST4 pointer and gate low qword after successful
+  readback, then `originals restored=YES; no #DB trigger`. The sender
+  received the required response, and a post-run two-ping check passed.
+- **Recovery state:** payload exited normally; console remained
+  reachable; no hard power cycle was needed for this run. Other console
+  services were not checked.
+- **Interpretation:** [verified-on-console] these exact changed values
+  were writable, readable, and restorable in this new run. [inference]
+  The frozen attempt is more likely to have failed in the later
+  TF/#DB/return path than because these writes are deterministically
+  rejected. A timing-sensitive write failure or concurrent #DB could
+  still distinguish the frozen run; S2 cannot retrospectively locate
+  its last completed instruction. This run does **not** establish
+  exception delivery or IST4 frame use.
 
 ### Frame staging isolation run
 
