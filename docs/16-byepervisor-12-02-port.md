@@ -855,6 +855,26 @@ the one-shot probe's **initial stack arithmetic**. A different
 compiled IST4 pointer or frame layout in the working 1.11 build would
 falsify the comparison.
 
+[verified-on-console] The owner reports that installed Kstuff 1.11 works
+on this 12.02 console. [public-consensus] Its public 12.02 table defines
+`add_rsp_iret = doreti_iret - 7`
+([`12_02.h`](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h#L12-L14)).
+[inference] Provided the installed build uses that table and #DB path,
+the offset is operationally supported **in Kstuff's own frame context**;
+an offset typo is a weaker explanation for this probe's power-off than
+its different entry/return state. An inspection of the installed build
+showing another offset or entry path would falsify this inference. The
+working payload does not byte-verify 12.02 text or prove this probe
+reached the target.
+
+[public-consensus] Kstuff installs a prepared #DB IST4 frame for every
+CPU ([`main.c`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/main.c#L1542-L1562));
+the handshake probe changed only its pinned CPU's IST4. [inference]
+Another CPU taking #DB while the shared gate was changed could therefore
+enter that target with a different stack. An exception record showing
+that only the patched CPU entered #DB would falsify this possibility for
+the observed power-off.
+
 The continuation differs. [public-consensus] Kstuff's first frame at
 that landing point has `RIP=justreturn`, kernel `CS=0x20`, flags `2`,
 and a kernel-side continuation stack; it then uses more staged frames,
