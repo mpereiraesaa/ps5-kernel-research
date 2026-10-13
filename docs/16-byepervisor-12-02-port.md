@@ -700,6 +700,44 @@ engine as “proven” would repeat a claim already corrected above.
   did not trigger #DB and did not capture an exception frame, so it leaves
   the four live-path boundaries below unvalidated.
 
+### Observer-enabled #DB frame attempt (2026-10-13)
+
+- **FW/build and approval:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_observer_frame.elf`, SHA-256
+  `42ca623bbacac27e9fa122c2610759d0793efdd04291cfcdfc70ab253943b1eb`.
+  The owner said to go ahead after the one-shot frame-capture plan and
+  hard power-cycle recovery were described. The risk included a shared #DB
+  gate pointing at an unverified 12.02 `add rsp,0xe8; iretq` target while
+  only the trigger CPU's IST4 was redirected; an unrelated #DB on the
+  observer CPU could also enter that gate.
+- **Expected:** after the prior preflight, stage the canary and return
+  frame, start a PC-connected worker on another CPU, patch/read back the
+  trigger CPU's IST4 and the vector-1 gate, then issue one TF/NOP #DB.
+  The worker should log a stable five-qword frame if the CPU pushes one
+  at `IST4_top-0x28`; after a normal return, the main thread should
+  restore/verify the gate and IST4 before clearing scratch. A matching
+  frame would be stronger evidence of the patched-stack delivery than
+  the earlier return-only probe.
+- **Actual:** elfldr returned P1/P2/P3, `[F1] observer READY cpu=9
+  trigger_cpu=15`, and both E1 lines describing the planned one-qword
+  gate swap. No E2/E3/F2 followed; the sender timed out after 25 seconds.
+  The PC `ps5log/1` server received only one `READY` marker and no BYE;
+  it finalized that session uncleanly when stopped. Three subsequent
+  pings all failed.
+- **Recovery state:** console unreachable after the attempt; the owner
+  performed the agreed hard power cycle and confirmed normal operation.
+  A subsequent two-ping check passed.
+- **Interpretation:** [verified-on-console] the worker reached its ready
+  state and the main thread reached E1 before the freeze. [inference] The
+  absence of an `armed` marker does **not** locate the failure before the
+  gate readback: the main thread stores `OBS_ARMED` immediately before
+  TF/NOP without waiting for the worker to run or send that marker. A
+  gate/IST4 write/readback failure, a freeze during #DB, or a simultaneous
+  worker/network stop could each produce this log; a future marker emitted
+  after synchronized patch readback would distinguish them. This run did
+  not capture an exception frame and validates none of the four remaining
+  live-path boundaries below.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
