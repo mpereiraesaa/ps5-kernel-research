@@ -209,6 +209,49 @@ dump-verified anchor), the `break_hv` port, and the `cpu_switch`
 struct layout (the resumectx DR7 slot) for the DR7-style arm if the
 #GP trigger needs one.
 
+#### Rungs 1-2 results (2026-10-13): the IST-class death theories are falsified [verified-on-console]
+
+The `idtdump` diagnostic (pure CPL3 `copyout` reads, the `facs_read`
+class) measured the whole interrupt surface:
+
+- **only 4 gates use IST3/4/6** — vectors 1, 9, 13, 179: *the same
+  four vectors `r0gdb_setup` patches*. No other gate shares the
+  patched IST indexes (NMI=v2→IST2, #DF=v8→IST1, v30→IST5,
+  v3→IST7). The cross-vector IST-redirection theory is falsified;
+  the 48-write maximalism was redundant, not hazardous
+- **all four of v1/v9/v13/v179 share one handler** — kdata−0xA9C9DA
+  = our own `add_rsp_iret` gadget (doreti_iret−7): Sony implements
+  #DB/vector-9/#GP/vector-179 as a shared `add rsp,0xe8; iretq`
+  **dismiss-stub** — those exceptions are deliberately neutered on
+  12.02 (skip the frame and return; the faulting event is dismissed).
+  That is why the kstuff lineage patches them, and it validates the
+  port's #GP trigger design on a vector the kernel normally dismisses
+- **vector 3 (int3) is the only naturally-DPL3 gate** (IST7, the
+  dismiss-stub)
+- **vector 179's IST6 slot is one shared direct-map address on all
+  16 CPUs** (the dmap region, same region as the elfldr kpipe)
+- **5-second IST-stack activity monitor** (before/after/diff over
+  all 7 IST stacks × 16 CPUs): **all quiet except IST7 on cpus
+  0/1/2/6 — vector 3 (int3) fires naturally and regularly** (small
+  repeated-frame diffs at the stack top). Vectors 1/9/13/179/30/2/8
+  show **no natural events at all**
+
+Consequences:
+
+- the **natural-event-on-a-patched-vector theory is falsified**
+  (nothing fires v1/v9/v13/v179 naturally — the consistent
+  ~100–250 ms session deaths had no natural interrupt source)
+- the port must **never patch v3/ist7** (the only active vector);
+  the port's v13 target is measured-quiet — favorable
+- the remaining death-cause candidates: (a) the TSS
+  read-modify-write race (`r0gdb_setup` rewrites the whole 0x68-byte
+  TSS per CPU ×16, and the scheduler updates TSS rsp0 on every
+  context switch — a switch inside a window writes back a stale
+  rsp0, corrupting that CPU's ring-0 entry stack; weak fit for the
+  *consistent* 100–250 ms timing), (b) something SDK-build-specific
+  at ~100–250 ms (the pre-SDK Oct 9 build survived minutes), (c)
+  unknown
+
 ## Port phases
 
 1. **Offsets + gadget mapping** (offline + our primitives): the table
