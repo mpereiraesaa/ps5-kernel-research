@@ -70,18 +70,24 @@ core** at `engineering/payloads/byepervisor_probe_1202/kh2_capture.c/.h`.
 It accepts kernel-data read and log-send callbacks, reads the gate/IST6,
 frame slots, and journal words, and emits R0/R1/Q1/R2/Q2 plus changed frame
 and journal records. A failed read attempts an ERR-level `KH2E` line naming
-the stage, region, and address. Its host check,
+the stage, region, and address. Bounded R0/R1/R2 reads also emit paired
+`KH2R begin/done` records; a failed begin send prevents that read. The
+continuous F1/F2/journal scans do not emit these brackets, to avoid two
+extra PC sends per poll. Its host check,
 `kh2_capture_host_test.py --notes-repo /path/to/ps5-kernel-research`,
-compiled the sampler with `cc`, produced 11 native records, and combined
-them with B0/B1/B2/A2/D2 fixtures for a complete 18-record classifier run.
+compiled the sampler with `cc`, produced 11 native milestones plus 30 read
+brackets, and combined them with B0/B1/B2/A2/D2 fixtures for a complete
+18-milestone, 48-line classifier run.
 The host memory mock now uses a packed, unaligned IST6 field address;
 the sampled pointer value remains aligned. No console read of that revised
 path has occurred.
 It also checked mismatch, failed-read, failed-send (including the error
 line), and premature-quiesce paths. Source SHA-256: `kh2_capture.c`
-`e59fe9d2bf2d5c91cfd4d5be83eb20998ab2619c20ef1001fd077abf74c7856b`,
+`e938883f305114de17ab2ba9a90931413eed602d5a5c6ae64855b35d94285b72`,
 `kh2_capture.h`
 `96789919226b4d004958bb5dddcbc8766106c3d8948fcb0b25a22ed2b9db42b6`.
+The host-test source SHA-256 is
+`ad85f7289049ffaa0b4e943bc797d55a925e944a129b143de992130f16855349`.
 This code has no thread handoff, PS5 SDK adapter, or 12.02 chain integration;
 its phase guard checks call order only. `kh2_capture.c` also compiled as a
 PS5 SDK relocatable object; no payload link or console operation was performed.
@@ -93,12 +99,15 @@ capture core. Its `begin_arm`/`end_arm` and
 main and observer, requiring a worker read/sample acknowledgment before
 each trigger and quiescence before main resumes reads/logging. The host check
 `kh2_worker_host_test.py --notes-repo /path/to/ps5-kernel-research` ran 20
-mocked two-transaction handoffs, accepted each combined 18-record trace,
-and checked early-quiesce rejection, bad-R1 blocking, active read failure,
+mocked two-transaction handoffs, accepted each combined 18-milestone trace
+with 30 observer read brackets, and checked early-quiesce rejection,
+bad-R1 blocking, active read failure,
 and no reads in the main-owned interval. Source SHA-256: `kh2_worker.c`
 `8d0123922018fc7e3e56539f6e6e2de6152064838e4fc054a2f2f2071b4ccf9f`,
 `kh2_worker.h`
 `61606cbcaeb2003f1ab18ff46f58ea75a5ef5a7499a63173e757b7b67cd1b921`.
+The worker host-test source SHA-256 is
+`7a4ad81dfa58ca6e271784808692562367008a3baf2ce7303505bbc7bdd0679c`.
 The worker source cross-compiled as a PS5 SDK object. The callback bridge
 below now supplies linkable pinned-CPU/pipe/log functions, but there is no
 12.02 chain integration or console run.
@@ -138,7 +147,10 @@ pointer were rejected at D2 and A2 respectively. Injected B1/B2/A2/D2 write
 failures produced `KH2E` without their success records, and retries were
 rejected. The host check paired 47 write attempts in a complete transcript
 and 85 main-thread read attempts; it rejected failed `begin` sends before
-either callback type ran. This verifies format and baseline linkage across
+either callback type ran. The updated combined host test pairs 15 bounded
+observer reads as well, for 100 paired reads total; its source SHA-256 is
+`d851764d3580d931f4d47d14e4198ee17fb3272e56549c5209288628e435f175`.
+This verifies format and baseline linkage across
 two mock processes, not a same-attempt
 console trace. Source SHA-256: `kh2_main_capture.c`
 `3221546631da6b0c0b1e12a3db207d370277fa4ca3752d89badaaf134b60f60f`,
@@ -168,12 +180,13 @@ in **one host process** over one mutex-protected mock memory image and
 ordered log. Its callbacks reject a read, send, or main staging write by
 the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
 notes checkout with `--notes-repo`, classified 20 complete attempts with
-18 KH2 milestones, 94 `KH2W` lines, and 170 `KH2R` lines each. No callback-owner
+18 KH2 milestones, 94 `KH2W` lines, and 200 `KH2R` lines each (170 main,
+30 observer). No callback-owner
 violation or stage-order conflict occurred; a journal left changed
 was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
-`18779bc053e5317d8c387515560905b5dcb50390bd929f75d471e48d6a2f6180`,
+`1d9dc6b2c36796c38be32f8630a1fc8ee639770e485743bcddaa041e590241ff`,
 `kh2_integrated_host_test.py`
-`e734ad3d94437c4e12852a758128399b3e7aa9a43bc72830dadcdc1fcbcb74ac`.
+`cce7021edc84a9698adc97156138b53a6cb1272e1740c7c4fa0cfcd7eff7185d`.
 The two mock kernel events set frame/journal bytes directly; they are not
 hardware traps or a PS5 SDK/log transport test.
 

@@ -46,6 +46,9 @@ READ_REGIONS = {
     "B2": {"gate", "ist6", "context", "frame"},
     "A2": {"ist6", "armed"},
     "D2": {"gate", "ist6", "scratch", "image", "big", "journal"},
+    "R0": {"gate", "ist6"},
+    "R1": {"gate", "ist6", "f1", "f2", "A1P", "A1R", "D1S", "D1O"},
+    "R2": {"gate", "ist6", "f2", "D1S", "D1O"},
 }
 
 

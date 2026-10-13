@@ -144,6 +144,21 @@ class ClassifierTests(unittest.TestCase):
         self.assertIn("KH2R done without begin",
                       [item["reason"] for item in orphan["rejected"]])
 
+    def test_observer_handoff_read_bracket_keeps_r1_unverified(self):
+        begin = ("1\t1000\tMARK\tKH2R stage=R1 cpu=3 region=f1 "
+                 "addr=0x118 bytes=40 state=begin\n")
+        result = classify(begin.encode())
+        self.assertEqual(result["observed"], {})
+        self.assertEqual(result["first_missing_direct_evidence"], "B0")
+        self.assertEqual(result["open_read_attempts"][0]["stage"], "R1")
+        self.assertEqual(result["open_read_attempts"][0]["region"], "f1")
+        failed = classify((begin + "2\t2000\tERR\tKH2E stage=R1 cpu=3 "
+                           "operation=read region=f1 addr=0x118\n").encode())
+        self.assertEqual(failed["read_attempts"][0]["result"], "error")
+        invalid = classify(begin.replace("region=f1", "region=scratch").encode())
+        self.assertIn("malformed KH2R read bracket",
+                      [item["reason"] for item in invalid["rejected"]])
+
     def test_write_brackets_expose_open_callback_without_claiming_execution(self):
         prefix = f"1\t1000\tMARK\t{record('B0')}\n"
         begin = ("2\t2000\tMARK\tKH2W stage=B1 cpu=3 region=image "
