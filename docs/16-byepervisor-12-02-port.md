@@ -835,6 +835,37 @@ engine as “proven” would repeat a claim already corrected above.
   later in handler/return processing remain possible. No exception frame
   was captured and patched-stack delivery remains unvalidated.
 
+#### Comparison with Kstuff's kernel-execution path
+
+[public-consensus] Kstuff's installed #DB path uses the same
+`add_rsp_iret` gate target and an IST4 pointer to
+`noerrc_iret_frame+40`; see its
+[`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm#L158-L164)
+and [IDT/TSS installation](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/main.c#L1542-L1562).
+Its `iret_rip` field is 232 bytes into `noerrc_iret_frame`
+([`structs.inc`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/structs.inc#L16-L20)).
+Thus, with `F = noerrc_iret_frame+40`, the `add rsp,0xe8` entry
+lands at `F+0xc0 = noerrc_iret_frame+232`. [inference] This matches
+the one-shot probe's **initial stack arithmetic**. A different
+compiled IST4 pointer or frame layout in the working 1.11 build would
+falsify the comparison.
+
+The continuation differs. [public-consensus] Kstuff's first frame at
+that landing point has `RIP=justreturn`, kernel `CS=0x20`, flags `2`,
+and a kernel-side continuation stack; it then uses more staged frames,
+register/GS handling, and a later return
+([`kelf.asm`](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm#L245-L295)).
+Our probe staged a direct userland return at `F+0xc0`
+(`RIP=ist4_evidence_resumed`, `CS=0x43`, flags `0x202`, user RSP,
+`SS=0x3b`), with no `justreturn`/kernel continuation. [inference]
+The frozen probe therefore tested Kstuff's gate target and first
+stack displacement but **did not test the kernel-mode continuation
+that works in installed Kstuff**. A compiled probe frame showing a
+kernel `justreturn` first return would falsify this distinction.
+Earlier minchain/r0gdb attempts exercised parts of Kstuff's separate
+`run_in_kernel`/INT9 bootstrap; none completed a verified
+call/return and restoration on this console (the correction above).
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
