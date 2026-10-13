@@ -212,11 +212,54 @@ and have an independent reporting path. A captured restored gate before
 the audit attempt would falsify the proposed changed-gate link; the
 available logs do not establish what caused the outage.
 
-**Pre-armed observer contract for a later build [inference].** The
+**Isolated prearmed Kstuff variant, built offline and not run.**
+[verified-in-tree] Our separate local source
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-249,526-627`
+builds `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
+`522ba85be24e213ad22ab2ed1d1c667b6f54f82280c5d2bddaec51449672d489`.
+The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
+The worker runs on a second permitted CPU and sends `FC1 READY` before the
+main thread stages IST4 or changes the gate. After the main thread writes and
+reads back all 16 IST4 slots and the gate, the worker independently reads the
+full gate and all 16 IST4 values and sends `FC1 GATE_VERIFIED` with raw gate
+qwords, expected qwords, matched count, and first mismatch. The trigger waits
+for that PC send and acknowledgment. While armed, the worker reads all 16
+preseeded five-word frames and copy markers, sending each first change as
+`FC1 FRAME` or `FC1 MARKER`; successful return joins it before the main
+thread resumes SDK kernel R/W operations. A timeout or unsafe teardown parks.
+
+[verified-in-tree] The `FC1` local sequence begins at 1; its stages are
+`READY`, `GATE_VERIFIED`, zero or more `FRAME`/`MARKER` records, and
+`QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
+`build=prearmed-v1`, and selected/observer CPU numbers. The exact ELF SHA is
+recorded above, while `ps5log/1`'s `HELLO` boot token identifies the PC
+session; the version tag is not an ELF hash. `tools/khook_trace_classify.py`
+preserves raw `FC1` fields and sequence issues. With `--pc-same-run`, a
+matching gate/16 IST4 record advances the observed boundary beyond PR #97's
+prepatch `[K1]`; a selected CPU's changed frame or copy marker narrows it
+further. Without that operator assertion, these records remain visible but do
+not advance a separate elfldr transcript. An `FC1` marker is only a copy
+side effect, not proof of a valid return or debug-register arm. A changed
+frame is raw canary replacement and needs RIP/CS/RFLAGS/RSP/SS review.
+`tests/test_khook_trace_classify.py` covers linked and unlinked records,
+gate mismatch, frame/marker progression, nonselected CPU activity, and a
+failed observer on return using synthetic transcripts.
+
+[inference] This is still a risky one-`ICEBP` diagnostic, not the 11.60
+two-transaction port. Its second `pop_all_iret` frame does not restore an
+incidental CPU's original GPRs, and the observer itself runs during the
+shared-gate window. A byte-level all-register save/restore path in the
+current build would falsify this source reading; none is present in
+`fullchain_prearmed.c:478-510` or `fullchain_icebp.S:9-27`. The 12.02 gadget
+bytes remain unavailable. Building and classifying it offline do not approve
+a console run.
+
+**Pre-armed observer contract for a later two-transaction build [inference].** The
 separate-pipe calibration in `16` observed a pinned worker reading the
 gate/scratch and sending a PC record; the later pretrigger handshake
 observed a canary while a changed gate was installed. Neither run
-captured a post-trigger frame. The next offline design must keep the
+captured a post-trigger frame. The one-trap variant above covers only its
+IST4 frames and copy markers. A two-transaction design must keep the
 worker and its PC channel alive **before** any IST/gate write, then use
 an explicit sequence number and one shared phase word:
 

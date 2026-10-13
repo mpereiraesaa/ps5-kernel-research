@@ -84,6 +84,87 @@ def _transport(raw: bytes | None, manifest: dict | None) -> str:
     return "incomplete"
 
 
+def _fc1_records(pc_text: str) -> dict:
+    """Keep raw pre-armed observer reports and reject broken local ordering."""
+    records = []
+    issues = []
+    last_seq = 0
+    for line in pc_text.splitlines():
+        parts = line.split("\t", 3)
+        if len(parts) != 4 or not parts[3].startswith("FC1 "):
+            continue
+        fields = dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3]))
+        try:
+            seq = int(fields["seq"])
+            phase = fields["phase"]
+        except (KeyError, ValueError):
+            issues.append("malformed FC1 header")
+            continue
+        if seq != last_seq + 1:
+            issues.append(f"FC1 sequence expected {last_seq + 1}, got {seq}")
+        last_seq = seq
+        records.append({"seq": seq, "level": parts[2], "phase": phase,
+                        "fields": fields})
+
+    ready = next((r for r in records if r["phase"] == "READY"
+                  and r["level"] == "MARK"), None)
+    gate = next((r for r in records if r["phase"] == "GATE_VERIFIED"
+                 and r["level"] == "MARK"), None)
+    if sum(r["phase"] == "READY" for r in records) > 1:
+        issues.append("duplicate READY")
+        ready = None
+    if sum(r["phase"] == "GATE_VERIFIED" for r in records) > 1:
+        issues.append("duplicate GATE_VERIFIED")
+        gate = None
+    if gate:
+        fields = gate["fields"]
+        gate_cpu_matches = (ready is not None and
+                            fields.get("cpu") ==
+                            ready["fields"].get("trigger_cpu"))
+        if (fields.get("gate_lo") != fields.get("expected_lo")
+                or fields.get("gate_hi") != fields.get("expected_hi")
+                or fields.get("ist4_matched") != "16"
+                or fields.get("first_bad_cpu") != "-1"
+                or not all(re.fullmatch(r"0x[0-9a-fA-F]+", fields.get(k, ""))
+                           for k in ("gate_lo", "gate_hi"))
+                or not gate_cpu_matches):
+            issues.append("GATE_VERIFIED values do not match")
+            gate = None
+    if gate and (not ready or gate["seq"] <= ready["seq"]):
+        issues.append("GATE_VERIFIED precedes READY")
+        gate = None
+    frames = [r for r in records if r["phase"] == "FRAME"
+              and r["level"] == "MARK"
+              and all(re.fullmatch(r"0x[0-9a-fA-F]+", r["fields"].get(k, ""))
+                      for k in ("rip", "cs", "flags", "rsp", "ss"))]
+    markers = [r for r in records if r["phase"] == "MARKER"
+               and r["level"] == "MARK"
+               and r["fields"].get("value") == "0x4b53545546464348"]
+    if any(r["phase"] in ("FRAME", "MARKER") and
+           (not gate or r["seq"] <= gate["seq"]) for r in records):
+        issues.append("frame or marker without preceding verified gate")
+        frames = []
+        markers = []
+    def cpu_set(selected):
+        cpus = set()
+        for record in selected:
+            try:
+                cpu = int(record["fields"]["cpu"])
+                if not 0 <= cpu < 16:
+                    raise ValueError
+                cpus.add(cpu)
+            except (KeyError, ValueError):
+                issues.append(f"invalid CPU in FC1 {record['phase']}")
+        return sorted(cpus)
+
+    return {"records": records, "issues": issues,
+            "ready": bool(ready), "gate_verified": bool(gate),
+            "trigger_cpu": (int(ready["fields"]["trigger_cpu"])
+                            if ready and ready["fields"].get("trigger_cpu", "").isdigit()
+                            else None),
+            "frame_cpus": cpu_set(frames), "marker_cpus": cpu_set(markers)}
+
+
 def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
                              pc: bytes | None = None,
                              manifest: dict | None = None,
@@ -97,17 +178,19 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     live_text = live.decode("utf-8", errors="replace")
     pc_text = pc.decode("utf-8", errors="replace") if pc is not None else ""
     audit_text = audit.decode("utf-8", errors="replace") if audit else ""
+    fc1 = _fc1_records(pc_text)
 
     stage = re.search(r"\[K1\] fw=12\.02 cpu=(\d+) frames=16\b", live_text)
     returned = re.search(
         r"\[K2\] returned after INT1; cpu=(\d+) frame=(MATCH|MISMATCH) "
-        r"marker=(MATCH|MISMATCH)\b", live_text)
+        r"marker=(MATCH|MISMATCH)(?: observer=(OK|FAIL))?\b", live_text)
     pc_stage = re.search(
         r"^\d+\t\d+\tMARK\tstaged frames=16 cpu=(\d+) "
         r"chain=popall-copy-popall-doreti\b", pc_text, re.M)
     pc_return = re.search(
         r"^\d+\t\d+\t(?:MARK|WARN)\treturned after INT1 cpu=(\d+) "
-        r"frame=(MATCH|MISMATCH) marker=(MATCH|MISMATCH) restored=YES\b",
+        r"frame=(MATCH|MISMATCH) marker=(MATCH|MISMATCH) "
+        r"(?:observer=(OK|FAIL) )?restored=YES\b",
         pc_text, re.M)
     setup_stdout = ("[K2] full frames/IST4 and shared gate read back; "
                     "originals restored; no #DB" in live_text)
@@ -117,7 +200,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     restored = "[K1r] shared #DB gate and all IST4 slots restored" in live_text
 
     cpu = int(stage.group(1)) if stage else (
-        int(pc_stage.group(1)) if pc_stage and pc_same_run_verified else None)
+        int(pc_stage.group(1)) if pc_stage and pc_same_run_verified else (
+            fc1["trigger_cpu"] if pc_same_run_verified else None))
     audit_header = re.search(
         r"\[KA1\] gate_target=\+0x([0-9a-fA-F]+) gate_ist=(\d+) "
         r"native=(YES|NO) staged_ist4=(\d+) scratch_nonzero=(\d+)",
@@ -167,6 +251,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "audit_nonselected_cpus": (
             sorted((set(changed_cpus) | set(marked_cpus)) - {cpu})
             if audit_summary and cpu is not None else []),
+        "fc1": fc1,
     }
     return_record = returned or (pc_return if pc_same_run_verified else None)
     return_frame = returned.group(2) if returned else (
@@ -181,15 +266,24 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         boundary = "conflicting_return_records"
     elif return_record:
         boundary = ("one_trap_return_and_checks_passed" if
-                    return_frame == return_marker == "MATCH"
-                    else "returned_but_frame_or_marker_check_failed")
+                    return_frame == return_marker == "MATCH" and
+                    not (returned and returned.group(4) == "FAIL") and
+                    not (pc_return and pc_same_run_verified and
+                         pc_return.group(4) == "FAIL")
+                    else ("returned_but_observer_failed" if
+                          return_frame == return_marker == "MATCH" else
+                          "returned_but_frame_or_marker_check_failed"))
     elif same_attempt_verified and marker == "written" and frame == "canary_unchanged":
         boundary = "audit_conflict_marker_without_changed_frame"
-    elif same_attempt_verified and marker == "written" and frame == "changed":
+    elif (pc_same_run_verified and cpu is not None and
+          cpu in fc1["marker_cpus"]) or (
+          same_attempt_verified and marker == "written" and frame == "changed"):
         boundary = "copy_marker_seen_return_or_transport_unproven"
-    elif same_attempt_verified and frame == "changed":
+    elif (pc_same_run_verified and cpu is not None and
+          cpu in fc1["frame_cpus"]) or (same_attempt_verified and frame == "changed"):
         boundary = "frame_changed_copy_marker_or_later_unproven"
-    elif (same_attempt_verified and audit_header and
+    elif (pc_same_run_verified and fc1["gate_verified"]) or (
+          same_attempt_verified and audit_header and
           audit_header.group(1).lower() == "2b3626" and
           int(audit_header.group(4)) == 16):
         boundary = "gate_and_ist_staged_delivery_or_later_unproven"
@@ -202,7 +296,9 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "boundary": boundary,
         "pc_transport": _transport(pc, manifest),
         "nonselected_cpu_activity_requires_review": bool(
-            same_attempt_verified and signals["audit_nonselected_cpus"]),
+            (same_attempt_verified and signals["audit_nonselected_cpus"]) or
+            (pc_same_run_verified and cpu is not None and
+             (set(fc1["frame_cpus"] + fc1["marker_cpus"]) - {cpu}))),
         "caveat": ("Audit and PC-log evidence advance the boundary only with "
                    "explicit same-attempt assertions. A changed audit frame "
                    "supports delivery "

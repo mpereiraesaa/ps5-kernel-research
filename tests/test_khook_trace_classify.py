@@ -42,6 +42,14 @@ class FullchainTests(unittest.TestCase):
         b"flags=0x202 rsp=0x5678 ss=0x3b\n"
         b"[KA2] staged=16 changed_hw_frames=1 marked=0\n"
     )
+    FC1 = (
+        b"2\t2000\tMARK\tFC1 seq=1 phase=READY fw=12.02 "
+        b"build=prearmed-v1 trigger_cpu=3 observer_cpu=7\n"
+        b"3\t3000\tMARK\tFC1 seq=2 phase=GATE_VERIFIED cpu=3 "
+        b"gate_lo=0x111 gate_hi=0x222 expected_lo=0x111 "
+        b"expected_hi=0x222 ist4_matched=16 first_bad_cpu=-1 "
+        b"first_bad_ist=0x0\n"
+    )
 
     def test_prepatch_marker_does_not_prove_gate_patch(self):
         result = classify_kstuff_fullchain(self.LIVE_STAGE, pc=self.PC_STAGE)
@@ -123,6 +131,74 @@ class FullchainTests(unittest.TestCase):
             self.LIVE_STAGE, audit, same_attempt_verified=True)
         self.assertEqual(result["signals"]["audit_nonselected_cpus"], [7])
         self.assertTrue(result["nonselected_cpu_activity_requires_review"])
+
+    def test_prearmed_gate_record_advances_only_when_linked(self):
+        pc = self.PC_STAGE + self.FC1
+        unlinked = classify_kstuff_fullchain(self.LIVE_STAGE, pc=pc)
+        self.assertEqual(unlinked["boundary"],
+                         "prepatch_staging_seen_gate_patch_or_later_unproven")
+        linked = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=pc, pc_same_run_verified=True)
+        self.assertEqual(linked["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+        self.assertTrue(linked["signals"]["fc1"]["gate_verified"])
+        with_audit = classify_kstuff_fullchain(
+            self.LIVE_STAGE, self.AUDIT_CHANGED, pc=pc,
+            same_attempt_verified=True, pc_same_run_verified=True)
+        self.assertEqual(with_audit["boundary"],
+                         "frame_changed_copy_marker_or_later_unproven")
+
+    def test_prearmed_frame_and_marker_narrow_boundary(self):
+        frame = (b"4\t4000\tMARK\tFC1 seq=3 phase=FRAME cpu=3 "
+                 b"rip=0x123 cs=0x43 flags=0x202 rsp=0x456 ss=0x3b\n")
+        pc = self.PC_STAGE + self.FC1 + frame
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=pc, pc_same_run_verified=True)
+        self.assertEqual(result["boundary"],
+                         "frame_changed_copy_marker_or_later_unproven")
+        marker = (b"5\t5000\tMARK\tFC1 seq=4 phase=MARKER cpu=3 "
+                  b"value=0x4b53545546464348\n")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=pc + marker, pc_same_run_verified=True)
+        self.assertEqual(result["boundary"],
+                         "copy_marker_seen_return_or_transport_unproven")
+        self.assertEqual(result["signals"]["fc1"]["records"][-1]["fields"]["value"],
+                         "0x4b53545546464348")
+
+    def test_prearmed_gate_mismatch_and_nonselected_frame(self):
+        bad_gate = self.FC1.replace(b"gate_lo=0x111", b"gate_lo=0x112")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=self.PC_STAGE + bad_gate,
+            pc_same_run_verified=True)
+        self.assertFalse(result["signals"]["fc1"]["gate_verified"])
+        self.assertEqual(result["boundary"],
+                         "prepatch_staging_seen_gate_patch_or_later_unproven")
+        frame = (b"4\t4000\tMARK\tFC1 seq=3 phase=FRAME cpu=7 "
+                 b"rip=0x123 cs=0x20 flags=0x2 rsp=0x456 ss=0x0\n")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=self.PC_STAGE + self.FC1 + frame,
+            pc_same_run_verified=True)
+        self.assertTrue(result["nonselected_cpu_activity_requires_review"])
+
+    def test_prearmed_rejects_out_of_order_frame(self):
+        frame = (b"3\t3000\tMARK\tFC1 seq=2 phase=FRAME cpu=3 "
+                 b"rip=0x123 cs=0x43 flags=0x202 rsp=0x456 ss=0x3b\n")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE,
+            pc=self.PC_STAGE + self.FC1.splitlines(keepends=True)[0] + frame,
+            pc_same_run_verified=True)
+        self.assertEqual(result["boundary"],
+                         "prepatch_staging_seen_gate_patch_or_later_unproven")
+        self.assertIn("frame or marker without preceding verified gate",
+                      result["signals"]["fc1"]["issues"])
+
+    def test_prearmed_return_observer_failure_is_not_success(self):
+        live = self.LIVE_STAGE + (
+            b"[K2] returned after INT1; cpu=3 frame=MATCH marker=MATCH "
+            b"observer=FAIL saved_rip=0x123\n")
+        result = classify_kstuff_fullchain(live)
+        self.assertEqual(result["boundary"],
+                         "returned_but_observer_failed")
 
 
 class OtherClassifierTests(unittest.TestCase):
