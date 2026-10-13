@@ -239,6 +239,46 @@ client accepted a send, while only a retained PC log and matching manifest
 show what reached `ps5logd` before a possible shutdown. A generated fixture
 does not establish any kernel milestone.
 
+### Two-transaction observer ownership schedule
+
+[inference] The one-trap prearmed worker cannot simply keep sampling across
+the faithful two-trap test. Its `observer_channel_read` writes its pipe fields
+through the inherited SDK primitive before reading from a distinct pipe
+(`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`);
+the existing worker yields that primitive to main only after stopping
+(`fullchain_prearmed.c:602-625`). The `ps5log` client also states that calls
+from different threads must be serialized
+(`engineering/homebrew_ps5/projects/logging_server/client/ps5log.h:31`).
+[inference] If stdout capture is enabled, main-thread `printf` also writes
+through the log socket; it must be deferred or covered by the same logger
+handoff. A trace with clean, noninterleaved records from a separately
+synchronized logging implementation would falsify this restriction for that
+implementation.
+[public-consensus] The reference `kh_trigger` writes RBP/RIP/RSP after gate
+installation ([`khook.c:462-482`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L462-L482));
+the test path performs further kernel writes after the arm return and before
+its first `getuid`
+([`main.c:71-80`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/main.c#L71-L80),
+[`main.c:462-475`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/main.c#L462-L475)).
+
+| Interval | SDK kernel R/W and `ps5log` owner | Required handoff evidence before the next boundary |
+|---|---|---|
+| Before first trap | Worker opens its independent pipe and sends READY while main is idle, then yields. Main owns staging, gate/IST patch, final context writes, and B2 readback/log while worker waits idle. | After B2, main relinquishes both shared resources. Worker samples gate, selected IST6, both frame preseeds, and journal preseed, reports raw values, then acknowledges readiness. Only then may main issue TF/NOP without SDK reads/writes or logger calls. |
+| First trap through arm return | Worker owns sampling and logging of F1/A1P/A1R. Main executes the trap/return path without touching the SDK primitive or logger. | On return, main requests quiescence. Worker finishes any in-flight read/send and acknowledges idle before main reads the dispatch IST6 or emits A2. If no return, worker can continue sampling until shutdown, subject to transport survival. |
+| Between traps | Main owns A2 readback/log and any state/oracle writes or reads required before the test syscall. Worker remains idle. | Main relinquishes the resources again. Worker verifies dispatch IST6 and F2 canaries, reports its pretrigger sample, and acknowledges readiness before main calls `getuid`. |
+| Second trap through return | Worker owns F2/D1S/D1O sampling and logging. Main invokes the test syscall without concurrent SDK R/W or logger calls. | After return, worker quiesces and acknowledges idle before main performs D2 restoration/readback and closes the log. |
+
+The current KH2 classifier checks B0/B1/B2/A2/D2 data values and report
+arrival; it has **no worker-ready, quiesced, or second-ready records** and
+cannot verify this ownership schedule. Such direct control records and a
+real producer/observer handoff must be defined before calling the log plan
+implementable. An implementation with a truly independent kernel read
+primitive and synchronized thread-safe logger would falsify the need for
+this exact ownership transfer, but not the need to capture both frames before
+recovery (`11` #32). The observer CPU's own incidental #DB remains a separate
+shared-gate hazard. This is an offline map only; any live 12.02 build still
+requires owner approval and a hard power-cycle recovery plan.
+
 ### Pinned 11.60 marker placement arithmetic
 
 [public-consensus] In commit `5299395`, `kh_chain_store` emits five qwords
@@ -567,8 +607,9 @@ Compiling this audit ELF validates none of those contracts.
    The offline-built audit scaffold above covers the reference slot positions
    only; it has not been run or paired with an executing chain, and loading
    it after a stalled trigger is not an acceptable observation path. Pair the final
-   version with user-mode `ps5log/1` records and validate classification on
-   synthetic data before any live run.
+   version with user-mode `ps5log/1` records, explicit worker-ready/quiesced
+   handoffs for both traps, and validate classification on synthetic data
+   before any live run.
 5. Only after those gates, specify one exact FW 12.02 build, the expected
    marker sequence and falsifiers, the risk of a stranded gate/IST or panic,
    hard power-cycle recovery, and read-only baseline verification. Obtain
