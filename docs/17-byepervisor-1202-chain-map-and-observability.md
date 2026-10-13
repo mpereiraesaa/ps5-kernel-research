@@ -735,10 +735,13 @@ Compiling this audit ELF validates none of those contracts.
    (`docs/16-byepervisor-12-02-port.md:394-396`). The packed IST6 field address is at TSS `+0x4c`, which
    may be unaligned; the **stored stack top** is required to be aligned
    (`11` #37). The fixture uses `kdata_base=0` solely for synthetic geometry.
-   The selected CPU landing must lie inside the B1 image and contain **both**
-   frame slots; other landings must be disjoint from all B1 writes. A reference
-   reservation may contain the selected landing and its B1 writes, but it
-   must not overlap another CPU landing (`11` #35). Each planned IST top must
+   Every CPU landing must lie inside the staged/read-back B1 image. The
+   selected landing contains **both** frame slots and all four context
+   words; the big and journal spans must be disjoint from every landing.
+   This corrects the earlier plan that placed 15 IST targets in unobserved
+   bytes (`11` #35, #39). A reference reservation may contain the selected
+   landing and its B1 writes, but it must not overlap another CPU landing.
+   Each planned IST top must
    leave a `0x28`-byte hardware frame inside that CPU's landing. The selected
    tops equal F1/F2 `+0x28`; other CPU tops stay fixed between arm and
    dispatch in this plan; A2 now rereads all 16 to catch drift (`11` #36–#38).
@@ -782,6 +785,32 @@ Compiling this audit ELF validates none of those contracts.
    gate, and IST ownership plus readback; a later allocation or native-state
    observation contradicting that ownership would falsify the candidate even
    if this checker passes.
+
+   [verified-on-dump] A read-only zero-run scan of the held FW 12.02
+   `kernel-data-only-1202/kernel-data.bin` (SHA-256
+   `222bed173183ac5981557840816ca2efa4c7d8b95fde780a475533b18928cdee`)
+   found the contiguous zero interval `[kdata+0x208e5f8,
+   kdata+0x209eb18)`, length `0x10520`. The adjacent bytes on both ends
+   were nonzero. `examples/kh2_layout_1202_zero_span_candidate.json`
+   places a single `0x5000` B1 image at `kdata+0x2094500` covering all
+   16 `0x500` landings, with the selected landing last at the previously
+   tested `+0x2099000`; a `0x200` state/journal span at `+0x2099600`
+   covers the reference's `+0x600` state and `+0x620` saved gate/IST
+   positions, and a `0x600` big-chain span begins at `+0x209ca00`.
+   All three writes and the `0x4000` reference reservation end before
+   `+0x209eb18`; the checker reports valid interval geometry. The JSON
+   uses `kdata_base=0` to express offsets; it is **not** a runtime address
+   plan and has no real build or staged-image hashes. Log comparison
+   therefore refuses it until exact off-repo bytes and a build identity
+   exist.
+
+   [inference] This is a placement candidate only. The dump was captured
+   with Kstuff active and zero bytes cannot establish live ownership or
+   safe scratch. The 15 nonselected landing chains have not been built or
+   checked for a valid 12.02 pivot and return. A live read showing occupied
+   bytes, an allocation owner, a different selected CPU, or a byte-verified
+   chain that exceeds these spans would falsify this placement. No console
+   write or trigger is authorized by this zero-run calculation.
 4. Finalize a **pre-armed observer** against the chosen layout, including both
    frame slots, all journal words, gate/IST state, and the saved baseline.
    The offline-built audit scaffold above covers the reference slot positions

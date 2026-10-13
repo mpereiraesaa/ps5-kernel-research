@@ -1,0 +1,191 @@
+{
+  "candidate_status": "offline dump-zero geometry only; no ownership or instruction-byte validation",
+  "coordinates": "kdata-relative; replace kdata_base and rebase every address for a live boot",
+  "kdata_base": "0x0",
+  "selected_cpu": 0,
+  "landings": [
+    {
+      "cpu": 0,
+      "base": "0x2099000",
+      "size": "0x500"
+    },
+    {
+      "cpu": 1,
+      "base": "0x2094500",
+      "size": "0x500"
+    },
+    {
+      "cpu": 2,
+      "base": "0x2094a00",
+      "size": "0x500"
+    },
+    {
+      "cpu": 3,
+      "base": "0x2094f00",
+      "size": "0x500"
+    },
+    {
+      "cpu": 4,
+      "base": "0x2095400",
+      "size": "0x500"
+    },
+    {
+      "cpu": 5,
+      "base": "0x2095900",
+      "size": "0x500"
+    },
+    {
+      "cpu": 6,
+      "base": "0x2095e00",
+      "size": "0x500"
+    },
+    {
+      "cpu": 7,
+      "base": "0x2096300",
+      "size": "0x500"
+    },
+    {
+      "cpu": 8,
+      "base": "0x2096800",
+      "size": "0x500"
+    },
+    {
+      "cpu": 9,
+      "base": "0x2096d00",
+      "size": "0x500"
+    },
+    {
+      "cpu": 10,
+      "base": "0x2097200",
+      "size": "0x500"
+    },
+    {
+      "cpu": 11,
+      "base": "0x2097700",
+      "size": "0x500"
+    },
+    {
+      "cpu": 12,
+      "base": "0x2097c00",
+      "size": "0x500"
+    },
+    {
+      "cpu": 13,
+      "base": "0x2098100",
+      "size": "0x500"
+    },
+    {
+      "cpu": 14,
+      "base": "0x2098600",
+      "size": "0x500"
+    },
+    {
+      "cpu": 15,
+      "base": "0x2098b00",
+      "size": "0x500"
+    }
+  ],
+  "b1": {
+    "image": {
+      "base": "0x2094500",
+      "size": "0x5000"
+    },
+    "big": {
+      "base": "0x209ca00",
+      "size": "0x600"
+    },
+    "journal": {
+      "base": "0x2099600",
+      "size": "0x200"
+    }
+  },
+  "reserved": [
+    {
+      "name": "reference_image",
+      "base": "0x2099000",
+      "size": "0x4000"
+    }
+  ],
+  "gate": {
+    "base": "0x2e88310",
+    "size": 16
+  },
+  "tss": {
+    "base": "0x2e8afe0",
+    "stride": "0x68",
+    "ist_index": 6
+  },
+  "ist_qwords": [
+    "0x2e8b02c",
+    "0x2e8b094",
+    "0x2e8b0fc",
+    "0x2e8b164",
+    "0x2e8b1cc",
+    "0x2e8b234",
+    "0x2e8b29c",
+    "0x2e8b304",
+    "0x2e8b36c",
+    "0x2e8b3d4",
+    "0x2e8b43c",
+    "0x2e8b4a4",
+    "0x2e8b50c",
+    "0x2e8b574",
+    "0x2e8b5dc",
+    "0x2e8b644"
+  ],
+  "ist_targets": {
+    "arm": [
+      "0x2099040",
+      "0x2094528",
+      "0x2094a28",
+      "0x2094f28",
+      "0x2095428",
+      "0x2095928",
+      "0x2095e28",
+      "0x2096328",
+      "0x2096828",
+      "0x2096d28",
+      "0x2097228",
+      "0x2097728",
+      "0x2097c28",
+      "0x2098128",
+      "0x2098628",
+      "0x2098b28"
+    ],
+    "dispatch": [
+      "0x2099240",
+      "0x2094528",
+      "0x2094a28",
+      "0x2094f28",
+      "0x2095428",
+      "0x2095928",
+      "0x2095e28",
+      "0x2096328",
+      "0x2096828",
+      "0x2096d28",
+      "0x2097228",
+      "0x2097728",
+      "0x2097c28",
+      "0x2098128",
+      "0x2098628",
+      "0x2098b28"
+    ]
+  },
+  "frame_slots": [
+    "0x2099018",
+    "0x2099218"
+  ],
+  "context_qwords": [
+    "0x2099300",
+    "0x2099308",
+    "0x2099310",
+    "0x2099318"
+  ],
+  "journal_qwords": [
+    "0x2099700",
+    "0x2099708",
+    "0x2099710",
+    "0x2099718",
+    "0x2099720"
+  ]
+}

@@ -131,19 +131,22 @@ def check(plan):
             errors.append(f"{item[0]} outside B1 image")
     if not inside(selected, b1["image"]):
         errors.append("selected CPU landing outside B1 image")
-    for item in frames:
+    for item in frames + context:
         if not inside(item, selected):
             errors.append(f"{item[0]} outside selected CPU landing")
+    for cpu, landing in landings.items():
+        if not inside(landing, b1["image"]):
+            errors.append(f"cpu[{cpu}] outside B1 image")
     for item in journal:
         if not inside(item, b1["journal"]):
             errors.append(f"{item[0]} outside B1 journal")
 
-    # The selected landing must live in the B1 image so both frame slots can
-    # be reached through its IST6. All other physical overlaps are rejected.
+    # B1 image staging/readback must cover every CPU landing that the shared
+    # gate can select. Other physical overlaps are rejected.
     physical = list(landings.values()) + list(b1.values()) + [gate] + ist
     for i, item in enumerate(physical):
         for other in physical[i + 1:]:
-            if {item[0], other[0]} == {selected[0], "image"}:
+            if item[0].startswith("cpu[") and other[0] == "image" and inside(item, other):
                 continue
             if intersects(item, other):
                 errors.append(f"{item[0]} overlaps {other[0]}")
