@@ -16,6 +16,7 @@ from pathlib import Path
 STAGES = ("B0", "B1", "B2", "F1", "A1P", "A1R", "A2", "F2",
           "D1S", "D1O", "D2")
 B1_PARTS = ("image", "big", "journal")
+JOURNAL_STAGES = ("A1P", "A1R", "D1S", "D1O")
 USER_STAGES = ("B0", "B1", "B2", "A2", "D2")
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
@@ -28,7 +29,8 @@ SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
 
 
 def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
-                ist_count: int | None) -> tuple[str | None, int | None]:
+                ist_count: int | None, frame_preseed: dict | None,
+                journal_preseed: dict | None) -> tuple[str | None, int | None]:
     def number(key: str) -> int:
         value = fields.get(key, "")
         if not HEX.fullmatch(value):
@@ -57,9 +59,13 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             number("gate_lo")
             number("gate_hi")
             number("ist6")
-            if number("f1_slot") == number("f2_slot"):
-                raise ValueError("frame slots are identical")
+            f1_slot, f2_slot = number("f1_slot"), number("f2_slot")
+            if f1_slot % 8 or f2_slot % 8 or (
+                    f1_slot < f2_slot + 0x28 and f2_slot < f1_slot + 0x28):
+                raise ValueError("frame slots overlap or are unaligned")
         elif stage == "B1":
+            if baseline is None:
+                raise ValueError("B0 baseline missing for image layout")
             if fields.get("part") not in B1_PARTS:
                 raise ValueError("missing or unknown image part")
             number("addr")
@@ -67,6 +73,22 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("image part has no bytes")
             if sha("image_sha") != sha("readback_sha"):
                 raise ValueError("image/readback hash mismatch")
+            if fields["part"] == "image":
+                start, end = number("addr"), number("addr") + int(fields["bytes"])
+                if any(slot < start or slot + 0x28 > end for slot in
+                       (baseline["f1_slot"], baseline["f2_slot"])):
+                    raise ValueError("frame slot outside staged image")
+            if fields["part"] == "journal":
+                start, end = number("addr"), number("addr") + int(fields["bytes"])
+                addresses = []
+                for name in JOURNAL_STAGES:
+                    address = number(f"{name.lower()}_addr")
+                    number(f"{name.lower()}_before")
+                    if address < start or address + 8 > end or address % 8:
+                        raise ValueError("journal word outside staged region")
+                    addresses.append(address)
+                if len(set(addresses)) != len(addresses):
+                    raise ValueError("journal preseed addresses reused")
         elif stage == "B2":
             if baseline is None:
                 raise ValueError("B0 baseline missing for gate comparison")
@@ -88,21 +110,33 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("pretrigger return target or stack is zero")
             if number("dr7_actual") != 0x403:
                 raise ValueError("pretrigger DR7 differs from reference arm value")
+            canaries = [number(f"{frame}_can{i}")
+                        for frame in ("f1", "f2") for i in range(5)]
+            if len(set(canaries)) != len(canaries):
+                raise ValueError("pretrigger frame canaries not distinct")
             return None, count
         elif stage in ("F1", "F2"):
             if baseline is None:
                 raise ValueError("B0 baseline missing for frame address")
+            if frame_preseed is None:
+                raise ValueError("B2 pretrigger frame canaries missing")
             expected_slot = baseline["f1_slot" if stage == "F1" else "f2_slot"]
             if number("slot") != expected_slot:
                 raise ValueError("frame slot differs from B0")
             actual = [number(key) for key in ("rip", "cs", "flags", "rsp", "ss")]
             preseed = [number(f"can{i}") for i in range(5)]
+            if preseed != frame_preseed[stage]:
+                raise ValueError("frame canaries differ from B2 pretrigger readback")
             if actual == preseed:
                 raise ValueError("frame canary unchanged")
-        elif stage in ("A1P", "A1R", "D1S", "D1O"):
-            number("addr")
+        elif stage in JOURNAL_STAGES:
+            if journal_preseed is None:
+                raise ValueError("B1 journal preseed missing")
+            address = number("addr")
             before, after, expected = (number(key) for key in
                                        ("before", "after", "expected"))
+            if (address, before) != journal_preseed[stage]:
+                raise ValueError("journal baseline differs from B1 preseed")
             if before == after or after != expected:
                 raise ValueError("journal transition not verified")
         elif stage == "A2":
@@ -137,7 +171,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     b1_regions = []
     baseline = None
     ist_count = None
-    journal_addrs = set()
+    frame_preseed = None
+    journal_preseed = None
     for line in raw.decode("utf-8", errors="replace").splitlines():
         if "\tMARK\tKH1 " in line:
             rejected.append({"reason": "KH1 lacks required raw evidence"})
@@ -146,7 +181,17 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         if not match:
             continue
         seq, _, payload = match.groups()
-        fields = dict(re.findall(r"\b(\w+)=([^\s]+)", payload))
+        fields = {}
+        malformed = False
+        for token in payload.split():
+            pair = re.fullmatch(r"([A-Za-z_]\w*)=([^\s=]+)", token)
+            if pair is None or pair.group(1) in fields:
+                malformed = True
+                break
+            fields[pair.group(1)] = pair.group(2)
+        if malformed:
+            rejected.append({"seq": int(seq), "reason": "malformed or duplicate KH2 field"})
+            continue
         stage, source = fields.get("stage"), fields.get("source")
         if source != SOURCES.get(stage):
             rejected.append({"seq": int(seq), "stage": stage, "reason": "wrong source"})
@@ -154,7 +199,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         if stage in seen or (stage == "B1" and fields.get("part") in b1_parts):
             rejected.append({"seq": int(seq), "stage": stage, "reason": "duplicate"})
             continue
-        reason, count = _raw_fields(stage, fields, baseline, ist_count)
+        reason, count = _raw_fields(stage, fields, baseline, ist_count,
+                                    frame_preseed, journal_preseed)
         if reason:
             rejected.append({"seq": int(seq), "stage": stage, "reason": reason})
             continue
@@ -167,13 +213,6 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                                  "reason": "image parts overlap"})
                 continue
             b1_regions.append((start, end))
-        if stage in ("A1P", "A1R", "D1S", "D1O"):
-            address = int(fields["addr"], 16)
-            if address in journal_addrs:
-                rejected.append({"seq": int(seq), "stage": stage,
-                                 "reason": "journal address reused"})
-                continue
-            journal_addrs.add(address)
         if stage == "B0":
             baseline = {"cpu": int(fields["cpu"]),
                         "gate_lo": int(fields["gate_lo"], 16),
@@ -184,8 +223,16 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                         "f2_slot": int(fields["f2_slot"], 16)}
         if stage == "B2":
             ist_count = count
+            frame_preseed = {name.upper(): [int(fields[f"{name}_can{i}"], 16)
+                                            for i in range(5)]
+                             for name in ("f1", "f2")}
         if stage == "B1":
             b1_parts[fields["part"]] = int(seq)
+            if fields["part"] == "journal":
+                journal_preseed = {
+                    name: (int(fields[f"{name.lower()}_addr"], 16),
+                           int(fields[f"{name.lower()}_before"], 16))
+                    for name in JOURNAL_STAGES}
             if len(b1_parts) == len(B1_PARTS):
                 seen[stage] = int(seq)
         else:
@@ -198,8 +245,6 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
     out_of_order = ordered != sorted(ordered, key=STAGES.index)
     user_order = [stage for stage in ordered if stage in USER_STAGES]
     causal_order_conflict = user_order != sorted(user_order, key=USER_STAGES.index)
-    if "B0" in seen and any(seq < seen["B0"] for seq in b1_parts.values()):
-        causal_order_conflict = True
     first_missing = next((stage for stage in STAGES if stage not in seen), None)
     later = (list(stage for stage in STAGES[STAGES.index(first_missing) + 1:]
                   if stage in seen) if first_missing else [])

@@ -42,8 +42,25 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 26 | Bitwise OR of the frame-canary base with `cpu<<8` makes all 16 CPU canary values distinct | **FALSE** — the base already has bits set in that byte. The PR #97 source produces 20 unique values across 80 CPU/word combinations, although per-CPU slot addresses remain disjoint. The isolated prearmed variant uses addition and produces 80 distinct values. | [verified-in-tree] `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:287-290`, `fullchain_prearmed.c:123-124,507-508`; `tools/fullchain_layout_check.py` |
 | 27 | The KH2 observer's PC report order proves the order of kernel frame and journal writes | **WRONG CAUSAL READING** — independent sampling and sending can lag the writes or scan addresses in a different order. A reversed pair of `F*`/`A1*`/`D1*` reports is an arrival-order difference, not an execution-order reversal. Only the ordered user-mode control records support the narrower causal check. | [verified-in-tree] `tools/khook_trace_classify.py` `classify`, `engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-262`; [inference] asynchronous sampling can reorder reports |
 | 28 | The 11.60 khook's arm, dispatch, handler, and frame are five disjoint physical B1 writes, and gate readback alone is its final preparation step | **WRONG STAGING MODEL** — the first `0x500` image contains arm/dispatch/frame material; the big chain is a separate write. After installation, `kh_trigger` still patches saved RBP and arm RIP/RSP before TF. A closer port needs a final context readback to bound this preparation gap. | [public-consensus] `5299395/khook.c:390-478`; [verified-in-tree] `docs/17-byepervisor-1202-chain-map-and-observability.md` KH2 contract |
+| 29 | A KH2 frame or journal report proves a change merely because its own `before` and `after` values differ | **UNLINKED BASELINE** — a later report can supply any canary or `before` word. B2 must read the frame canaries before triggering, and B1 must read the journal preseed; later reports must match those earlier samples before claiming a change. | [verified-in-tree] `tools/khook_trace_classify.py` `_raw_fields` and `classify`, `tests/test_khook_trace_classify.py`; [inference] same-attempt baseline linkage is required for a change claim |
 
 ## Detail on the load-bearing ones
+
+### #29 — A change needs an independently recorded before value [inference]
+
+The first KH2 frame check compared a reported hardware-frame tuple to
+`can0..4` supplied **in the same F1/F2 line**. The first journal check
+similarly compared `before` and `after` in one marker line. A mistaken or
+malformed producer could report arbitrary before values and make unchanged
+memory appear changed. The proposed contract now records both five-word
+frame canaries in B2 immediately before TF, and all four journal addresses
+and preseed words in B1. The classifier accepts a later frame or marker
+change only when its before values match those earlier same-run records.
+
+A direct same-attempt memory capture contradicting the B1 or B2 baseline at
+the named address would falsify a claimed change. This linkage improves the
+log's internal evidence; it does not prove the sender read the intended
+kernel address or that #DB fired.
 
 ### #28 — Physical staging and final trigger preparation [public-consensus]
 

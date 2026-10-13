@@ -23,7 +23,9 @@ def record(stage, **overrides):
                "rbp_actual": "0x100", "rbp_expected": "0x100",
                "rip_actual": "0x200", "rip_expected": "0x200",
                "rsp_actual": "0x300", "rsp_expected": "0x300",
-               "dr7_actual": "0x403", "dr7_expected": "0x403"},
+               "dr7_actual": "0x403", "dr7_expected": "0x403",
+               **{f"f1_can{i}": hex(i + 1) for i in range(5)},
+               **{f"f2_can{i}": hex(i + 11) for i in range(5)}},
         "F1": {"slot": "0x118", "rip": "0x1234", "cs": "0x43",
                "flags": "0x202", "rsp": "0x5678", "ss": "0x3b",
                **{f"can{i}": hex(i + 1) for i in range(5)}},
@@ -38,8 +40,18 @@ def record(stage, **overrides):
                "scratch_readback_sha": "d" * 64},
     }
     if stage == "B1":
-        raw[stage] = {"part": "image", "addr": "0x1000", "bytes": "128",
+        part = overrides.get("part", "image")
+        geometry = {"image": ("0x100", "1280"),
+                    "big": ("0x1000", "1536"),
+                    "journal": ("0x700", "256")}
+        addr, length = geometry[part]
+        raw[stage] = {"part": part, "addr": addr, "bytes": length,
                       "image_sha": "c" * 64, "readback_sha": "c" * 64}
+        if part == "journal":
+            for name, address in (("a1p", "0x700"), ("a1r", "0x708"),
+                                  ("d1s", "0x710"), ("d1o", "0x718")):
+                raw[stage][f"{name}_addr"] = address
+                raw[stage][f"{name}_before"] = "0x0"
     if stage in ("A1P", "A1R", "D1S", "D1O"):
         addr = {"A1P": "0x700", "A1R": "0x708",
                 "D1S": "0x710", "D1O": "0x718"}[stage]
@@ -54,8 +66,8 @@ def run(*stages, clean=False, gaps=None):
     payloads = []
     for stage in stages:
         if stage == "B1":
-            payloads.extend(record(stage, part=part, addr=hex(0x1000 + 0x100 * i))
-                            for i, part in enumerate(("image", "big", "journal")))
+            payloads.extend(record(stage, part=part)
+                            for part in ("image", "big", "journal"))
         else:
             payloads.append(record(stage))
     lines = [f"{i}\t{i * 1000}\tMARK\t{payload}\n"
@@ -326,7 +338,7 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertIn("AP phase unassessed", result["interpretation"])
 
     def test_reversed_or_wrong_source_record_is_flagged(self):
-        result = run("B1", "B0", clean=True)
+        result = run("B0", "B2", "B1", clean=True)
         self.assertTrue(result["out_of_order"])
         self.assertTrue(result["causal_order_conflict"])
         raw = ("1\t1\tMARK\t" + record("F1", source="user") + "\n").encode()
@@ -354,7 +366,8 @@ class OtherClassifierTests(unittest.TestCase):
         result = classify(old)
         self.assertEqual(result["observed"], {})
         self.assertIn("KH1 lacks required raw evidence", result["rejected"][0]["reason"])
-        partial = ("1\t1\tMARK\t" + record("B1") + "\n").encode()
+        partial = ("1\t1\tMARK\t" + record("B0") + "\n" +
+                   "2\t2\tMARK\t" + record("B1") + "\n").encode()
         result = classify(partial)
         self.assertNotIn("B1", result["observed"])
         self.assertEqual(len(result["b1_missing_parts"]), 2)
@@ -362,29 +375,31 @@ class OtherClassifierTests(unittest.TestCase):
     def test_unchanged_frame_and_wrong_journal_value_are_rejected(self):
         same = record("F1", rip="0x1", cs="0x2", flags="0x3",
                       rsp="0x4", ss="0x5")
-        raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
-               "2\t2\tMARK\t" + same + "\n" +
-               "3\t3\tMARK\t" + record("A1P", after="0x56") + "\n").encode()
+        payloads = [record("B0"), record("B1", part="journal"),
+                    record("B2"), same, record("A1P", after="0x56")]
+        raw = "".join(f"{i}\t{i}\tMARK\t{value}\n"
+                      for i, value in enumerate(payloads, 1)).encode()
         result = classify(raw)
-        self.assertEqual(result["observed"], {"B0": 1})
+        self.assertEqual(result["observed"], {"B0": 1, "B2": 3})
         self.assertIn("frame canary unchanged", result["rejected"][0]["reason"])
         self.assertIn("journal transition not verified", result["rejected"][1]["reason"])
 
     def test_cross_stage_readbacks_and_disjoint_evidence(self):
         lines = [record("B0"), record("B1"),
-                 record("B1", part="big", addr="0x1040"),
+                 record("B1", part="big", addr="0x140"),
                  record("B2", gate_lo="0x111", expected_lo="0x111",
                         gate_hi="0x222", expected_hi="0x222"),
+                 record("B1", part="journal"),
                  record("A1P"), record("A1R", addr="0x700"),
                  record("D2", scratch_readback_sha="e" * 64)]
         raw = "".join(f"{i}\t{i}\tMARK\t{value}\n"
                       for i, value in enumerate(lines, 1)).encode()
         result = classify(raw)
-        self.assertEqual(result["observed"], {"B0": 1, "A1P": 5})
+        self.assertEqual(result["observed"], {"B0": 1, "A1P": 6})
         reasons = [entry["reason"] for entry in result["rejected"]]
         self.assertIn("image parts overlap", reasons)
         self.assertIn("gate equals native B0 baseline", reasons)
-        self.assertIn("journal address reused", reasons)
+        self.assertIn("journal baseline differs from B1 preseed", reasons)
         self.assertIn("restoration readback differs from B0", reasons)
 
     def test_gate_and_restoration_require_native_baseline(self):
@@ -408,6 +423,58 @@ class OtherClassifierTests(unittest.TestCase):
                 self.assertNotIn("B2", result["observed"])
                 self.assertEqual(result["first_missing_direct_evidence"], "B1")
                 self.assertEqual(len(result["rejected"]), 1)
+
+    def test_frame_and_journal_changes_require_earlier_samples(self):
+        payloads = [record("B0"), record("B1", part="journal"),
+                    record("B2"), record("F1", can0="0xff"),
+                    record("A1P", before="0x9")]
+        raw = "".join(f"{i}\t{i}\tMARK\t{value}\n"
+                      for i, value in enumerate(payloads, 1)).encode()
+        result = classify(raw)
+        self.assertNotIn("F1", result["observed"])
+        self.assertNotIn("A1P", result["observed"])
+        reasons = [entry["reason"] for entry in result["rejected"]]
+        self.assertIn("frame canaries differ from B2 pretrigger readback", reasons)
+        self.assertIn("journal baseline differs from B1 preseed", reasons)
+
+    def test_b2_rejects_duplicate_canaries_and_unstaged_journal(self):
+        raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
+               "2\t2\tMARK\t" + record("B2", f2_can0="0x1") + "\n" +
+               "3\t3\tMARK\t" + record("B1", part="journal",
+                                        a1p_addr="0x900") + "\n").encode()
+        result = classify(raw)
+        self.assertNotIn("B2", result["observed"])
+        self.assertNotIn("journal", result["b1_parts"])
+        self.assertEqual([item["reason"] for item in result["rejected"]],
+                         ["pretrigger frame canaries not distinct",
+                          "journal word outside staged region"])
+
+    def test_frame_slots_must_fit_the_staged_image(self):
+        raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
+               "2\t2\tMARK\t" + record("B1", addr="0x200") + "\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "frame slot outside staged image")
+        raw = ("1\t1\tMARK\t" +
+               record("B0", f2_slot="0x120") + "\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "frame slots overlap or are unaligned")
+
+    def test_kh2_record_fits_console_logger_line(self):
+        import re
+        for value in (record("B2"), record("B1", part="journal")):
+            worst = re.sub(r"0x[0-9a-f]+", "0xffffffffffffffff", value)
+            self.assertLess(len(worst.encode()) + 30, 1024)
+
+    def test_duplicate_or_malformed_kh2_fields_are_rejected(self):
+        for suffix in (" cpu=4", " extra=one=two", " stray"):
+            with self.subTest(suffix=suffix):
+                raw = ("1\t1\tMARK\t" + record("B0") + suffix + "\n").encode()
+                result = classify(raw)
+                self.assertEqual(result["observed"], {})
+                self.assertEqual(result["rejected"][0]["reason"],
+                                 "malformed or duplicate KH2 field")
 
 
 if __name__ == "__main__":

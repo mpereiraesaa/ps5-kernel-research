@@ -156,15 +156,17 @@ source=… cpu=… verified=1`. The source tag names where it read the evidence:
 the raw values below. All addresses and 64-bit words use `0x` hex, all
 SHA-256 values use 64 hex digits, and CPU is a decimal 0–15. These checks
 test internal consistency; instruction-byte validation and independent
-same-attempt capture are separate requirements.
+same-attempt capture are separate requirements. A duplicate or malformed
+`key=value` field is rejected so a later value cannot silently replace an
+earlier one in the host parse.
 
 | Stage | Required KH2 fields after the common header | Host check |
 |---|---|---|
-| B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two distinct planned frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
-| B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…` | Each physical write span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. The frame canaries and arm/dispatch chains are **inside** `image`, not separate write spans. |
-| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. This record belongs **after** the final context writes and **before** TF. |
-| F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; the raw five-word frame differs from its five-word canary. A plausible hardware frame still needs human review. |
-| A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | The journal word changed and equals the expected marker at a distinct address for each milestone. Marker ownership and gadget placement still need independent proof. |
+| B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two aligned, nonoverlapping planned five-word frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
+| B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…`. The journal record also has `<stage>_addr=… <stage>_before=…` for each of `a1p`, `a1r`, `d1s`, `d1o`. | Each physical write span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. Both B0 frame slots fit wholly inside `image`. The journal preseed words occupy distinct aligned qwords inside its region. |
+| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
+| F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; all five reported canaries match that frame's independent B2 readback, and the raw five-word frame differs. A plausible hardware frame still needs human review. |
+| A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | Address and `before` match that marker's B1 journal preseed; the word changed and equals the expected marker. Marker ownership and gadget placement still need independent proof. |
 | A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The dispatch IST and armed-state readbacks agree, and the armed state is nonzero. |
 | D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=…` | The return/restoration assertions are present; the restored IST count equals B2's count when available, and selected gate/IST/scratch readbacks equal B0. The AP phase has its own evidence set. |
 
@@ -172,6 +174,15 @@ Legacy bare `KH1 … verified=1` records are rejected because they omit the
 frame, journal, and readback values. A KH2 line can still be false if its
 producer fabricated or sampled the wrong address; the classifier cannot
 authenticate a kernel event from text alone.
+
+[inference] A later frame report cannot establish a canary replacement by
+supplying its own unlinked `can0..4` values; likewise a journal report cannot
+establish a transition by supplying its own `before` word. The independent
+B2 pretrigger frame readback and B1 journal preseed make these comparisons
+auditable across records. A same-attempt capture showing different preseed
+values at the stated addresses would falsify the reported change or the
+address map. The values still do not authenticate the producer or prove a
+valid #DB entry (`11` #29).
 
 [public-consensus] The 11.60 installer writes one first-`0x500` image
 containing the arm and dispatch stacks/frames and separately writes its big
@@ -195,8 +206,8 @@ arrival order; it is **not** proof that kernel execution reversed. The
 independent observer may sample frame and journal addresses after subsequent
 steps have already run, or emit their reports in scan order.
 `causal_order_conflict` is reserved for reversal among the user-mode control
-records `B0`, `B1`, `B2`, `A2`, and `D2`, including any B1 part sent before
-B0. B2 gate and D2 restoration claims require the B0 native baseline for
+records `B0`, `B1`, `B2`, `A2`, and `D2`. A B1 part sent before B0 is rejected
+because its physical layout cannot yet be checked. B2 gate and D2 restoration claims require the B0 native baseline for
 comparison (`11` #27). The
 classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
 real 12.02 run has yet produced this record format.
