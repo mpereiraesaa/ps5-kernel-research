@@ -1049,7 +1049,12 @@ its expected outcome is either `[J2] ... frame=MATCH` or a failed
 return with a readable staged frame. Its known risk is another
 unrestored shared gate/all-CPU IST4 state, with possible console panic.
 Recovery is a hard power cycle followed by a read-only baseline audit.
-This repeat requires fresh owner approval before sending.
+This repeat requires fresh owner approval before sending. On clarification,
+the owner asked whether it used a **complete kernel continuation and return
+path**. It does not: the proposed repeat reuses the minimal `justreturn`
+→ hardware-frame return. The repeat is deferred. A full-chain
+probe would be a different build with its own reviewed frame sequence,
+build identity, expected observations, and recovery plan.
 
 ### Frame staging isolation run
 
