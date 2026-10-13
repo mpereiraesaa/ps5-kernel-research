@@ -1002,7 +1002,9 @@ Compiling this audit ELF validates none of those contracts.
    finder therefore cannot be fed by merely requesting a shorter
    `kernel_copyout` window at a candidate offset; a changed NPT state or
    a separately validated non-pipe acquisition path would falsify this
-   constraint for a future run. The staged GPUVM v3 route in `07` remains
+   constraint for a future run. [verified-in-tree] The staged GPUVM v3
+   route is also blocked by the PTE PA/KVA mismatch, unresolved GPU VAs,
+   and unchecked restore (`07` §“gate upgrade”; `11` #45). It remains
    unrun and cannot be counted as a held 12.02 text image.
 2. Identify a 12.02 test-hook instruction boundary and resume contract, then
    separately the resume-window `startup_mp` call and AP init vector. A

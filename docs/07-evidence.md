@@ -846,14 +846,50 @@ For the C1 experiment we now have everything ps5-hen's gpu_dma.cpp needs:
 **Verified**:
 - v2 crash sequence (pipe on GPUVM-derived GPU-local phys):
   **blocked by all 5 policies** (15 failures)
-- v3 safe sequence (alias for all GPUVM derefs): **all pass**
+- v3 *modeled read sequence* (alias for the listed GPUVM-derived
+  dereferences): **all pass**. [verified-in-tree]
+  `engineering/ps5-sim-lab/hvemu/gate.py:151-173,188-196` models only
+  those reads and skips every non-read operation. This result does not
+  check the payload's returned PTE address, retarget writes, DMA buffer
+  GPU VAs, or restoration.
 - All existing gates still green (replay, Unicorn, matrix, QA gate,
   instrument gate)
 
-**gpuvm_read v3 built** (`65b596e4…`) — all GPUVM pointer chasing
-now uses the alias engine (guarded SIGSEGV). Pipe primitive only on
-kernel data and the PDB2's own kernel VA. **Staged, NOT sent —
-awaiting owner approval for console session.**
+**gpuvm_read v3 built** (`65b596e4…`) and **not run**. Its page-table
+pointer chase uses the guarded alias reader. A 2026-10-14 source audit
+found that the built ELF is **blocked offline**; the earlier gate pass
+must not be used as a console-readiness claim:
+
+- [verified-in-tree] `engineering/payloads/gpuvm_read/main.c:215,235,265`
+  returns a *physical* GPU page-table entry address while claiming a
+  kernel VA. The caller treats it as `victim_pte_va` and gives it to
+  SDK `read64`/`kernel_setlong` at `:369-382,419-422,523,573-574,597`.
+  The destination path instead adds `dmap` at `:497`. [inference] The
+  victim read/write therefore targets the wrong address domain; no
+  v3 console observation identifies its actual failure mode. Merely
+  adding `dmap` would not prove that a GPUVM-derived page is safe for
+  a pipe write/read (compare the v2 crash above).
+- [verified-in-tree] `engineering/payloads/gpuvm_read/main.c:430-470`
+  acknowledges that the readback buffer's GPU VA is unknown;
+  `:473-539` then assumes a usable adjacent GPU page, after retargeting
+  the victim. `:561-564` uses the command buffer's **CPU** VA as its
+  GPU VA. [verified-on-console] The v1 run above found disjoint CPU/GPU
+  VA ranges on 12.02. [inference] Neither DMA address is validated for
+  this firmware; finding independently translated GPU VAs would falsify
+  this missing-mapping constraint.
+- [verified-in-tree] `engineering/payloads/gpuvm_read/main.c:523-524,537-539,573-575,597-598`
+  ignores restore return values and does not read back either original
+  PTE, although it prints restoration. `:554,577-587` transfers only
+  64 bytes and treats any nonzero readback among the first 16 as a text
+  read. [inference] Those observations cannot authenticate 12.02 text
+  bytes or a clean restored state; exact readback of both PTEs plus an
+  independently identified text marker would falsify this evidence gap.
+
+[inference] A revised acquisition path needs validated CPU access or
+guarded writes for *both* PTE entries, independent GPU VA resolution for
+command/source/destination, readback-verified restoration on every exit,
+and a text identity check before its output can feed a gadget scan.
+These are offline exit conditions, not a proposal to run the current ELF.
 
 ## 2026-10-09 (STALEUS + CVE integration) — emulator: 7 policies × 9 chains = 63 combinations
 
@@ -1180,9 +1216,12 @@ becomes the staged Phase-B text-read payloads:
   byte-scan for the CR4 gadgets)
 - or **gpuvm_read v3** (PDB2 → retarget to .text → PM4 DMA)
 
-Both are built, gated, and staged. After the owner's power cycle
-#3, the next console phase should be the QA chain (needs its rest
-cycle), not another ring-0 session.
+This was the 2026-10-09 plan: both ELFs were built and staged, and
+the next proposed console phase was the QA chain after the owner's
+power cycle #3. The GPUVM v3 *modeled read sequence* passed its narrow
+gate, but the 2026-10-14 source audit above blocks the actual v3 ELF.
+The QA direct pipe baseline later panicked (`11` #44), so this historical
+phase plan is not a current run recommendation.
 
 ### Raw evidence
 

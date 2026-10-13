@@ -141,7 +141,7 @@ verified — confirming the full write primitive.
 |---|---|---|
 | TMR register reading (E-TMR-2) | Technically readable via alias engine (ECAM confirmed dmap-mapped) | Orthogonal: TMR is a hardware wall under the NPT; the resume path crosses at the NPT level |
 | QA-flags chain (qa_probe/qa_check) | Built, gated, staged | Root-0 AP launch reads kernel text directly, no QA flags needed |
-| GPUVM route (gpuvm_read v3) | Built, gated, staged | Root-0 AP launch reads NPT-denied physical memory directly |
+| GPUVM route (gpuvm_read v3) | Built, unrun; source audit blocks current ELF (`07` §“gate upgrade”; `11` #45) | Root-0 AP launch was the proposed direct text route; it is also unproved |
 | CR4 gadget hunting in kernel text | Needed kernel text + a mov rax,cr4 instruction | VMCB NESTED_CR3 write gives full NPT control; kernel text becomes readable from root 0 |
 | Finding cpu_stdext_feature | Was needed for FSGSBASE compat | Superseded by the NPT-level boundary crossing |
 | fsgsbase_enable CR4 write via kernel data | Boot-specific candidate values; never stable across boots | Superseded |
