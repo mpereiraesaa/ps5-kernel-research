@@ -611,6 +611,39 @@ target from exception-frame or return-path failure.
 
 #### Data-pointer cross-check
 
+[verified-on-dump] A bounded scan of all `0x2df` paired `sy_call`
+entries in the held 12.02 and 13.60 data images found **no** 13.60
+Byepervisor gadget entry within `0x4000` of a 13.60 syscall-table
+function pointer. The nearest of the 21 public entries is `REP_MOVSB`,
+`0x82c1` bytes from `sysent[85].sy_call`; `POP_RSP` is `0x2b742` away.
+The paired-pointer displacements still reproduce the earlier
+`595 × +0xadd70` and `140 × +0xadd58` counts. The run's input SHA-256
+values were `222bed173183ac5981557840816ca2efa4c7d8b95fde780a475533b18928cdee`
+(12.02 data), `29a0fd3d0ff5290897981543dcc7c71e02105477597b7d4523ded09ffdfdc318`
+(13.60 data), and `006db53b87b1f01da544d3ef9c334c80f10bd5b3c49d1ede21730dbdd306c94b`
+(public manifest). Reproduce the check with
+the held data images outside this notes repo and the public-offset
+manifest:
+
+```sh
+python3 tools/kh2_sysent_anchor_audit.py \
+  --data-1202 /path/outside/repo/12.02-kernel-data.bin \
+  --data-1360 /path/outside/repo/13.60-kernel-data.bin \
+  --offsets examples/kh2_gadget_offsets_1360.json \
+  --text-base-1202 0xffffffff884c0000 \
+  --text-base-1360 0xffffffffd3b70000
+```
+
+[verified-in-tree] `tools/kh2_sysent_anchor_audit.py:18-110` checks every
+pointer against the dump-specific text base and coordinate bound,
+reports image/manifest SHA-256 values and each donor gadget's nearest
+distance, and never emits image bytes. [inference] These `sy_call`
+entries cannot supply a **local** (`≤0x4000`) same-region projection
+for the missing gadgets. A verified containing-function relationship
+over a larger distance or another identified data-pointer table would
+falsify using this cutoff as a general address-coverage limit; the scan
+does not rule out those sources or prove any 12.02 bytes.
+
 [verified-on-dump] The 13.60 data dump also contains exact pointers to
 many Byepervisor gadgets, clustered around data offsets `0x2079040`
 and `0x207ca00` beside frame-like values. The corresponding 12.02
