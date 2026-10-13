@@ -894,6 +894,36 @@ Compiling this audit ELF validates none of those contracts.
    executable runtime mapping, and any actual #DB delivery still require
    separate evidence. The `--firmware` value is a label, not authentication;
    retain independent image provenance alongside the reported digest.
+
+   [verified-in-tree] `tools/kh2_gadget_contract.py:37-55,113-167`
+   also accepts `--offsets` with a JSON manifest. It checks the bounded
+   instruction sequence at every supplied entry among the 21 public
+   `KERNEL_GADGET_*` names, reports every omitted name, and returns failure
+   unless **all 21** entries match. The manifest's firmware label must match
+   `--firmware`; duplicate keys and unknown names are rejected. The tool
+   normalizes donor `rex.RXB pop r8` to `pop r8` and `xchg ax,ax` to `nop`
+   for these two equivalent instruction shapes; it does not accept an
+   arbitrary replacement sequence. [verified-on-dump] The public 13.60
+   offsets in `examples/kh2_gadget_offsets_1360.json` match all 21 bounded
+   entry contracts in the held donor text with SHA-256
+   `20da45a0910c990153fbfb7c94e16356867e0bd84f7c9fbf754a45a5dd129673`:
+
+   ```sh
+   python3 tools/kh2_gadget_contract.py \
+     --text /path/outside/repo/13.60-kernel-text.bin \
+     --firmware 13.60 --offsets examples/kh2_gadget_offsets_1360.json
+   ```
+
+   [inference] `examples/kh2_gadget_offsets_1202_candidates.json` lists
+   only the four address candidates already discussed in `16`. If a
+   matching 12.02 text image is later supplied, run the same command with
+   `--firmware 12.02` and that manifest. Even four matches would report
+   `coverage_complete=false` and 17 missing entries. A 12.02 byte mismatch
+   at any candidate falsifies its listed instruction shape. A full 21-entry
+   match would still leave enclosing basic blocks, register liveness,
+   stack-frame placement, executable runtime mapping, and trap delivery
+   unproved. This checker does not discover unknown 12.02 offsets or make
+   the data-only dump into a text image.
 2. Identify a 12.02 test-hook instruction boundary and resume contract, then
    separately the resume-window `startup_mp` call and AP init vector. A
    `sysent` function pointer alone does not identify the getuid body or an

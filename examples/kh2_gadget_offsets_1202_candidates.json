@@ -1,0 +1,11 @@
+{
+  "firmware": "12.02",
+  "source": "docs/16-byepervisor-12-02-port.md:488-503; docs/17-byepervisor-1202-chain-map-and-observability.md:837-895",
+  "status": "address candidates only; 12.02 bytes unavailable",
+  "offsets": {
+    "PIVOT_ADD_RSP28_RET": "0x2ac2de",
+    "DBREG_RESUME": "0x2acb78",
+    "IRETQ": "0x2b362d",
+    "RET_TRAMP": "0x2b0b26"
+  }
+}
