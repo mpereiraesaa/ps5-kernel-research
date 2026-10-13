@@ -96,9 +96,9 @@ and no reads in the main-owned interval. Source SHA-256: `kh2_worker.c`
 `8d0123922018fc7e3e56539f6e6e2de6152064838e4fc054a2f2f2071b4ccf9f`,
 `kh2_worker.h`
 `61606cbcaeb2003f1ab18ff46f58ea75a5ef5a7499a63173e757b7b67cd1b921`.
-The worker source cross-compiled as a PS5 SDK object. It still has no real
-pinned-CPU/pipe/log adapter or 12.02 chain integration, and no console run
-was performed.
+The worker source cross-compiled as a PS5 SDK object. The callback bridge
+below now supplies linkable pinned-CPU/pipe/log functions, but there is no
+12.02 chain integration or console run.
 
 The local `kh2_main_capture.c/.h` adds B0/B1/B2/A2/D2 readback production
 through supplied kernel-read, SHA-256, and log callbacks. It captures each
@@ -112,8 +112,24 @@ console trace. Source SHA-256: `kh2_main_capture.c`
 `be3474e7e9c5717de6c170e281b639d9abe226f087d1dd8d43dae5b53d49ae50`,
 `kh2_main_capture.h`
 `198c8f48b4ea3268eea731f5970cf206ae5a5485756da22388611c79a098a43b`.
-The C source cross-compiled as a PS5 SDK object. Its host OpenSSL SHA callback
-is not a PS5 adapter, and no 12.02 payload invokes this producer.
+The C source cross-compiled as a PS5 SDK object. No 12.02 payload invokes
+this producer.
+
+The off-tree `kh2_ps5_adapter.c/.h` now binds the main read callback to
+chunked SDK `kernel_copyout`, the worker read to `observer_channel_read`,
+and the send callback to `ps5log_line`; worker prepare/finish pins and checks
+the observer CPU and opens/restores its separate pipe. `kh2_sha256.c/.h`
+supplies the missing SHA-256 callback without relying on the SDK's
+unresolved `_libmd_SHA256_*` symbols. Its 17 host vectors, including SHA
+padding boundaries and a million-byte input, matched Python `hashlib`.
+`kh2_ps5_adapter_host_test.py` also linked a PS5 SDK smoke ELF containing
+the bridge and all KH2 capture/worker/main modules. Source SHA-256:
+`kh2_ps5_adapter.c` `604e1751ee3d469ee460f512eba73de53100e80a35aa4fbd44c0d916e6d111c5`,
+`kh2_ps5_adapter.h` `2ef155d1690a5a255c6871b1f54c14a996cdb146119d35eadcd4baaa90c1a089`,
+`kh2_sha256.c` `973d80697bc965d4bf9ed86456dac5ceb33400810425154328f572855cd5ec64`,
+`kh2_sha256.h` `cd45c004b36a8b99bf88f73b9517425a6a7e6ea2df5d2d93c214dff7c36e8e28`.
+This proves host hash agreement and SDK linkability only: it does not
+exercise a PS5 read, logger session, shared-resource handoff, or a #DB.
 
 [inference] The local prearmed worker's `observer_channel_read` uses the
 inherited SDK `kernel_copyin` primitive to configure its separate pipe
