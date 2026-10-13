@@ -128,6 +128,21 @@ def classify_records(*payloads, b2_target=None):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_worker_lifecycle_errors_are_not_milestones(self):
+        raw = ("1\t1000\tERR\tKH2E stage=R0 cpu=3 operation=prepare "
+               "region=pipe addr=0x0 code=-3\n"
+               "2\t2000\tERR\tKH2E stage=Q2 cpu=3 operation=finish "
+               "region=pipe addr=0x0 code=-2\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["observed"], {})
+        self.assertEqual([item["code"] for item in result["capture_errors"]],
+                         [-3, -2])
+        self.assertEqual(result["rejected"], [])
+        invalid = ("1\t1000\tERR\tKH2E stage=R1 cpu=3 operation=prepare "
+                   "region=pipe addr=0x0 code=0\n").encode()
+        self.assertEqual(classify(invalid)["rejected"][0]["reason"],
+                         "malformed KH2E capture error")
+
     def test_optional_b2_gate_comparison_keeps_mismatched_readback(self):
         target = 0xffffffff8876c2de
         gate = {"gate_lo": "0x88768e060020c2de",

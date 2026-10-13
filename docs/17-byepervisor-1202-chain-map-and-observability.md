@@ -217,6 +217,19 @@ The D2 scratch address remains raw with `plan_match=false` unless the plan
 also includes a scratch base and size. A reported address identifies the
 failed callback attempt, not the last byte written or the first instruction
 that failed.
+[verified-in-tree] The off-tree worker now also sends `KH2E` with
+`operation=prepare|finish region=pipe addr=0x0 code=…` when its pipe
+prepare or close callback **returns an error**
+(`engineering/payloads/byepervisor_probe_1202/kh2_worker.c:41-63,139-154`).
+`prepare` is associated with R0; `finish` uses R0 when stopping before a
+trigger and Q2 when stopping after the second return. The classifier retains
+the nonzero callback code as `capture_errors` and never accepts these lines
+as milestones (`tools/khook_trace_classify.py:454-505`). [inference] A
+retained lifecycle error narrows a missing R0 or D2 to a returned worker
+callback failure; a callback that never returns or a failed PC send leaves
+no such line. A same-attempt successful callback result would falsify the
+reported failure. A failed close may leave the observer pipe altered; this
+record does not authorize teardown or another trigger.
 [inference] `KH2E` cannot appear if a console freeze prevents the write
 callback from returning. The off-tree producer now emits `KH2W
 stage=… cpu=… region=… addr=… bytes=… state=begin|done` before and after
@@ -397,11 +410,15 @@ owns A2; the second pair similarly bounds R2, the test syscall, and Q2.
 observed no worker reads while main owned the inter-trap interval, blocked
 a mismatched R1, and reported an active read failure with `KH2E` and no Q1.
 The C source SHA-256 is
-`8d0123922018fc7e3e56539f6e6e2de6152064838e4fc054a2f2f2071b4ccf9f`;
+`ba62450e36a33d9a83050d276a99afa1cc3e994284a501c3d18c908ffc7c2e9b`;
 it cross-compiled as a PS5 SDK object. The `prepare`/`finish` callbacks are
 mocked, so this does not prove a distinct console CPU, real pipe ownership,
 logger serialization, or any #DB delivery. A timeout leaves ownership
 uncertain and cannot be treated as permission for another trigger.
+The host worker check now also forces returned `prepare=-3` and `finish=-2`
+errors and confirms emitted `KH2E` lines; the 20 success schedules and
+integrated mock remain passing. If `ps5log` send fails, the worker still
+returns the original callback error to main, but no PC error line is promised.
 
 **Host-only main readback scaffold:** `kh2_main_capture.c/.h` reads and emits
 B0, the three B1 parts, B2, A2, and D2 through supplied read, SHA-256, and
