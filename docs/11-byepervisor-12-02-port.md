@@ -252,6 +252,42 @@ Consequences:
   at ~100–250 ms (the pre-SDK Oct 9 build survived minutes), (c)
   unknown
 
+#### Rung 3a result (2026-10-13): the TSS read-modify-write race is confirmed lethal [verified-on-console]
+
+The identity-rewrite probe (identical bytes, zero semantic change, the
+exact `r0gdb_setup` whole-0x68 copyout→copyin pattern ×16 CPUs) killed
+the console at **~3400 sweeps / 0.9 s** — the output stopped mid-loop
+at the last progress line (the designed death marker), ARP failed
+after. A content-independent race: **the whole-TSS read-modify-write
+pattern is lethal at ~thousands-of-sweeps exposure** — the scheduler
+updates TSS rsp0 on context switches, and a switch inside a
+copyout→copyin window writes back a stale rsp0, corrupting that
+CPU's ring-0 entry stack. Empirical calibration: ~3×10⁻⁴ kill chance
+per 16-CPU sweep.
+
+**Two separate facts — do not conflate them:**
+
+1. the racy pattern is a confirmed, avoidable hazard class —
+   `r0gdb_setup` **and `r0gdb_cleanup` both use it** (the cleanup's
+   16×(copyout + patch + copyin + verify) sweep, PR #67)
+2. **the ~100–250 ms session deaths are NOT this race**: the
+   sessions died 4/4 after *one* setup sweep; a 3×10⁻⁴/sweep race
+   cannot explain 4/4 consistency. The session-death mystery
+   remains open (SDK-build-specific candidate, or unknown)
+
+Design rules (now hard rules for the port):
+
+- **never** use the whole-TSS read-modify-write pattern —
+  Byepervisor's `kh_install` already avoids it (the IST slot is
+  written via a **single-qword `kwrite_q`**, no read-modify-write);
+  the port follows that exactly
+- any TSS field change = a field-specific single-qword write
+- the port's remaining shared risk with the sessions (the gate
+  patch + single-qword IST write + the frames + the trampoline
+  entry) is bounded by the session-death mystery being *something
+  else* — and the port's first live rung (the minimal one-shot chain)
+  tests exactly that machinery in its own execution model
+
 ## Port phases
 
 1. **Offsets + gadget mapping** (offline + our primitives): the table
