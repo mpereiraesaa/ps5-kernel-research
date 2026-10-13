@@ -128,6 +128,14 @@ target are blocking dependencies for a faithful build. The data-derived
 the remaining dependencies **unresolved**, not zero or
 borrowed 11.60/13.60 addresses.
 
+[verified-on-dump] The paired 12.02/13.60 syscall-pointer audit in `16`
+§“Data-pointer cross-check” finds no 13.60 public gadget within the
+bounded `0x4000` window of any donor `sy_call` entry. It therefore adds
+no local 12.02 gadget address to this inventory. [inference] A proved
+same-function relation beyond the window or another identified static
+pointer table would falsify that particular coverage limit; the audit
+does not assert that every kernel-data anchor has been exhausted.
+
 ## Failure evidence that survives a failed return
 
 [public-consensus] The 11.60 source already uses kernel-data cookies:
