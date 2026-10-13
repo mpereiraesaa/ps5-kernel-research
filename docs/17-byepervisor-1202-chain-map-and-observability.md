@@ -258,6 +258,10 @@ frame is raw canary replacement and needs RIP/CS/RFLAGS/RSP/SS review.
 `tests/test_khook_trace_classify.py` covers linked and unlinked records,
 gate mismatch, frame/marker progression, nonselected CPU activity, and a
 failed observer on return using synthetic transcripts.
+[verified-in-tree] The classifier also compares the selected CPU named by
+`[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
+asserted. A disagreement yields `conflicting_probe_cpu_records` before any
+gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
 
 [verified-in-tree] The worker also emits `FC1 READ_FAIL` if its private-pipe
 read fails and emits an `ERR`-level `GATE_VERIFIED` with raw values if the
@@ -307,6 +311,16 @@ values among 80 canary words**: bitwise OR with `cpu<<8` cannot encode all
 word canaries; the collision limits value-only CPU attribution. This
 checker does **not** inspect the ELF's actual instructions, 12.02 gadget
 bytes, runtime scratch ownership, or exception delivery.
+
+[inference] A read-only `llvm-objdump` check of the exact prearmed ELF above
+found `fullchain_icebp` at ELF `.text+0x2160`, its literal trap byte `f1`
+at `+0x216d`, and `fullchain_after_icebp` at `+0x216e`. In `main`, the
+emitted call at `+0xf6d` targets that wrapper, followed by `stop_observer`
+at `+0xf73` and `restore_all` at `+0xf91`. The worker has three emitted
+`observer_channel_read` call sites. This corroborates the selected source
+path and intended postreturn ordering in this build; it does not prove
+any instruction after `ICEBP` executed on the console. A different
+disassembly for the recorded SHA-256 would falsify this binary reading.
 
 **Pre-armed observer contract for a later two-transaction build [inference].** The
 separate-pipe calibration in `16` observed a pinned worker reading the

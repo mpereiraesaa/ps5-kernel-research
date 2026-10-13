@@ -223,6 +223,13 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     cpu = int(stage.group(1)) if stage else (
         int(pc_stage.group(1)) if pc_stage and pc_same_run_verified else (
             fc1["trigger_cpu"] if pc_same_run_verified else None))
+    named_cpus = ([int(stage.group(1))] if stage else [])
+    if pc_same_run_verified:
+        if pc_stage:
+            named_cpus.append(int(pc_stage.group(1)))
+        if fc1["trigger_cpu"] is not None:
+            named_cpus.append(fc1["trigger_cpu"])
+    cpu_identity_conflict = len(set(named_cpus)) > 1
     audit_header = re.search(
         r"\[KA1\] gate_target=\+0x([0-9a-fA-F]+) gate_ist=(\d+) "
         r"native=(YES|NO) staged_ist4=(\d+) scratch_nonzero=(\d+)",
@@ -251,6 +258,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
 
     signals = {
         "cpu": cpu,
+        "cpu_identity_conflict": cpu_identity_conflict,
         "staged_stdout": bool(stage),
         "staged_pc": bool(pc_stage),
         "pc_same_run_verified": pc_same_run_verified,
@@ -281,7 +289,9 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         pc_return.group(3) if pc_return and pc_same_run_verified else None)
     signals["return_frame"] = return_frame
     signals["return_marker"] = return_marker
-    if setup_stdout or (setup_pc and pc_same_run_verified):
+    if cpu_identity_conflict:
+        boundary = "conflicting_probe_cpu_records"
+    elif setup_stdout or (setup_pc and pc_same_run_verified):
         boundary = "setup_only_completed_no_db_triggered"
     elif returned and pc_return and pc_same_run_verified and returned.groups() != pc_return.groups():
         boundary = "conflicting_return_records"

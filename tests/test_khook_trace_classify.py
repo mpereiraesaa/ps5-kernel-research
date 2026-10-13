@@ -148,6 +148,14 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(with_audit["boundary"],
                          "frame_changed_copy_marker_or_later_unproven")
 
+    def test_prearmed_cpu_identity_conflict_blocks_progress_claim(self):
+        pc = self.PC_STAGE + self.FC1.replace(
+            b"trigger_cpu=3", b"trigger_cpu=4")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, pc=pc, pc_same_run_verified=True)
+        self.assertTrue(result["signals"]["cpu_identity_conflict"])
+        self.assertEqual(result["boundary"], "conflicting_probe_cpu_records")
+
     def test_prearmed_frame_and_marker_narrow_boundary(self):
         frame = (b"4\t4000\tMARK\tFC1 seq=3 phase=FRAME cpu=3 "
                  b"rip=0x123 cs=0x43 flags=0x202 rsp=0x456 ss=0x3b\n")
