@@ -286,9 +286,11 @@ once the startup phase completes. This is consistent with:
 
 - The one-shot bitmap for STARTUP_MP (opens during resume, closes
   after the kernel's own AP startup)
-- The owner-source design: the hcall is invoked from a #DB
-  breakpoint in the kernel's resume path (kernel context, where the
-  intercept is presumably set)
+- The owner-source design: the hcall is invoked from the kernel's
+  resume path in kernel context, where the intercept is presumably set.
+  **CORRECTION (2026-10-13):** the trigger is a kernel-data
+  `AcpiGbl_FACS` corruption → `#GP`, not a `#DB` breakpoint (`15` §1,
+  `11` #16).
 - The ps5-linux-loader's stage3: it does VMMCALL only AFTER patching
   the VMCB (their context is different — they cleared the intercept
   to cause #UD, proving they expected it to be set)
@@ -298,20 +300,25 @@ once the startup phase completes. This is consistent with:
 The hcall invocation cannot come from a userland payload. It must
 come from kernel context during the resume window:
 
-1. r0gdb's debug register machinery arms #DB at
-   `acpi_sleep_machdep+0x18e` (in the resume path). **CORRECTION
-   (2026-10-13):** this offset is unverified — `0x18e` (398 B) exceeds
-   the function's compiled size, so it cannot be an instruction inside
-   `acpi_sleep_machdep` (see `12` §2). The *window* is real; re-derive
-   the breakpoint instruction before arming it.
-2. The #DB fires after resumectx but before acpi_wakeup_cpus
+1. The resume window is triggered from kernel **data**, not a
+   breakpoint. **CORRECTION (2026-10-13):** the public 5.00–7.61 lineage
+   corrupts the ACPICA global `AcpiGbl_FACS` (`kwrite64(slot, slot−8)`);
+   the kernel's own `AcpiSetFirmwareWakingVector` then dereferences the
+   mangled pointer on resume → `#GP` (IDT 13 + TSS IST6). The old
+   `#DB` at `acpi_sleep_machdep+0x18e` was the wrong trigger *kind*
+   (`11` #16), and `0x18e` is also out of the function (`12` §2). The
+   12.02 `AcpiGbl_FACS` anchor is dump-derived at `kdata+0x2cb4c80`
+   (`15` §2).
+2. The #GP fires after resumectx but before acpi_wakeup_cpus
 3. The ROP chain (or gadget-step) invokes VMMCALL from the kernel
    context where the intercept is (presumably) enabled
 4. HCALL 0x0f launches the AP on root 0
 
-The build chain: r0gdb ring-0 session → arm DR0 at the resume-path
-breakpoint → owner enters rest mode → owner resumes → #DB fires →
-ROP invokes the hcall → AP launches at the carrier page.
+The build chain: ring-0 session → install the `#GP` IDT gate + TSS
+IST6 handler + corrupt `AcpiGbl_FACS` (`kdata+0x2cb4c80` candidate) →
+owner enters rest mode → owner resumes → `#GP` fires → ROP invokes the
+hcall → AP launches at the carrier page. (The old `#DB`/DR0 framing was
+the wrong trigger kind; see `15` §1.)
 
 ## 2026-10-12 — ACPI text region mapping from the dump
 
@@ -351,6 +358,10 @@ used for this structural match.
   the kernel resume entry point — one alias-engine read needed, at the
   corrected address 0x7fd6e000
 - DSDT at kdata+0x2cb4c58
+- **`AcpiGbl_FACS` global at kdata+0x2cb4c80** — the sole dump pointer
+  to `dmap+0x7fd6e000` (the real FACS), directly after the DSDT pointer
+  `kdata+0x2cb4c50` → `dmap+0x7fd89000` and the embedded DSDT header
+  copy. This is the resume-trigger write target; see `15` §2.
 
 ### ACPI strings in kernel data [verified-on-dump]
 

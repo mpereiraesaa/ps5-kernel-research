@@ -40,15 +40,15 @@ The proof used this sequence:
    a 4-KiB position-independent payload on a page the firmware's
    `bios_mapping` table marks root-0 executable (the identity mapping
    ends at 0x40000000). The page survives S3 clean.
-2. **Arm #DB** at `acpi_sleep_machdep+0x18e` — the breakpoint fires
-   in the resume window (after `resumectx`, before
-   `acpi_wakeup_cpus`). **CORRECTION (2026-10-13):** this offset is
-   unverified. `0x18e` (398 B) exceeds the compiled size of
-   `acpi_sleep_machdep` under the FreeBSD 11.0 source, so it cannot be
-   an instruction inside that function. The resume *window* is real;
-   the *instruction* must be re-derived from same-firmware evidence
-   before arming. See `11` #14 and `12` §2.
-3. The #DB's ROP chain invokes `HCALL 0x0f(core=15,
+2. **Trigger the resume window.** **CORRECTION (2026-10-13):** the
+   public lineage does **not** arm a `#DB` breakpoint. 5.00–7.61 corrupt
+   the ACPICA global `AcpiGbl_FACS` in kernel data (`kwrite64(ptrslot,
+   ptslot−8)`), so the kernel's own `AcpiSetFirmwareWakingVector`
+   dereferences the mangled pointer on resume and takes a **#GP** (IDT 13
+   + TSS IST6). No `acpi_sleep_machdep` instruction is involved. `0x18e`
+   is also invalid (`11` #14, `12` §2). The 12.02 `AcpiGbl_FACS` anchor
+   is dump-derived at `kdata+0x2cb4c80`. See `15` §1–§2 and `11` #16.
+3. The #GP ROP chain (IST6) invokes `HCALL 0x0f(core=15,
    RIP=0x3ffff000, CR3=0x68000)` from kernel context.
 4. Core 15 launches at 0x3ffff000 with CR3=0x68000. It never fetches
    GameOS kernel text, so the vcore's `cur_npt` stays at 0 (root 0).
@@ -101,8 +101,10 @@ verified — confirming the full write primitive.
 - The AP launches on root 0 (not forced to root 1)
 - The VMCB write primitive from root 0 (16-core read-back-verify)
 - The firmware bios_mapping carrier page at 0x3ffff000
-- The #DB breakpoint at acpi_sleep_machdep+0x18e
-  (offset unverified — see `11` #14 / `12` §2)
+- ~~The #DB breakpoint at acpi_sleep_machdep+0x18e~~
+  **CORRECTED (2026-10-13):** wrong *kind* — the public lineage uses a
+  kernel-data `AcpiGbl_FACS` self-corruption → `#GP` trigger, not a
+  breakpoint. See `15` §1 and `11` #16.
 
 ### Still unknown
 
@@ -275,8 +277,10 @@ Three generations, all superseded on 5.00+ by our resume-window route:
    via IOMMU physical writes → forced VMCB reload → kernel shellcode
 3. **5.00-7.61**: IDT gate patching + IST ROP + APICBASE wrmsr trigger
 
-Our route (12.02): #DB at acpi_sleep_machdep+0x18e → ROP chain →
-HCALL 0x0f → AP on root 0 → VMCB write.
+Our route (12.02): `AcpiGbl_FACS` self-corruption (`kdata+0x2cb4c80`,
+candidate) → `#GP` on resume → IST6 ROP chain → HCALL 0x0f → AP on
+root 0 → VMCB write. (The old `#DB`/`+0x18e` framing was the wrong
+trigger *kind*; see `15` §1 and `11` #16.)
 
 ## Next research steps
 

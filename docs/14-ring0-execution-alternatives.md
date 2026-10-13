@@ -6,9 +6,12 @@ on which freeze class the instrumentation confirms, and the two documents
 share the `resume-window` requirement.
 
 Goal being served: **stable ring-0 stepping** so the resume-window work
-(`10`, Route HCALL 0x0f) can proceed. Need `acpi_sleep_machdep` (or an
-equivalent resume trigger) located and reachable from kernel context —
-see `12` for why the old `+0x18e` breakpoint is invalid.
+(`10`, Route HCALL 0x0f) can proceed. **UPDATE (2026-10-13):** the
+resume trigger is *not* a breakpoint. The public lineage corrupts the
+`AcpiGbl_FACS` kernel-data pointer so the kernel's own resume code takes
+a `#GP`; see `15`. That means `acpi_sleep_machdep` is not needed at all,
+and the ideal substrate is a one-shot kernel-data write + a `#GP`/IST6
+handler — the non-interactive end of this inventory.
 
 ## What the resume route actually requires from a ring-0 substrate
 
@@ -17,8 +20,8 @@ From `10` and the attachment, the target needs exactly three capabilities:
 | # | Requirement | Why |
 |---|---|---|
 | R1 | **Execute VMMCALL from kernel (CPL0, GameOS-guest) context** | the hcall intercept is clear at CPL3, so the HCALL 0x0f must be issued by kernel code |
-| R2 | **Arm a breakpoint (DR0/DR7) that fires in the resume window** (after `resumectx`, before `acpi_wakeup_cpus`) | the window is narrow; the trigger must be timed |
-| R3 | **Take a controlled action when that breakpoint fires** | run the VMMCALL, or pivot to the carrier page |
+| R2 | **Cause a kernel fault inside the resume window** (after `resumectx`, before `acpi_wakeup_cpus`) — e.g. corrupt `AcpiGbl_FACS` so the kernel's own `AcpiSetFirmwareWakingVector` dereferences it (→ `#GP`), per `15` | the window is narrow; the trigger must be timed |
+| R3 | **Take a controlled action when that fault fires** (e.g. via an IST6 `#GP` ROP page) | run the VMMCALL, or pivot to the carrier page |
 
 Everything else (kernel R/W, CR3 construction, carrier-page write) is already
 covered by the pipe/alias primitives [verified-on-console].
@@ -36,6 +39,12 @@ IDT gate into the mailbox/`gdbstub_main_loop` packet reader (`ring0.c:134-181`, 
 | A2 | **r0gdb kfncall** (`r0gdb_kfncall`) | trace machinery, RIP-swaps a kernel function call (`r0gdb.c:1193`) | **no** | yes | same |
 | A3 | **kernel-text ROP / VMMCALL gadget** (no r0gdb trap path) | would need a control-transfer primitive other than the IDT patch (e.g. overwrite a return address on a kernel stack) | no | **no** (if a valid control-transfer exists) | kernel text only |
 | A4 | **HV AP-launch substrate** | the resume-window HCALL itself (this is the *target*, not a general stepper) | no | no | root-0 carrier page is executable by design |
+
+**Update:** the `AcpiGbl_FACS` self-corruption route (`15`) instantiates
+a "passive" trigger — a single kernel-data qword write, no breakpoint, no
+packet reader — which sits between A2 and A3: it still needs a `#GP`
+IDT gate + TSS IST6 handler (like A0/A1/A2), but no interactive session.
+It is the concrete form of the non-interactive recommendation below.
 
 A0 is what exists and freezes. A1/A2 are **already in the tree** and are the
 first thing to try, because they remove the *packet reader* — the component
