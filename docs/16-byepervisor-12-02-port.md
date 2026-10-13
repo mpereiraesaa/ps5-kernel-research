@@ -700,6 +700,79 @@ engine as “proven” would repeat a claim already corrected above.
   did not trigger #DB and did not capture an exception frame, so it leaves
   the four live-path boundaries below unvalidated.
 
+### Observer-enabled #DB frame attempt (2026-10-13)
+
+- **FW/build and approval:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_observer_frame.elf`, SHA-256
+  `42ca623bbacac27e9fa122c2610759d0793efdd04291cfcdfc70ab253943b1eb`.
+  The owner said to go ahead after the one-shot frame-capture plan and
+  hard power-cycle recovery were described. The risk included a shared #DB
+  gate pointing at an unverified 12.02 `add rsp,0xe8; iretq` target while
+  only the trigger CPU's IST4 was redirected; an unrelated #DB on the
+  observer CPU could also enter that gate.
+- **Expected:** after the prior preflight, stage the canary and return
+  frame, start a PC-connected worker on another CPU, patch/read back the
+  trigger CPU's IST4 and the vector-1 gate, then issue one TF/NOP #DB.
+  The worker should log a stable five-qword frame if the CPU pushes one
+  at `IST4_top-0x28`; after a normal return, the main thread should
+  restore/verify the gate and IST4 before clearing scratch. A matching
+  frame would be stronger evidence of the patched-stack delivery than
+  the earlier return-only probe.
+- **Actual:** elfldr returned P1/P2/P3, `[F1] observer READY cpu=9
+  trigger_cpu=15`, and both E1 lines describing the planned one-qword
+  gate swap. No E2/E3/F2 followed; the sender timed out after 25 seconds.
+  The PC `ps5log/1` server received only one `READY` marker and no BYE;
+  it finalized that session uncleanly when stopped. Three subsequent
+  pings all failed.
+- **Recovery state:** console unreachable after the attempt; the owner
+  performed the agreed hard power cycle and confirmed normal operation.
+  A subsequent two-ping check passed.
+- **Interpretation:** [verified-on-console] the worker reached its ready
+  state and the main thread reached E1 before the freeze. [inference] The
+  absence of an `armed` marker does **not** locate the failure before the
+  gate readback: the main thread stores `OBS_ARMED` immediately before
+  TF/NOP without waiting for the worker to run or send that marker. A
+  gate/IST4 write/readback failure, a freeze during #DB, or a simultaneous
+  worker/network stop could each produce this log; a future marker emitted
+  after synchronized patch readback would distinguish them. This run did
+  not capture an exception frame and validates none of the four remaining
+  live-path boundaries below.
+
+#### Post-patch observer calibration (2026-10-13)
+
+- **FW/build:** 12.02,
+  `byepervisor_probe_1202_observer_patch_calibration.elf`, SHA-256
+  `c2281cd756d99c9742718a7523e09d7c06be2e7da9acbcb1f134c4d4fe3cb8aa`.
+- **Expected:** after guarded IST4 and shared #DB-gate write/readback, the
+  observer on a second CPU reads the staged five-qword canary and sends a
+  PC `sampled` marker. The main thread waits at most 250 ms for that
+  acknowledgment, restores and verifies gate/IST4 and scratch, then exits
+  without setting TF or intentionally triggering #DB.
+- **Risk and recovery:** the shared gate points to unverified 12.02 handler
+  bytes while only one CPU's IST4 is redirected. The observer read and PC
+  send extend the changed-gate interval. An unrelated #DB or a stuck read
+  can freeze the console. The owner approved this exact build and hard
+  power-cycle recovery plan before the run.
+- **Actual:** elfldr returned P1/P2/P3, `[F1]`, both E1 lines, and
+  `[F2] patch calibration sampled=1 worker=0 PC_log=0; gate, IST4,
+  scratch restored; no #DB`. The PC received READY, `patch-calibration
+  sampled cpu=9 canary=MATCH`, and a final marker reporting restoration,
+  original affinity, and `no_db=1`. The `ps5log/1` manifest recorded
+  three records, no sequence gaps, a clean BYE, and a device span of
+  0.002313 seconds.
+- **Recovery state:** the payload exited normally and two post-run pings
+  passed; no hard power cycle was needed. Console UI was not checked.
+- **Interpretation:** [verified-on-console] the PC received the canary
+  marker and clean completion; elfldr reported restoration. [inference]
+  the worker's canary read occurred after IST4/gate readback and before
+  restoration because the main thread set `OBS_ARMED` only after those
+  readbacks and waited for the worker's completed PC send before restoring.
+  A different control-flow order in the built ELF or a marker emitted
+  without a successful read would falsify this timing claim. This shows
+  the observer can report while those patches are installed; the prior
+  freeze remains unlocated because that run lacked the acknowledgment
+  wait. The calibration did not trigger #DB or capture an exception frame.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
