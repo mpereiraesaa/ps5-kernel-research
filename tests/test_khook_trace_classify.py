@@ -103,6 +103,18 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(result["boundary"],
                          "prepatch_staging_seen_gate_patch_or_later_unproven")
 
+    def test_nonselected_cpu_activity_is_surfaced(self):
+        audit = self.AUDIT_CHANGED.replace(
+            b"[KA2] staged=16 changed_hw_frames=1 marked=0\n",
+            b"[KA1] cpu=7 ist4=0xffff800000002380 STAGED marker=WRITTEN\n"
+            b"[KA2] cpu=7 hw_frame=CHANGED rip=0x7777 cs=0x20 "
+            b"flags=0x2 rsp=0x8888 ss=0\n"
+            b"[KA2] staged=16 changed_hw_frames=2 marked=1\n")
+        result = classify_kstuff_fullchain(
+            self.LIVE_STAGE, audit, same_attempt_verified=True)
+        self.assertEqual(result["signals"]["audit_nonselected_cpus"], [7])
+        self.assertTrue(result["nonselected_cpu_activity_requires_review"])
+
 
 class OtherClassifierTests(unittest.TestCase):
     def test_later_record_with_missing_frame_is_coverage_gap(self):

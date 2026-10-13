@@ -120,6 +120,11 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     audit_summary = re.search(
         r"\[KA2\] staged=(\d+) changed_hw_frames=(\d+) marked=(\d+)",
         audit_text)
+    changed_cpus = sorted({int(value) for value in re.findall(
+        r"\[KA2\] cpu=(\d+) hw_frame=CHANGED\b", audit_text)})
+    marked_cpus = sorted({int(value) for value in re.findall(
+        r"\[KA1\] cpu=(\d+) ist4=0x[0-9a-fA-F]+(?: STAGED)? "
+        r"marker=WRITTEN\b", audit_text)})
     frame = None
     marker = None
     if cpu is not None and audit_header and audit_summary:
@@ -150,6 +155,11 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "audit_frame": frame,
         "audit_marker": marker,
         "audit_same_attempt_verified": same_attempt_verified,
+        "audit_changed_cpus": changed_cpus if audit_summary else [],
+        "audit_marked_cpus": marked_cpus if audit_summary else [],
+        "audit_nonselected_cpus": (
+            sorted((set(changed_cpus) | set(marked_cpus)) - {cpu})
+            if audit_summary and cpu is not None else []),
     }
     return_record = returned or (pc_return if pc_same_run_verified else None)
     return_frame = returned.group(2) if returned else (
@@ -182,6 +192,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "signals": signals,
         "boundary": boundary,
         "pc_transport": _transport(pc, manifest),
+        "nonselected_cpu_activity_requires_review": bool(
+            same_attempt_verified and signals["audit_nonselected_cpus"]),
         "caveat": ("Audit and PC-log evidence advance the boundary only with "
                    "explicit same-attempt assertions. A changed audit frame "
                    "supports delivery "

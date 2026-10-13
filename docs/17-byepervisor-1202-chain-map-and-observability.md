@@ -126,10 +126,10 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | B0 native baseline | User-mode read-only gate, all relevant IST slots, scratch/journal; `ps5log/1` with FW, build hash, boot identity without console identifiers, pinned CPU. | Starting state for this boot. |
 | B1 image staged | User-mode write/readback of each disjoint arm, dispatch, handler, and frame region; log their sizes and independent checksums. | Staging completed; no #DB implication. |
 | B2 gate armed | User-mode gate/IST readback plus a final pretrigger `ps5log/1` record. | Patch was observed before the deliberate first trap; does not prove the trap ran. |
-| F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. An independent read-only audit captures raw RIP/CS/RFLAGS/RSP/SS while the console is reachable. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
+| F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. A **pre-armed** independent observer captures raw RIP/CS/RFLAGS/RSP/SS without loading a new ELF after a stall. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
 | A1 arm continuation | A first in-chain kernel-data marker **after** a verified pivot/store and a second after `DBREG_RESUME` continuation, if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
 | A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the dispatch IST pointer and journal. | First return completed and dispatch stack was selected. |
-| F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. Sample independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
+| F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. The pre-armed observer samples independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
 | D1 dispatch/handler | In-chain marker only **after** the required interrupted registers are saved and a 12.02 liveness review proves the marker's RAX/RCX clobbers harmless; later marker after the test oracle store and before the resume tail. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
 | H1 AP phase | Separate `entered`, selected-VMCB count, write count, verify count, and `done` evidence, following the 11.60 read-before-write validation pattern. | Only a full expected set and readback can support a 12.02 AP claim. |
@@ -167,7 +167,8 @@ then `[K1r]` and `[K2]` only after returning and restoring
 (`fullchain_allcpu.c:370-395`). There is no durable PC marker between
 the final gate readback and `ICEBP` in that build. [inference] A run that
 stops after staging cannot distinguish patching failure, trap delivery,
-or later continuation without a same-attempt read-only audit; a later trace
+or later continuation without same-attempt evidence from an observer already
+running before the trigger; a later trace
 showing an intermediate marker would falsify this record inventory.
 
 The classifier accepts those **actual** records separately from the
@@ -193,10 +194,35 @@ raw RIP/CS/RFLAGS/RSP/SS still require review. A post-power-cycle audit
 cannot negate an earlier delivery. Tests cover these cases with synthetic
 `[K]`/`[KA]`/`ps5log/1` transcripts.
 
+**Correction from the live run in `16` and `11` #24:** The setup-only
+ELF completed, but the live build emitted only its prepatch `[K1]` and
+PC staging marker. A later attempt to load `fullchain_audit.elf` timed
+out and the console became unreachable; no `[KA]` frame or marker was
+captured. The owner hard power-cycled it and confirmed the UI recovered.
+[inference] Loading another ELF after a stall can be unsafe while the
+shared gate/IST state is unknown, even if ping and elfldr initially
+answer. A future observer must be active **before** patching the gate
+and have an independent reporting path. A captured restored gate before
+the audit attempt would falsify the proposed changed-gate link; the
+available logs do not establish what caused the outage.
+
+[inference] Preparing all 16 IST4 slots in that build addresses the
+wrong-stack hazard, but does not preserve an incidental #DB's interrupted
+registers. `fullchain_allcpu.c:283-315` zeros each slot and fills only
+selected fields of its second `pop_all_iret` register frame; the
+`fullchain_icebp.S:9-27` save/restore wrapper applies only to the
+chosen user thread. An unrelated #DB on another CPU would enter its
+prepared chain and, if it returned, use GPRs from that frame. A
+byte-level audit showing a separate all-register save/restore path in
+the built ELF would falsify this source reading; the current source
+contains none. The classifier reports changed frames or written markers
+on nonselected CPUs as a distinct review flag. This is a blocker for
+calling the shared-gate window safe merely because each CPU has a stack.
+
 [inference] The first divergence between a preseeded frame, an in-chain
 marker, and a post-return marker localizes the **class** of failure, not
-necessarily the exact instruction. An independent observer must sample the
-frame/journal **before a hard power cycle** when the console remains reachable;
+necessarily the exact instruction. An observer already running before
+the trigger must sample the frame/journal **before a hard power cycle**;
 post-recovery zero state cannot reconstruct the failed run (`16`, one-shot
 record). If the console powers off, the last durable PC record is the bound:
 there is no claim that later kernel milestones did or did not execute. A trace
@@ -221,7 +247,9 @@ Its compiled `main` calls `kernel_copyout` and no `kernel_copyin`; no console
 operation was performed. [inference] A read-only sample can help distinguish
 frame delivery from later-chain progress if a future build uses those exact
 slots; a different finalized layout would falsify the positional reading and
-requires rebuilding the audit. The extra two pages, journal ownership, and
+requires rebuilding the audit. It is **not** a post-stall recovery tool:
+`11` #24 rules out assuming that a new ELF can be loaded safely after a
+failed live trigger. The extra two pages, journal ownership, and
 marker-store path are not validated merely by compiling this ELF.
 
 ## Offline exit gates and console boundary
@@ -236,10 +264,11 @@ marker-store path are not validated merely by compiling this ELF.
    regions, 16 CPUs if per-CPU landings are used with the shared gate, and
    both #DB transactions. The validated two-page 12.02 scratch candidate
    cannot hold the reference `0x4000`-byte image as-is.
-4. Finalize the read-only audit against the chosen layout, including both
+4. Finalize a **pre-armed observer** against the chosen layout, including both
    frame slots, all journal words, gate/IST state, and the saved baseline.
-   The offline-built scaffold above covers the reference slot positions only;
-   it has not been run or paired with an executing chain. Pair the final
+   The offline-built audit scaffold above covers the reference slot positions
+   only; it has not been run or paired with an executing chain, and loading
+   it after a stalled trigger is not an acceptable observation path. Pair the final
    version with user-mode `ps5log/1` records and validate classification on
    synthetic data before any live run.
 5. Only after those gates, specify one exact FW 12.02 build, the expected
