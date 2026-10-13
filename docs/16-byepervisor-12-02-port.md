@@ -438,13 +438,38 @@ sit at these local offsets from the anchors:
 |---|---:|---|---:|---|
 | `PIVOT_ADD_RSP28_RET` | `0x25213e` | `cpu_switch - 0x22`; 13.60 dump bytes at `kernel-text.bin+0x25213e` decode as `add rsp,0x28; rep ret` | `0x2ac2de` | [inference] low-confidence adjacency candidate; the gadget is in the preceding code block, so its distance from `cpu_switch` may change |
 | `DBREG_RESUME` | `0x2529d8` | `mov_cr3_rax_mov_ds + 0xe1`; 13.60 dump bytes at `kernel-text.bin+0x2529d8` decode as the DR-register restore tail beginning with `mov rax,[rdi+0x78]; mov dr0,rax` | `0x2acb78` | [inference] strong same-region candidate; 12.02 bytes must confirm the tail and entry contract |
-| `IRETQ` | `0x257b3d` | exact match to Kstuff `doreti_iret` | `0x2b362d` | [verified-in-tree] already present in `offsets/12_02.h`; requires a compatible frame |
+| `IRETQ` | `0x257b3d` | exact match to Kstuff `doreti_iret` | `0x2b362d` | [verified-in-tree] address present in `offsets/12_02.h:12`; 12.02 instruction bytes and frame compatibility remain unverified |
 
 The first two are candidate addresses only. Their falsifier is a 12.02
 text image showing different local instructions or routine layout.
 Before relying on either in a chain, verify the complete sequence,
 entry point, side effects, and stack consumption from 12.02 bytes. Do
 not add these candidates to `offsets/12_02.h` as verified gadgets yet.
+
+#### Kstuff return-stub disassembly in the 13.60 donor
+
+[verified-on-dump] Converting Kstuff's 13.60 `doreti_iret` coordinate
+(`r0gdb/prosper0gdb/offsets/13_60.h:12-14`) through the dump's
+`kdata−ktext=0xcc0000` places it at `kernel-text.bin+0x257b3d`.
+Disassembly from `+0x257b33` gives `swapgs` at `+0x257b33`,
+`add rsp,0xe8` at `+0x257b36`, and `iretq` at `+0x257b3d`.
+The latter also matches Byepervisor's 13.60 `IRETQ` offset. The
+`-10` and `-7` Kstuff relations therefore land on actual instruction
+boundaries in this **13.60** image.
+
+[verified-in-tree] The 12.02 Kstuff header has the same `-10` and `-7`
+relations around its `doreti_iret` address
+(`r0gdb/prosper0gdb/offsets/12_02.h:12-14`). Converted through
+`kdata−ktext=0xd50000`, they yield `ktext+0x2b3623`,
+`ktext+0x2b3626`, and `ktext+0x2b362d`, respectively. [inference]
+This is strong cross-firmware support for the **intended** 12.02
+`add rsp,0xe8; iretq` entry used by the probe, but it is not a byte
+read of 12.02 kernel text. A 12.02 text disassembly showing a different
+instruction sequence at those addresses would falsify the transfer.
+The failed #DB probes therefore cannot yet distinguish a wrong 12.02
+target from exception-frame or return-path failure.
+
+#### Data-pointer cross-check
 
 [verified-on-dump] The 13.60 data dump also contains exact pointers to
 many Byepervisor gadgets, clustered around data offsets `0x2079040`
