@@ -348,8 +348,10 @@ frame delivery from later-chain progress if a future build uses those exact
 slots; a different finalized layout would falsify the positional reading and
 requires rebuilding the audit. It is **not** a post-stall recovery tool:
 `11` #24 rules out assuming that a new ELF can be loaded safely after a
-failed live trigger. The extra two pages, journal ownership, and
-marker-store path are not validated merely by compiling this ELF.
+failed live trigger. The four-page read span is within the later
+`0x5000` setup-only staging span, but that run did not validate the
+reference chain's placement, journal ownership, or marker-store path.
+Compiling this audit ELF validates none of those contracts.
 
 ## Offline exit gates and console boundary
 
