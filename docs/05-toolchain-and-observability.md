@@ -100,6 +100,21 @@ The worker source cross-compiled as a PS5 SDK object. It still has no real
 pinned-CPU/pipe/log adapter or 12.02 chain integration, and no console run
 was performed.
 
+The local `kh2_main_capture.c/.h` adds B0/B1/B2/A2/D2 readback production
+through supplied kernel-read, SHA-256, and log callbacks. It captures each
+B1 span's prewrite hash, verifies the staged/readback bytes, and later
+checks **all three** restored span hashes at D2 alongside the B0 scratch
+baseline (`11` #33). `kh2_main_host_test.py` combined seven native main
+records with 11 records from a separate worker mock into a classifier-accepted
+18-record transcript; an un-restored journal was rejected. This verifies
+format and baseline linkage across two mock processes, not a same-attempt
+console trace. Source SHA-256: `kh2_main_capture.c`
+`be3474e7e9c5717de6c170e281b639d9abe226f087d1dd8d43dae5b53d49ae50`,
+`kh2_main_capture.h`
+`198c8f48b4ea3268eea731f5970cf206ae5a5485756da22388611c79a098a43b`.
+The C source cross-compiled as a PS5 SDK object. Its host OpenSSL SHA callback
+is not a PS5 adapter, and no 12.02 payload invokes this producer.
+
 [inference] The local prearmed worker's `observer_channel_read` uses the
 inherited SDK `kernel_copyin` primitive to configure its separate pipe
 (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`),
