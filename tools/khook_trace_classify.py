@@ -400,11 +400,9 @@ def classify(raw: bytes, manifest: dict | None = None,
                         not HEX.fullmatch(address) or
                         not 0 < length <= 0x500 or
                         (stage == "A2" and length != 8) or
-                        (stage == "B2" and length !=
-                         (16 if region == "gate" else 8) and
-                         not (region == "gate" and length == 8)) or
-                        (stage == "D2" and region == "gate" and length != 16) or
-                        (stage == "D2" and region == "ist6" and length != 8) or
+                        (stage == "B2" and length != 8) or
+                        (stage == "D2" and region in ("gate", "ist6") and
+                         length != 8) or
                         bracket_state not in ("begin", "done")):
                     raise ValueError
             except (KeyError, ValueError):
