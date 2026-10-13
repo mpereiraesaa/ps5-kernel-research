@@ -39,6 +39,13 @@ also changed gadget and page-table handling
 That runtime method is a model for a later 12.02 AP phase, not evidence that
 the 11.60 heap range or VMCB population transfers to 12.02.
 
+[inference] The one-`ICEBP` full-dispatch diagnostic in `16` is a narrower
+predecessor to this two-transaction port. It would test the selected-core #DB
+frame, pivot, register save, benign handler, and return without asserting
+that DR7 was armed or that a kernel-text breakpoint fired. A completed
+one-trap return would support those shared dispatch steps; it would not
+establish the arm transaction, the kernel breakpoint, or the AP path.
+
 ## Coordinate and symbol map
 
 `r0gdb/prosper0gdb/offsets/12_02.h` uses offsets relative to **kdata**;
@@ -85,7 +92,7 @@ own firmware. There is no held 12.02 ktext image in this audit.
 | `IRETQ` for arm and dispatch returns | `0x2ac22d` | **Table address** `doreti_iret` at `+0x2b362d` (`12_02.h:12`); 12.02 bytes not read. |
 | `RET_TRAMP` | `0x338d2b` | **Table address** `nop_ret` at `+0x2b0b26` (`12_02.h:17-18`); exact 12.02 bytes not read. |
 | `POP_RAX`, `POP_RCX`, `POP_RDI` for arm/context/store | `0x338d2a`, `0x339712`, `0x289e0a` | **Unknown** individually; `pop_all_iret` is not a drop-in replacement because it consumes a different frame. |
-| `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78` from the 13.60 donor's local relation to Kstuff `mov_cr3_rax_mov_ds` (`16`). The 12.02 entry, DR0/DR7 loads, and continuation stack are unverified. The `cpu_switch` function offset alone does not prove this tail. |
+| `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78` from the 13.60 donor's local relation to Kstuff `mov_cr3_rax_mov_ds` (`16`). [verified-on-dump] The 13.60 donor entry is `mov dr0,rax`; the preceding load from `[rdi+0x78]` is outside the gadget, and the arm chain supplies DR0 in RAX (`11` #23). The 12.02 entry, remaining debug-register loads, and continuation stack are unverified. `cpu_switch` alone does not prove this tail. |
 | `STORE_RDI8_RCX` to write `IST+8` in arm continuation | `0x3cc4af` | **Unknown** equivalent. |
 | `POP_RSP` for dispatch stub and resume tail | `0x33974d` | **Unknown**. |
 | `MOV_RAX_RSI`, `MOV_RAX_RDI`, `ST_RCX_RAX`, `ST_RCX_RDX` for register save | `0x958504`, `0xc5e5da`, `0x3620bf`, `0x8a2725` | **Unknown** as a set. `store_rax_rdi` at 12.02 `+0x2ac112` is a different register pairing; any substitution needs a new register-liveness proof. |
@@ -126,6 +133,26 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | D1 dispatch/handler | In-chain marker only **after** the required interrupted registers are saved and a 12.02 liveness review proves the marker's RAX/RCX clobbers harmless; later marker after the test oracle store and before the resume tail. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
 | H1 AP phase | Separate `entered`, selected-VMCB count, write count, verify count, and `done` evidence, following the 11.60 read-before-write validation pattern. | Only a full expected set and readback can support a 12.02 AP claim. |
+
+**Proposed host log contract, not yet emitted by a 12.02 chain.** After
+independently checking each observation, a user-mode observer would send a
+`ps5log/1` `MARK` record with text `KH1 stage=F1 source=frame verified=1`
+(likewise `B0`, `B1`, `B2`, `A1`, `A2`, `F2`, `D1`, `D2`). `B*`, `A2`, and
+`D2` use `source=user`; `F*` uses `source=frame`; `A1`/`D1` use
+`source=journal`. The source tag states where the observer obtained the
+evidence; `verified=1` must follow raw readback and comparison against the
+recorded preseed, not mere receipt of a value. Preserve the raw values,
+canaries, layout version, and build hash alongside these records. The AP
+phase has a separate evidence set and is not inferred from `D2`.
+
+`tools/khook_trace_classify.py RUN.log --manifest RUN.json` checks this
+proposed record order, the ps5logd manifest's gaps/clean flag, and the
+verbatim log SHA-256. It returns the **first missing direct observation**,
+later records, and transport status; it does not inspect the kernel bytes or
+turn absence into a claim that a trap failed. A later stage with a missing
+earlier marker is a coverage gap, and a reversed stage order is flagged. The
+classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
+real 12.02 run has yet produced this record format.
 
 [inference] The first divergence between a preseeded frame, an in-chain
 marker, and a post-return marker localizes the **class** of failure, not
