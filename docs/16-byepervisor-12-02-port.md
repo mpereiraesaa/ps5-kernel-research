@@ -773,6 +773,28 @@ engine as “proven” would repeat a claim already corrected above.
   freeze remains unlocated because that run lacked the acknowledgment
   wait. The calibration did not trigger #DB or capture an exception frame.
 
+#### Proposed pretrigger frame handshake (not run)
+
+- **FW/build:** 12.02,
+  `byepervisor_probe_1202_observer_frame_handshake.elf`, SHA-256
+  `f9104be1641d84f1a1f7c246d81bda3d0d523fc4022effffd3ad51db7ef7e93c`.
+- **Expected:** use the calibrated worker to read the canary and complete
+  a PC `pretrigger sampled` send while IST4 and the shared #DB gate are
+  changed. On a failed or timed-out 250 ms acknowledgment, restore and
+  exit without a trigger. On success, issue one TF/NOP #DB and have the
+  worker report a stable five-qword frame if it can observe one.
+- **Risk and recovery:** this again intentionally dispatches #DB through
+  unverified 12.02 handler bytes after a longer changed-gate window. The
+  earlier frame attempt froze the console. A different CPU can encounter
+  the shared gate; a freeze or failed restoration requires a hard power
+  cycle. Fresh approval is required for this exact build and recovery plan.
+- **Interpretation:** [inference] a received pretrigger marker would put
+  both patch readbacks and one successful observer read before TF in that
+  run. Missing or contradictory pretrigger evidence would falsify that
+  boundary claim. A later freeze without a frame would remain ambiguous
+  among #DB delivery, handler/return failure, and worker survival; a
+  matching frame would directly support patched-stack delivery.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
