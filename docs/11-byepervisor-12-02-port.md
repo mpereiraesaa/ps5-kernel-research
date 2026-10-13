@@ -288,6 +288,50 @@ Design rules (now hard rules for the port):
   else* — and the port's first live rung (the minimal one-shot chain)
   tests exactly that machinery in its own execution model
 
+#### Rung 4 result (2026-10-13): the minimal patch froze the console [verified-on-console]
+
+The minimal one-shot patch test — **one** IDT gate (v1, measured quiet
+by rung 2) re-encoded to the kstuff pivot (`swapgs_add_rsp_iret`),
+**one** TSS IST slot (cpu0's IST4 := cpu1's ist4) via **single-qword**
+`copyin` writes (race-free — not the rung-3a class), verified
+readback, then a 1 s hold — **froze the console during the hold**:
+the UI entirely frozen (a full-system freeze, not a
+panic-shutdown — owner observation), network dead, no recovery;
+owner force-shutdown + reboot.
+
+**Unified freeze signature**: every death so far (the four gdb
+sessions, `tssrace`, `minpatch`) ends in the same full-freeze
+terminal state (UI frozen / no HDMI, network dead, no self-recovery).
+
+Analysis (by elimination — the payload printed through the verified
+readback, the only live change during the hold was the patched gate
++ IST):
+
+- **not** the rung-3a race (no read-modify-write anywhere)
+- **not** a measured-rate natural v1 event (rung 2: ist4 quiet over
+  5 s) — but a **rare** event (<0.2 Hz) remains possible, and the
+  test design was **fatal-on-any-entry by construction**: the
+  pivot-without-frames gate entered from a kernel-context #DB does
+  `swapgs` at CPL0 — clobbering the kernel's GS/per-CPU base at the
+  wrong context → per-CPU chaos → the full freeze [inference]
+- the same pivot-gate class was live in the gdb sessions (their
+  gates also targeted `swapgs_add_rsp_iret`) — a candidate for a
+  shared death mechanism, though the sessions' 4/4-at-100–250 ms
+  timing still lacks a measured event source (the rung-2
+  contradiction stands for the sessions)
+
+Disambiguation rungs (in order):
+
+- **2b**: the 60 s IST-stack activity monitor — characterize the
+  rare-event tail (ist4 especially); if ist4 shows ~0.1–1 Hz
+  activity, the rare-event theory is confirmed and the port must be
+  **survivable-on-entry**
+- **4b**: the identity gate + a neutral IST buffer — machinery-only,
+  survivable-by-construction
+- **4c**: the pivot + the **full trampoline frames** + a neutral
+  stack — the port's real design end-to-end, survivable-on-entry
+  (Byepervisor's khook is exactly this class)
+
 ## Port phases
 
 1. **Offsets + gadget mapping** (offline + our primitives): the table
