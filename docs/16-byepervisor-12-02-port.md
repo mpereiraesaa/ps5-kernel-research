@@ -529,6 +529,63 @@ different local offset or instruction sequence would falsify either
 projection. The 13.00 and 13.20 rows share identical published values,
 so they are corroborating versions, not separate byte audits.
 
+#### Bounded scan of the remaining public gadget entries
+
+[verified-in-tree] `tools/kh2_anchor_projection.py:16-20,37-66,69-134,137-162`
+parses the three public
+Byepervisor 13.xx gadget headers and the corresponding Kstuff headers,
+derives each donor's `kdata−ktext` gap by matching `IRETQ` to
+`doreti_iret`, and checks whether an anchor-to-gadget displacement is
+identical in all three. It then projects through the 12.02 Kstuff header
+using the dump-derived `0xd50000` gap. The default `0x4000` maximum
+anchor distance is a **reporting heuristic**, not a function boundary or
+proof of shared code. The output includes all seven header SHA-256 values,
+conflicting nearby projections, and farther stable relations. Reproduce
+it with a checkout of the [public Byepervisor-Reborn headers](https://github.com/PS5Dev/Byepervisor-Reborn/tree/ea04f7132b837087f552c57261cb800481a3a910/include/offsets):
+
+```sh
+python3 tools/kh2_anchor_projection.py \
+  --kstuff-dir r0gdb/prosper0gdb/offsets \
+  --byepervisor-dir /path/to/Byepervisor-Reborn/include/offsets \
+  --target-gap 0xd50000
+```
+
+[public-consensus] The [13.00](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_00.h#L39),
+[13.20](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_20.h#L39),
+and [13.60](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_60.h#L39)
+headers list their `REP_MOVSB` entries. [verified-in-tree]
+`r0gdb/prosper0gdb/offsets/13_00.h:15,59-60`,
+`13_20.h:15,59-60`, and `13_60.h:15,59-60` place each at
+`rep_movsb_pop_rbp_ret + 0x33fd` after the coordinate conversion.
+The `copyin + 0x3da7` and `copyout + 0x3e57` relations also
+project to the same **12.02 address candidate** `ktext+0x2f31b7`.
+The candidate is added to the partial JSON manifest for a future text
+check; [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:15,59-60`
+places Kstuff's `rep_movsb_pop_rbp_ret` at `ktext+0x2efdba`.
+[inference] That entry's extra pop gives it a different return contract;
+a 12.02 byte disassembly showing a plain return at that entry would
+falsify the assumed extra-pop shape.
+
+[inference] The coherent source-table relations suggest where to look
+first, but do not establish that the 12.02 code in that region kept the
+13.xx instruction. A 12.02 disassembly that lacks the required
+`rep movsb; nop; rep ret`-class entry at `+0x2f31b7` would falsify this
+candidate. The donor header entries are address claims, not three
+independent byte audits; only the held 13.60 donor has passed the full
+entry-contract checker (`17` §“Offline exit gates”).
+
+[verified-in-tree] With the same `0x4000` cutoff, the scan reports local
+*conflicts* for the pivot, `DBREG_RESUME`, and `IRETQ`: some more distant
+13.xx-stable anchors shift to different 12.02 regions. The nearest
+same-region relations above (and the explicit 12.02 `doreti_iret` table
+address) still support their recorded candidates, but global stability
+of a 13.xx displacement cannot select an arbitrary 12.02 anchor.
+The other gadget classes either lack a stable relation or have only a
+relation beyond the bounded local distance. [inference] A verified 12.02
+text image, or a same-firmware anchor in each corresponding containing
+block, would falsify this address-coverage limit. These results do not
+fill the remaining gadget entries by extrapolation.
+
 #### Kstuff return-stub disassembly in the 13.60 donor
 
 [verified-on-dump] Converting Kstuff's 13.60 `doreti_iret` coordinate
@@ -577,9 +634,10 @@ checked-in evidence: individual `pop rax`,
 `mov [rcx],r8; ret`; `mov [rdi+8],rcx; ret`; `or [rcx],eax; ret`;
 `mov dr7,rax; mov eax,r8d; ret`; `mov [rcx],rdx; ret`;
 `mov [rcx],rax; xor eax,eax; ret`; `mov rax,rsi/rdi; ret`;
-`cld; ret`; plain `rep movsb; ret`; and the `resumectx` DR-register
-restore tail. The pivot and DR-register tail have the cross-dump
-candidates above, but their 12.02 byte sequences are not verified.
+`cld; ret`; the exact Byepervisor `REP_MOVSB` entry; and the
+`resumectx` DR-register restore tail. The pivot and DR-register tail have the cross-dump
+candidates above, and the bounded scan adds the `REP_MOVSB` address
+candidate. None of their 12.02 byte sequences are verified.
 `offsets/12_02.h` has entries such as
 `store_rax_rdi`, `rep_movsb_pop_rbp_ret`, `doreti_iret`, `pop_all_iret`,
 and `nop_ret`; byte-level semantics and frame compatibility still need
