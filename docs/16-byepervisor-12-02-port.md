@@ -738,6 +738,28 @@ engine as “proven” would repeat a claim already corrected above.
   not capture an exception frame and validates none of the four remaining
   live-path boundaries below.
 
+#### Planned post-patch observer calibration (not run)
+
+- **FW/build:** 12.02,
+  `byepervisor_probe_1202_observer_patch_calibration.elf`, SHA-256
+  `c2281cd756d99c9742718a7523e09d7c06be2e7da9acbcb1f134c4d4fe3cb8aa`.
+- **Expected:** after guarded IST4 and shared #DB-gate write/readback, the
+  observer on a second CPU reads the staged five-qword canary and sends a
+  PC `sampled` marker. The main thread waits at most 250 ms for that
+  acknowledgment, restores and verifies gate/IST4 and scratch, then exits
+  without setting TF or intentionally triggering #DB.
+- **Risk and recovery:** the shared gate points to unverified 12.02 handler
+  bytes while only one CPU's IST4 is redirected. The observer read and PC
+  send extend the changed-gate interval. An unrelated #DB or a stuck read
+  can freeze the console. The recovery plan is a hard power cycle. This
+  exact build requires fresh owner approval before any console run.
+- **Interpretation:** [inference] a matching PC `sampled` marker followed
+  by restored values and clean exit would establish that the observer was
+  active after patch readback in that run, narrowing the earlier marker
+  gap. A timeout, missing marker, changed canary, or failed restoration
+  would falsify that positive conclusion. No outcome from this no-trigger
+  run can establish #DB delivery or capture an exception frame.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
