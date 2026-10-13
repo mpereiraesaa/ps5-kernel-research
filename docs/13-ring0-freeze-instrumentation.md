@@ -7,9 +7,10 @@ complete instrumentation set needed to (a) capture the freeze as evidence
 and (b) discriminate between the remaining mechanism classes, plus the
 falsifiable test for each.
 
-Read `11` (debunked theories) first: the GS→TLS theory (#2) is dead and the
-`acpi_sleep_machdep+0x18e` breakpoint (#14) is unverified. Do not rebuild a
-theory on either.
+Read `11` (debunked theories) first: the GS→TLS theory (#2) is dead, the
+`acpi_sleep_machdep+0x18e` breakpoint (#14) is unverified, and the resume
+trigger is known to be a kernel-data `AcpiGbl_FACS` corruption → `#GP`, not a
+breakpoint at all (#16, `15` §1). Do not rebuild a theory on any of them.
 
 ## Why the current instruments are insufficient
 
