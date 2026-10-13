@@ -98,18 +98,18 @@ if not PS5:
 # sha256 cbd34cbd5dd5465e09f1415bde33b62944e41805503d285fecd6983316a14f02 —
 # the #70 GS-restore/never-spin build + the GS/TLS instrumentation (qDiagF4,
 # [D9]). The BSS grew by the gdb_last_uc_capture buffer, shifting the symbol
-# cluster up (SYM_R0GDB 0x4993 -> 0x4C94). Build is reproducible (rebuild = same
+# cluster up (SYM_R0GDB 0x4C94 -> 0x695E). Build is reproducible (rebuild = same
 # sha); re-derive with `make` + `llvm-nm -n payload-elfldr-sdk.elf` on any change.
-SYM_KDATA_BASE = 0x49B08
-SYM_OFFSETS = 0x5AC00
-SYM_OG_TSS = 0x49BA0
-SYM_OG_IDT1 = 0x49B60
-SYM_OG_IDT6 = 0x49B70
-SYM_OG_IDT9 = 0x49B80
-SYM_OG_IDT179 = 0x49B90
-SYM_IDT6_PATCHED = 0x49B5C
-SYM_R0GDB = 0x4C94
-SYM_R0GDB_EXIT = 0x4A8F
+SYM_KDATA_BASE = 0x4DD48
+SYM_OFFSETS = 0x5EE40
+SYM_OG_TSS = 0x4DDE0
+SYM_OG_IDT1 = 0x4DDA0
+SYM_OG_IDT6 = 0x4DDB0
+SYM_OG_IDT9 = 0x4DDC0
+SYM_OG_IDT179 = 0x4DDD0
+SYM_IDT6_PATCHED = 0x4DD9C
+SYM_R0GDB = 0x695E
+SYM_R0GDB_EXIT = 0x6728
 
 START_RIP_OFF = 0x551  # fault rip = base+0x551 = start_rip, the `call dbg_enter`
                        # return address (dbg.c:1553 start_rip = *rsp; main.c calls

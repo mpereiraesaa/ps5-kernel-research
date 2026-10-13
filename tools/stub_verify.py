@@ -81,21 +81,22 @@ START_RIP_OFF = 0x551  # fault rip = base+0x551 = start_rip, the `call dbg_enter
                        # rip-START_RIP_OFF; verify via VERIFY_OFF bytes.
 VERIFY_OFF = 0x228C0
 # Payload symbol offsets (link-relative vaddrs, from nm of the CURRENT build:
-# sha256 cbd34cbd5dd5465e09f1415bde33b62944e41805503d285fecd6983316a14f02 —
-# the #70 GS-restore/never-spin build + the GS/TLS instrumentation (qDiagF4,
-# [D9]). The BSS grew by the gdb_last_uc_capture buffer, shifting the symbol
-# cluster up (SYM_R0GDB 0x4993 -> 0x4C94). Build is reproducible (rebuild = same
-# sha); re-derive with `make` + `llvm-nm -n payload-elfldr-sdk.elf` on any change.
-SYM_KDATA_BASE = 0x49B08
-SYM_OFFSETS = 0x5AC00
-SYM_OG_TSS = 0x49BA0
-SYM_OG_IDT1 = 0x49B60
-SYM_OG_IDT6 = 0x49B70
-SYM_OG_IDT9 = 0x49B80
-SYM_OG_IDT179 = 0x49B90
-SYM_IDT6_PATCHED = 0x49B5C
-SYM_R0GDB = 0x4C94
-SYM_R0GDB_EXIT = 0x4A8F
+# sha256 a6a227ef485d48db6323f31c1bd3caf847a7fcca61f3953d804c220b28e7a3b0 —
+# the freeze-instrumentation build (qDiagF4 ucontext capture + qDiagF5 freeze
+# discriminator ring + klog side channel). The BSS grew again, shifting the
+# symbol cluster up (SYM_R0GDB 0x4C94 -> 0x695E). Build is reproducible
+# (rebuild = same sha); re-derive with `make` + `llvm-nm -n payload-elfldr-sdk.elf`
+# on any change.
+SYM_KDATA_BASE = 0x4DD48
+SYM_OFFSETS = 0x5EE40
+SYM_OG_TSS = 0x4DDE0
+SYM_OG_IDT1 = 0x4DDA0
+SYM_OG_IDT6 = 0x4DDB0
+SYM_OG_IDT9 = 0x4DDC0
+SYM_OG_IDT179 = 0x4DDD0
+SYM_IDT6_PATCHED = 0x4DD9C
+SYM_R0GDB = 0x695E
+SYM_R0GDB_EXIT = 0x6728
 # The old gadget scratch slots (0x2AC80/0x2AC90, f92401 build): RETIRED for
 # ring-0 use (SMEP: userland rip at CPL0 = #PF panic) AND stale in this build
 # (that range is now live LOAD1 code). Ring-0 stores go through the
@@ -104,7 +105,7 @@ SYM_R0GDB_EXIT = 0x4A8F
 # __bss_end = 0x5B578; the last aligned 4-byte slot, beyond every symbol —
 # linker padding). The old 0x2AC00 scratch was tail padding of the f92401
 # LOAD1; live code now.
-SYM_M_TEST = 0x5B770
+SYM_M_TEST = 0x5E000
 EFER_MSR = 0xC0000080
 OFFSET_LIST = os.environ.get(
     "R0GDB_OFFSET_LIST",
@@ -289,6 +290,79 @@ class Session:
             raise RuntimeError("qDiagF4 frame length %d != %d" % (len(frame), cap_len))
         return signum, cap_len, frame
 
+    def diag_f5(self, timeout=15):
+        """Fetch the F5 freeze-discriminator reply (counts + event ring).
+        Requires the instrumented build. Returns the decoded dict from
+        decode_diag_f5()."""
+        body = self.cmd(b"qDiagF5", timeout=timeout)
+        if not body.startswith(b"F5:"):
+            raise RuntimeError("qDiagF5 reply: %r" % body[:32])
+        return decode_diag_f5(body)
+
+
+
+DIAG_KIND_NAMES = {
+    1: "handler_entry", 2: "nested_signal", 3: "park", 4: "session_lock",
+    5: "session_unlock", 6: "packet_wait", 7: "packet_recv",
+    8: "interrupter_fire", 9: "enter_handler", 10: "leave_handler",
+    11: "cleanup_step", 12: "cleanup_park",
+}
+
+
+def decode_diag_f5(body):
+    """Decode a qDiagF5 reply. Layout (see gdb_stub/dbg.c CMD_Q_DIAG_F5):
+      F5:<hdr 32 hex>:<ring 16 slots * 32 hex>
+    hdr = 8 big-endian u16 counters (4 hex chars each):
+      entries, nested, parks, session_locks, session_waits,
+      packet_waits, packet_recvs, interrupter_fires.
+    Each slot is 16 hex bytes:
+      kind(1) busy(1) signum(1) rip(8 LE=16 hex) tid(4 LE=8 hex) seq(1)."""
+    if not body.startswith(b"F5:"):
+        raise RuntimeError("bad F5 magic: %r" % body[:16])
+    rest = body[3:].decode()
+    hdr_hex, _, ring_hex = rest.partition(":")
+    keys = ["entries", "nested", "parks", "session_locks", "session_waits",
+            "packet_waits", "packet_recvs", "interrupter_fires"]
+    if len(hdr_hex) != 4 * len(keys):
+        raise RuntimeError("F5 hdr length %d != %d" % (len(hdr_hex), 4 * len(keys)))
+    counts = {k: int(hdr_hex[4 * i:4 * i + 4], 16) for i, k in enumerate(keys)}
+    ring = []
+    for i in range(0, len(ring_hex), 32):
+        slot = ring_hex[i:i + 32]
+        if len(slot) != 32:
+            break
+        raw = bytes.fromhex(slot)
+        ring.append({
+            "kind": raw[0],
+            "kind_name": DIAG_KIND_NAMES.get(raw[0], "?%d" % raw[0]),
+            "busy": raw[1],
+            "signum": raw[2],
+            "rip": int.from_bytes(raw[3:11], "little"),
+            "tid": int.from_bytes(raw[11:15], "little"),
+            "seq": raw[15],
+        })
+    ring.sort(key=lambda e: e["seq"], reverse=True)
+    return {"counts": counts, "ring": ring}
+
+
+def analyze_freeze(decoded):
+    """Turn a decoded F5 dict into the freeze verdict (see dbg.c diag block)."""
+    c = decoded["counts"]
+    nested = [e for e in decoded["ring"] if e["kind"] == 2]
+    verdict = {}
+    if c["nested"] > 0 and nested:
+        verdict["class"] = "nested-signal"
+        e = nested[0]
+        verdict["detail"] = ("debugger signum=%d at rip=0x%x (tid=0x%x)"
+                             % (e["signum"], e["rip"], e["tid"]))
+    elif c["packet_waits"] > c["packet_recvs"]:
+        verdict["class"] = "packet-read-block"
+        verdict["detail"] = ("no nested signal; waiting=%d > received=%d"
+                             % (c["packet_waits"], c["packet_recvs"]))
+    else:
+        verdict["class"] = "indeterminate"
+        verdict["detail"] = "no wait/recv skew and no nested signal observed"
+    return verdict
 
 
 def load_offset_fields():
@@ -446,6 +520,10 @@ def main():
                         help="dump/decode the captured fault ucontext (F4 "
                              "query); requires the instrumented build and a "
                              "session where a debugger signal has fired")
+    parser.add_argument("--diag-f5", action="store_true",
+                        help="dump/decode the freeze discriminator (F5 query): "
+                             "handler/nested/park/lock/packet counters + the "
+                             "event ring; requires the instrumented build")
     args = parser.parse_args()
 
     stub_port = args.port if args.port is not None else discover(args.no_send)
@@ -486,6 +564,30 @@ def main():
                 info["has_bases"], "WILL" if info["has_bases"] else "will NOT")
             log("TLS hint: fsbase==gsbase -> cannot distinguish; fsbase!=gsbase "
                 "-> the errno TLS register matters (GS restore may be wrong)")
+        c.close()
+        return 0
+
+    if args.diag_f5:
+        try:
+            c, s, base, kdata = connect_stub(stub_port)
+        except Exception as e:
+            log("FAIL: connect/verify: %s: %s", type(e).__name__, e)
+            return 1
+        try:
+            dec = s.diag_f5()
+        except Exception as e:
+            log("FAIL: qDiagF5: %s: %s", type(e).__name__, e)
+            c.close()
+            return 1
+        log("F5 counts: %s", dec["counts"])
+        for e in dec["ring"]:
+            if e["kind"] == 0:
+                continue
+            log("  seq=%d %-16s signum=%d busy=%d tid=0x%x rip=0x%x",
+                e["seq"], e["kind_name"], e["signum"], e["busy"],
+                e["tid"], e["rip"])
+        v = analyze_freeze(dec)
+        log("FREEZE VERDICT: %s -- %s", v["class"], v["detail"])
         c.close()
         return 0
 

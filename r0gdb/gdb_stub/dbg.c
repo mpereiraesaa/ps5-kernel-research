@@ -49,6 +49,122 @@ static int errno = 1;
  * the GS-restore theory cares about. */
 unsigned char gdb_last_uc_capture[0x600];
 int gdb_last_uc_signum;
+extern int in_signal_handler;   /* declared with the session lock, later */
+
+/* --- instrumentation: freeze discriminator (F5) -------------------------
+ * The GS theory is dead; the freeze's shape is still unknown. Two candidate
+ * generators remain, and they differ in one observable: whether a nested
+ * debugger signal is delivered at the freeze point.
+ *   - a NESTED signal means the handler is re-entered (re-entrant fault,
+ *     delivery to the session-owning thread, or the interrupter's SIGINT);
+ *     the top of the nested ucontext points at the faulting instruction.
+ *   - NO nested signal means the hang is a plain blocking packet-read with no
+ *     debugger signal at all.
+ * This is a small, fixed-size, fixed-layout ring so a client can decode it
+ * with no per-event offset arithmetic. Fields are read with relaxed atomics
+ * on the reader side (qDiagF5). Everything here is pure memory + counters,
+ * safe in the signal handler and in the payload's own userland. */
+#define GDB_DIAG_RING 16
+struct gdb_diag_evt {
+    unsigned int kind;       /* 1=handler_entry 2=nested_signal 3=park
+                                4=session_lock 5=session_unlock 6=packet_wait
+                                7=packet_recv 8=interrupter_fire
+                                9=enter_handler 10=leave_handler
+                                11=cleanup_step 12=cleanup_park */
+    int signum;              /* signal number for entry/nested/park */
+    unsigned long long rip;  /* top-of-frame rip for nested; else 0 */
+    int busy;                /* in_signal_handler value observed at the event */
+    int tid;                 /* thr_self() (0 if unavailable) */
+    unsigned long long seq;  /* monotonically increasing */
+};
+struct gdb_diag_evt gdb_diag_ring[GDB_DIAG_RING];
+volatile unsigned long long gdb_diag_seq;      /* total events recorded */
+volatile int gdb_diag_head;                     /* next ring slot */
+volatile int gdb_diag_handler_entries;          /* total signal_handler entries */
+volatile int gdb_diag_nested_entries;           /* entries where busy was already 1 */
+volatile int gdb_diag_park_entries;             /* fault-signal park branch taken */
+volatile int gdb_diag_session_locks;            /* gdbstub_session_lock acquisitions */
+volatile int gdb_diag_session_waits;            /* times the lock had to spin */
+volatile int gdb_diag_packet_waits;             /* wait_for_packet() calls */
+volatile int gdb_diag_packet_recvs;             /* complete packets dispatched */
+volatile int gdb_diag_interrupter_fires;        /* interrupter_thread SIGINT sends */
+
+static inline void gdb_diag_record(int kind, int signum, unsigned long long rip, int busy)
+{
+    unsigned long long seq = __atomic_add_fetch(&gdb_diag_seq, 1, __ATOMIC_RELAXED);
+    int slot = (int)(seq % GDB_DIAG_RING);
+    struct gdb_diag_evt* e = &gdb_diag_ring[slot];
+    e->seq = seq;
+    e->kind = (unsigned int)kind;
+    e->signum = signum;
+    e->rip = rip;
+    e->busy = busy;
+#ifdef __PS4__
+    {
+        long tid = 0;
+        thr_self(&tid);
+        e->tid = (int)tid;
+    }
+#else
+    e->tid = 0;
+#endif
+    __atomic_store_n(&gdb_diag_head, slot, __ATOMIC_RELEASE);
+}
+
+#define DIAG_HANDLER_ENTRY   1
+#define DIAG_NESTED_SIGNAL   2
+#define DIAG_PARK            3
+#define DIAG_SESSION_LOCK    4
+#define DIAG_SESSION_UNLOCK  5
+#define DIAG_PACKET_WAIT     6
+#define DIAG_PACKET_RECV     7
+#define DIAG_INTERRUPTER     8
+#define DIAG_ENTER_HANDLER   9
+#define DIAG_LEAVE_HANDLER  10
+#define DIAG_CLEANUP_STEP   11
+#define DIAG_CLEANUP_PARK   12
+#define DIAG_LOOP_ENTER     13
+#define DIAG_LOOP_EXIT      14
+#define DIAG_RUN_IN_KERNEL  15
+
+/* --- instrumentation: non-blocking klog side channel (F5/F6) ------------
+ * A frozen session cannot answer qDiagF5 over the RSP socket (the reader is
+ * exactly what is wedged), so the decisive liveness evidence must leave the
+ * process another way. The SDK crt initializes klog (__klog_init aborts the
+ * payload if it fails, so it is always usable here) and klog_printf goes
+ * through __crt_syscall, which is a bare `syscall` instruction with no TLS,
+ * no errno and no locking - safe from the signal handler too. It is called
+ * ONLY on state transitions (entry, park, nested signal), never per packet,
+ * to bound cost and dmesg churn. */
+#if defined(PS5KEK) && !defined(BLOB) && !defined(OBJECT_FILE)
+extern int klog_printf(const char* fmt, ...);
+void diag_klog(const char* msg)
+{
+    klog_printf("[r0gdb-diag] %s", msg);
+}
+#define GDB_DIAG_HAS_KLOG 1
+#else
+void diag_klog(const char* msg) { (void)msg; }
+#endif
+static void gdb_diag_klog(const char* msg) { diag_klog(msg); }
+
+/* Non-static bridge so the payload side (prosper0gdb/r0gdb.c) can drop a
+ * cleanup beacon into the same F5 ring. `ok` < 0 means failure/park. */
+void diag_cleanup_event(int step, int ok)
+{
+    gdb_diag_record(step, ok, 0,
+                    __atomic_load_n(&in_signal_handler, __ATOMIC_RELAXED));
+}
+
+/* Payload-side loop beacons: mark each r0gdb_loop iteration and each
+ * run_in_kernel() step, so a freeze can be attributed to a specific step
+ * (the loop's blocked session vs. an in-kernel gadget run) even though the
+ * RSP socket cannot answer. `detail` is a small tag (the gadget rip low bits
+ * or a step index). */
+void diag_loop_event(int kind, unsigned long long detail, int busy)
+{
+    gdb_diag_record(kind, busy, detail, busy);
+}
 
 static inline void cpu_relax(void)
 {
@@ -324,6 +440,7 @@ static const char* commands[] = {
     "m",
     "qAttached",
     "qDiagF4",
+    "qDiagF5",
 #ifdef __PS4__
     "qOffsets",
 #endif
@@ -386,6 +503,7 @@ enum
     CMD_M_READ,
     CMD_Q_ATTACHED,
     CMD_Q_DIAG_F4,
+    CMD_Q_DIAG_F5,
 #ifdef __PS4__
     CMD_Q_OFFSETS,
 #endif
@@ -693,11 +811,15 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
     for(;;)
     {
         int packet_status;
+        __atomic_add_fetch(&gdb_diag_packet_waits, 1, __ATOMIC_RELAXED);
+        gdb_diag_record(DIAG_PACKET_WAIT, 0, 0, __atomic_load_n(&in_signal_handler, __ATOMIC_RELAXED));
         do
             packet_status = wait_for_packet(o);
         while(packet_status == 1); /* checksum failure: NAK and retry */
         if(packet_status < 0)
             return -1;
+        __atomic_add_fetch(&gdb_diag_packet_recvs, 1, __ATOMIC_RELAXED);
+        gdb_diag_record(DIAG_PACKET_RECV, 0, 0, __atomic_load_n(&in_signal_handler, __ATOMIC_RELAXED));
         switch(match_packet(o))
         {
         case CMD_Q:
@@ -879,6 +1001,57 @@ int gdbstub_main_loop(struct trap_state* ts, ssize_t* result, int* ern)
                 b[1] = int2hex(gdb_last_uc_capture[i] & 15);
                 pkt_puts(o, b, 2);
             }
+            end_packet(o);
+            break;
+        }
+        case CMD_Q_DIAG_F5:
+        {
+            /* Freeze discriminator (see the diag block above): counts + a
+             * fixed-layout event ring, so a client can tell a nested-signal
+             * freeze from a plain blocking packet-read hang without a console
+             * run. Pure memory reads; reentrant-safe. Wire format:
+             *   F5:<hdr 32 hex chars>:<ring 16*32 hex chars>
+             * where hdr is 8 big-endian u16s (4 hex chars each):
+             *   entries,nested,parks,slocks,swaits,pwaits,precvs,ifires
+             * and each ring slot is 16 hex bytes:
+             *   kind(1) busysignum(1) signum(1) rip(8 LE as 16 hex)
+             *   tid(4 LE as 8 hex) seq(2)  -- see struct gdb_diag_evt.
+             * AES order: emit as raw bytes for client-side unpacking. */
+            skip_to_end(o);
+            start_packet(o);
+            PKT_PUTS(o, "F5:");
+            char hb[2];
+#define F5_PUT16(v) do { unsigned int _v=(unsigned int)(v); \
+    for(int _i=3;_i>=0;_i--){ hb[1-(_i&1)]=int2hex((_v>>(4*_i))&15); if((_i&1)==0) pkt_puts(o,hb,2);} } while(0)
+            F5_PUT16(__atomic_load_n(&gdb_diag_handler_entries, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_nested_entries, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_park_entries, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_session_locks, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_session_waits, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_packet_waits, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_packet_recvs, __ATOMIC_RELAXED));
+            F5_PUT16(__atomic_load_n(&gdb_diag_interrupter_fires, __ATOMIC_RELAXED));
+            PKT_PUTS(o, ":");
+            for(int i = 0; i < GDB_DIAG_RING; i++)
+            {
+                struct gdb_diag_evt* e = &gdb_diag_ring[i];
+                char rb[34];
+                unsigned int kind = e->kind;
+                int signum = e->signum;
+                int busy = e->busy;
+                unsigned long long rip = e->rip;
+                int tid = e->tid;
+                unsigned long long seq0 = e->seq;
+                int p = 0;
+                rb[p++] = int2hex((kind >> 4) & 15); rb[p++] = int2hex(kind & 15);
+                rb[p++] = int2hex((busy >> 4) & 15); rb[p++] = int2hex(busy & 15);
+                rb[p++] = int2hex((signum >> 4) & 15); rb[p++] = int2hex(signum & 15);
+                for(int k = 7; k >= 0; k--) { rb[p++] = int2hex((rip >> (8*k+4)) & 15); rb[p++] = int2hex((rip >> (8*k)) & 15); }
+                for(int k = 3; k >= 0; k--) { rb[p++] = int2hex((tid >> (8*k+4)) & 15); rb[p++] = int2hex((tid >> (8*k)) & 15); }
+                rb[p++] = int2hex((seq0 >> 4) & 15); rb[p++] = int2hex(seq0 & 15);
+                pkt_puts(o, rb, p);
+            }
+#undef F5_PUT16
             end_packet(o);
             break;
         }
@@ -1066,7 +1239,12 @@ void* interrupter_thread(void* o)
             break;
     }
     if(!in_signal_handler)
+    {
+        __atomic_add_fetch(&gdb_diag_interrupter_fires, 1, __ATOMIC_RELAXED);
+        gdb_diag_record(DIAG_INTERRUPTER, SIGINT, 0, 0);
+        gdb_diag_klog("interrupter: sending SIGINT to self");
         kill(getpid(), SIGINT);
+    }
 #if defined(__PS4__) && defined(PS5KEK)
     thr_exit(0);
 #endif
@@ -1090,8 +1268,29 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
 {
     /* diagnostic: are we reaching the handler? */
     int tmp_errno = errno;
-    if(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
+    __atomic_add_fetch(&gdb_diag_handler_entries, 1, __ATOMIC_RELAXED);
+    int was_busy = __atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE);
+    if(was_busy)
     {
+        /* Freeze discriminator: a debugger signal delivered while the session
+         * flag is already held. Record signum + top-of-frame rip (for a fault
+         * frame, the kernel writes the faulting rip there) so a client can tell
+         * a nested fault from a plain blocking packet-read hang. */
+        unsigned long long nest_rip = 0;
+        if(o_uc)
+        {
+            ucontext_t* nuc = (ucontext_t*)o_uc;
+#ifdef __PS4__
+            mcontext_t* nmc = (mcontext_t*)(((char*)&nuc->uc_mcontext)+48);
+            nest_rip = nmc->mc_rip;
+#else
+            nest_rip = nuc->uc_mcontext.gregs[REG_RIP];
+#endif
+        }
+        __atomic_add_fetch(&gdb_diag_nested_entries, 1, __ATOMIC_RELAXED);
+        gdb_diag_record(DIAG_NESTED_SIGNAL, signum, nest_rip, 1);
+        gdb_diag_record(DIAG_HANDLER_ENTRY, signum, nest_rip, 1);
+        gdb_diag_klog("nested debugger signal while session held -> park");
         /* Another consumer (r0gdb_loop / gdb_remote_syscall via
          * gdbstub_session_lock) holds the session and blocks on packet
          * I/O for its whole duration. NEVER spin here: the holder cannot
@@ -1106,6 +1305,9 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
         if(signum == SIGSEGV || signum == SIGILL || signum == SIGBUS
            || signum == SIGFPE)
         {
+            __atomic_add_fetch(&gdb_diag_park_entries, 1, __ATOMIC_RELAXED);
+            gdb_diag_record(DIAG_PARK, signum, nest_rip, 1);
+            gdb_diag_klog("fault-signal park (nanosleep loop)");
             /* Raw SYS_nanosleep (240) loop; no libc dependency. */
             long ts[2];
             for(;;)
@@ -1122,6 +1324,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
         return;
     }
     ucontext_t* uc = (ucontext_t*)o_uc;
+    gdb_diag_record(DIAG_HANDLER_ENTRY, signum, 0, 0);
     {
         /* Capture the raw signal frame for the F4 query (see the globals
          * above). Bounded to the local capture size. */
@@ -1250,6 +1453,7 @@ static void signal_handler(int signum, siginfo_t* idc, void* o_uc)
     uc->uc_mcontext.gregs[REG_EFL] = ts.regs.eflags;
 #endif
     __atomic_exchange_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+    gdb_diag_record(DIAG_LEAVE_HANDLER, signum, 0, 0);
 #ifdef INTERRUPTER_THREAD
     start_interrupter_thread();
 #endif
@@ -1472,14 +1676,26 @@ int gdbstub_session_lock(sigset_t* oldmask)
     if(pthread_sigmask(SIG_BLOCK, &blocked, oldmask))
         return -1;
 #endif
+    int waited = 0;
     while(__atomic_exchange_n(&in_signal_handler, 1, __ATOMIC_ACQUIRE))
+    {
+        if(!waited)
+        {
+            waited = 1;
+            __atomic_add_fetch(&gdb_diag_session_waits, 1, __ATOMIC_RELAXED);
+            gdb_diag_record(DIAG_SESSION_LOCK, 0, 0, 1);
+            gdb_diag_klog("session lock contended: spin on in_signal_handler");
+        }
         cpu_relax();
+    }
+    __atomic_add_fetch(&gdb_diag_session_locks, 1, __ATOMIC_RELAXED);
     return 0;
 }
 
 void gdbstub_session_unlock(const sigset_t* oldmask)
 {
     __atomic_store_n(&in_signal_handler, 0, __ATOMIC_RELEASE);
+    gdb_diag_record(DIAG_SESSION_UNLOCK, 0, 0, 0);
 #ifdef __PS4__
     sigprocmask(SIG_SETMASK, oldmask, NULL);
 #else

@@ -325,6 +325,16 @@ uint64_t iret;
 
 static int init_run = 0;
 static int idt6_patched = 0;
+
+/* Instrumentation: a per-step beacon for the auto-cleanup path (defined in
+ * gdb_stub/dbg.c, which owns the F5 ring), so a freeze during cleanup can be
+ * attributed to a specific step without a client round-trip. cleanup_event
+ * records into the ring; klog emits a non-socket liveness beacon (klog goes
+ * through __crt_syscall, TLS-free, so it works even when the session socket
+ * is wedged). */
+void diag_cleanup_event(int step, int ok);
+void diag_klog(const char* msg);
+void diag_loop_event(int kind, unsigned long long detail, int busy);
 static char og_idt1[16];
 static char og_idt6[16];
 static char og_idt9[16];
@@ -505,13 +515,20 @@ static void r0gdb_park_after_cleanup_failure(void)
 {
     /* Keep this payload mapped if any gate/IST restore could not be
      * verified; returning could leave an installed IDT target unmapped. */
+    diag_cleanup_event(12 /* DIAG_CLEANUP_PARK */, -1);
+    diag_klog("cleanup FAILED: parking in userland (payload stays mapped)");
     for(;;)
         sleep(1);
 }
 
 void r0gdb_cleanup(void)
 {
-    if(r0gdb_cleanup_checked())
+    diag_cleanup_event(1 /* SFMASK */, 1);
+    diag_klog("cleanup: begin (SFMASK/TSS/IDT restore + verify)");
+    int rc = r0gdb_cleanup_checked();
+    diag_cleanup_event(11 /* DIAG_CLEANUP_STEP */, rc ? 0 : 1);
+    diag_klog(rc ? "cleanup: checked() returned FAILURE" : "cleanup: checked() OK");
+    if(rc)
         r0gdb_park_after_cleanup_failure();
 }
 
@@ -529,12 +546,14 @@ static void r0gdb_loop(void)
     for(;;)
     {
         sigset_t oldmask;
+        diag_loop_event(13 /* DIAG_LOOP_ENTER */, 0, 0);
         if(gdbstub_session_lock(&oldmask))
             break;
         int status = gdbstub_main_loop(&ts, 0, 0);
         gdbstub_session_unlock(&oldmask);
         if(status < 0)
             break;
+        diag_loop_event(14 /* DIAG_LOOP_EXIT */, (unsigned long long)ts.regs.rip, 0);
         ts.regs.eflags &= ~0x200;
         ts.regs.eflags |= 0x102;
         if((void*)ts.regs.rip == (void*)r0gdb_exit)

@@ -167,6 +167,27 @@ def _inner(stub_port):
     except TimeoutError:
         outcome = "timeout"
 
+    # Freeze discriminator: on a timeout the session is wedged, so try one
+    # best-effort qDiagF5 read before parking. If the stub's reader is fully
+    # stuck the query will also time out (that itself is data: no nested signal
+    # AND no reader progress), but if only a sub-path is stuck the counters tell
+    # us which. Never fatal; wrapped so a second timeout cannot mask the park.
+    if outcome == "timeout":
+        try:
+            dec = s.diag_f5(timeout=3)
+            log("[E1] F5 counts: %s", dec["counts"])
+            for e in dec["ring"][:6]:
+                if e["kind"]:
+                    log("[E1]   seq=%d %-16s signum=%d busy=%d tid=0x%x rip=0x%x",
+                        e["seq"], e["kind_name"], e["signum"], e["busy"],
+                        e["tid"], e["rip"])
+            v = analyze_freeze(dec)
+            log("[E1] FREEZE VERDICT: %s -- %s", v["class"], v["detail"])
+        except Exception as e:
+            log("[E1] F5 diagnostic unavailable at freeze (%s: %s); the reader "
+                "is fully wedged -> park. Check dmesg for [r0gdb-diag] lines.",
+                type(e).__name__, e)
+
     log("[E1] OUTCOME: %s", outcome)
     if outcome == "verified-return":
         try:
