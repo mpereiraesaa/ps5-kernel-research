@@ -9,6 +9,7 @@ occurred, or whether #DB was delivered.
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from khook_trace_classify import RECORD, classify
@@ -23,6 +24,12 @@ def number(value):
     if not 0 <= result < LIMIT:
         raise ValueError(f"address/size outside uint64: {value!r}")
     return result
+
+
+def sha256_text(value, name):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise ValueError(f"{name} must be a SHA-256 hex digest")
+    return value.lower()
 
 
 def span(name, base, size):
@@ -170,6 +177,10 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         raise ValueError("cannot compare a log with an invalid layout")
     if manifest is not None and not isinstance(manifest, dict):
         raise ValueError("manifest must be a JSON object")
+    build_sha = sha256_text(plan.get("build_sha"), "build_sha")
+    part_sha = {part: sha256_text(plan["b1"][part].get("image_sha"),
+                                 f"b1.{part}.image_sha")
+                for part in ("image", "big", "journal")}
     classification = classify(raw, manifest)
     records = {}
     for line in raw.decode("utf-8", errors="replace").splitlines():
@@ -183,6 +194,7 @@ def compare_log(plan, raw, manifest=None, geometry=None):
     expected = {
         "B0": {
             "cpu": number(plan["selected_cpu"]),
+            "build_sha": build_sha,
             "f1_slot": number(plan["frame_slots"][0]),
             "f2_slot": number(plan["frame_slots"][1]),
         },
@@ -203,6 +215,7 @@ def compare_log(plan, raw, manifest=None, geometry=None):
         expected[f"B1.{part}"] = {
             "addr": number(plan["b1"][part]["base"]),
             "bytes": number(plan["b1"][part]["size"]),
+            "image_sha": part_sha[part],
         }
     expected["B1.image"].update(zip(
         ("rbp_addr", "rip_addr", "rsp_addr", "dr7_addr"),
