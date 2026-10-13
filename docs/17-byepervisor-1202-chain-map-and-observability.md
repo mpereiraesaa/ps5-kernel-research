@@ -315,6 +315,18 @@ addition to the first gap. Its synthetic tests are in
 `tests/test_khook_trace_classify.py`; no real 12.02 run has yet produced this
 record format.
 
+[inference] For the entry-only candidate in `16`, the classifier accepts an
+optional `--f2-entry-ktext-base` supplied from the **same run**. It adds the
+data-derived `0x3130a0` offset and compares the accepted F2 frame RIP with
+that absolute address, reporting `equal`, `different`, or `no_accepted_f2`.
+The comparison preserves a changed F2 frame even when RIP differs; it does
+not turn a missing frame into a failed-breakpoint verdict. The base is an
+operator assertion, not authenticated by the KH2 log, and address equality
+alone cannot establish DR0/DR7 programming, the syscall dispatch path, or a
+valid handler return. A same-attempt DR0 readback or instruction trace
+contradicting the asserted target would falsify its link to this F2 frame.
+The flag is unavailable in the legacy `kstuff-fullchain` mode.
+
 **Native format scaffold, built and host-tested offline:** the separate local
 payload workspace now contains `kh2_trace_format.c/.h` and
 `kh2_trace_format_host_test.py` under
