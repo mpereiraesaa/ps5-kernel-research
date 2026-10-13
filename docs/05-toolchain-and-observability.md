@@ -104,14 +104,17 @@ The local `kh2_main_capture.c/.h` adds B0/B1/B2/A2/D2 readback production
 through supplied kernel-read, SHA-256, and log callbacks. It captures each
 B1 span's prewrite hash, verifies the staged/readback bytes, and later
 checks **all three** restored span hashes at D2 alongside the B0 scratch
-baseline (`11` #33). `kh2_main_host_test.py` combined seven native main
+baseline (`11` #33). The image B1 record now bounds all four later context
+qword writes, and A2 requires its armed-state address inside the B1 journal
+span, away from marker words (`11` #34). The main host check rejects both
+out-of-span cases. `kh2_main_host_test.py` combined seven native main
 records with 11 records from a separate worker mock into a classifier-accepted
 18-record transcript; an un-restored journal was rejected. This verifies
 format and baseline linkage across two mock processes, not a same-attempt
 console trace. Source SHA-256: `kh2_main_capture.c`
-`be3474e7e9c5717de6c170e281b639d9abe226f087d1dd8d43dae5b53d49ae50`,
+`6c0b465d4bd7e298368d46ace2d57a292cc73e75ff9f5bceb6ef095faff619a5`,
 `kh2_main_capture.h`
-`198c8f48b4ea3268eea731f5970cf206ae5a5485756da22388611c79a098a43b`.
+`e01c5ca3a609432eba1cd3d414fddc8c28a09e3fdd4375fd79107608e986381c`.
 The C source cross-compiled as a PS5 SDK object. No 12.02 payload invokes
 this producer.
 
@@ -138,7 +141,7 @@ the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
 notes checkout with `--notes-repo`, classified 20 complete 18-record attempts with
 no callback-owner violation or stage-order conflict; a journal left changed
 was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
-`a3905b1fbb86a1002d20eeba104fcbae6ca1555ab567d91a859454507186de5b`,
+`6ab594f8d7fa7e3634aa2026c0a064a5eb1a8484b0cb70164dbce130b245f0e0`,
 `kh2_integrated_host_test.py`
 `0cbcffccbd59fcdbb8ce32dc3133fbc9dcd7f56fd34247c0bdcd73b418ffc252`.
 The two mock kernel events set frame/journal bytes directly; they are not

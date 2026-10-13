@@ -87,6 +87,17 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 if any(slot < start or slot + FRAME_BYTES > end for slot in
                        (baseline["f1_slot"], baseline["f2_slot"])):
                     raise ValueError("frame slot outside staged image")
+                context_addresses = []
+                for name in ("rbp", "rip", "rsp", "dr7"):
+                    address = number(f"{name}_addr")
+                    if (address % 8 or address < start or address + 8 > end or
+                            any(address < baseline[slot] + FRAME_BYTES and
+                                baseline[slot] < address + 8
+                                for slot in ("f1_slot", "f2_slot"))):
+                        raise ValueError(f"pretrigger {name} address outside context area")
+                    context_addresses.append(address)
+                if len(set(context_addresses)) != len(context_addresses):
+                    raise ValueError("pretrigger context addresses reused")
             if fields["part"] == "journal":
                 start, end = number("addr"), number("addr") + int(fields["bytes"])
                 addresses = []
@@ -191,6 +202,16 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
         elif stage == "A2":
             if baseline is None:
                 raise ValueError("B0 baseline missing for dispatch IST")
+            journal_region = state.get("b1_regions", {}).get("journal")
+            if journal_region is None:
+                raise ValueError("B1 journal missing for armed-state geometry")
+            armed_addr = number("armed_addr")
+            if (armed_addr % 8 or armed_addr < journal_region[0] or
+                    armed_addr + 8 > journal_region[1] or
+                    (journal_preseed is not None and any(
+                        armed_addr == address for address, _ in
+                        journal_preseed.values()))):
+                raise ValueError("armed state outside journal free word")
             if (number("ist_actual") != number("ist_expected") or
                     number("armed_actual") != number("armed_expected")):
                 raise ValueError("arm-return readback differs")
@@ -370,6 +391,9 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
             b1_parts[fields["part"]] = int(seq)
             state.setdefault("b1_before", {})[fields["part"]] = (
                 fields["before_sha"].lower())
+            state.setdefault("b1_regions", {})[fields["part"]] = (
+                int(fields["addr"], 16),
+                int(fields["addr"], 16) + int(fields["bytes"]))
             if fields["part"] == "journal":
                 journal_preseed = {
                     name: (int(fields[f"{name.lower()}_addr"], 16),
