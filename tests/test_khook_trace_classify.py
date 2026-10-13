@@ -381,6 +381,22 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertIn("R0", result["handoff_records_missing"])
         self.assertFalse(result["handoff_record_set_complete"])
 
+    def test_capture_read_error_identifies_gap_without_claiming_execution(self):
+        payloads = [record("B0"), *(record("B1", part=part)
+                    for part in ("image", "big", "journal")), record("R0"),
+                    record("B2")]
+        raw = "".join(f"{index}\t{index * 1000}\tMARK\t{value}\n"
+                      for index, value in enumerate(payloads, 1))
+        raw += ("7\t7000\tERR\tKH2E stage=R1 cpu=3 operation=read "
+                "region=f1 addr=0x118\n")
+        result = classify(raw.encode())
+        self.assertEqual(result["first_missing_direct_evidence"], "R1")
+        self.assertEqual(result["first_capture_error"],
+                         {"seq": 7, "stage": "R1", "cpu": 3,
+                          "region": "f1", "addr": "0x118"})
+        self.assertNotIn("R1", result["observed"])
+        self.assertEqual(result["rejected"], [])
+
     def test_handoff_records_require_linked_raw_readbacks(self):
         staged = [record("B0"), *(record("B1", part=part)
                     for part in ("image", "big", "journal"))]
