@@ -1235,11 +1235,82 @@ layout would be needed to use them in a new chain.
 pivot, stack pivot, and save/restore gadget sequences, then specify the
 exact register and hardware-frame images for the chosen trigger. Until
 those contracts are reviewable, the two-gadget ELF remains deferred and
-there is no full-chain ELF to send. The shared #DB gate still presents
+there is no **Byepervisor-dispatch** ELF to send. The Kstuff-family
+alternative below has a separate contract. The shared #DB gate still presents
 the observed all-CPU risk even if only one thread is pinned; any new
 trigger needs prepared stacks for every CPU that can take #DB, a
 reviewed expected marker/observer plan, fresh owner approval, and the
 hard-power-cycle plus read-only baseline recovery plan.
+
+#### Alternative full continuation using Kstuff's 12.02 gadget family
+
+[public-consensus] Kstuff's
+[`kelf.asm` `memcpy` macro](https://github.com/EchoStretch/kstuff-lite/blob/main/ps5-kstuff/kelf.asm)
+uses `pop_all_iret` with a populated register frame to enter
+`rep_movsb_pop_rbp_ret` and continue from its `pop rbp; ret` epilogue.
+Its [12.02 table](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h)
+names `add_rsp_iret`, `pop_all_iret`, `rep_movsb_pop_rbp_ret`, and
+`doreti_iret`; these yield text-relative offsets `0x2b3626`,
+`0x2b35ce`, `0x2efbba`, and `0x2b362d` with the dump-derived
+`kdata−ktext=0xd50000`. [verified-on-dump] The 13.60 donor decodes the
+corresponding `rep_movsb_pop_rbp_ret` entry as `rep movsb; pop rbp; ret`
+and `pop_all_iret` as full-GPR loads followed by a conditional `swapgs`
+and `iretq`. The exact 12.02 bytes are still unknown. This approach
+uses Kstuff's documented chain primitives instead of projecting
+Byepervisor's missing individual pop/store gadgets onto 12.02.
+
+[inference] A one-shot diagnostic can stage, for each of 16 CPUs, a
+five-word hardware-frame canary at `F−0x28`, a first kernel `iretq`
+frame at `F+0xc0`, two complete register frames, and a source/destination
+scratch marker. The intended sequence is:
+
+`#DB → add_rsp_iret → pop_all_iret → rep_movsb_pop_rbp_ret`
+`→ pop_all_iret → doreti_iret → original #DB hardware frame → user wrapper`.
+
+The first populated frame gives `rep movsb` kernel-data source,
+destination, and count 8. Its kernel RFLAGS value 2 clears DF and IF.
+The copy writes a fixed marker; `pop rbp; ret` enters the second
+`pop_all_iret` frame. That frame gives `doreti_iret` a kernel CS and
+RSP=`F−0x28`, so the final `iretq` consumes the CPU frame. A separate
+assembly wrapper saves all six ABI callee-saved GPRs on the **user**
+stack before `ICEBP`, then restores them after return; the kernel
+chain's second register image may set caller-saved GPRs to known
+values. The original CPU frame restores user RIP/RSP/RFLAGS/CS/SS.
+Falsifiers are a changed hardware frame without the marker, a marker
+without a return marker, register/frame mismatch, or another gate/IST
+state after cleanup. This validates a Kstuff-style continuation and
+return; it would **not** validate Byepervisor's unverified 12.02
+`add rsp,0x28; ret` dispatch pivot or DR7 arm pass.
+
+The isolated local source (outside this notes repo) now builds three
+FW 12.02 ELFs: setup-only SHA-256
+`074ec7dfa2feeff63cee4a096bf00590afe209e76bca4b688e1e55a2d838e99a`,
+live SHA-256
+`c057f484e66d137a14ddc041e02776da28193c1d9a741b32e27f6b0772fb7aff`,
+and read-only audit SHA-256
+`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`.
+Build success is an offline fact; **none has been sent** as of this note.
+Each CPU gets a `0x500`-byte disjoint slot (`0x5000` total), within a
+zero run in the 12.02 data dump; the payload refuses nonzero live
+scratch. It also refuses a non-native #DB gate, an unexpected IST4
+user, wrong kernel CS, failed single-CPU affinity, or a readback
+mismatch. The gate is shared, so all 16 IST4 slots are prepared before
+changing it. [inference] Zero bytes alone do not prove this scratch is
+unowned; a live change or concurrent owner would falsify the cave
+assumption.
+
+**Console plan approved in principle by the owner on 2026-10-13:**
+read-only baseline first; then setup-only, expecting `[K1]`, restored
+`[K1r]`, and `[K2]` without #DB. Only after clean setup and a fresh
+baseline, the live ELF would expect `[K2] frame=MATCH marker=MATCH` and
+restored gate/IST4/scratch. If elfldr stalls while the PS5 remains
+reachable, the separate read-only audit reports each CPU's hardware
+frame and marker; a marker alone locates progress through the kernel
+copy, not through the return. A changed shared gate and all-CPU IST4
+slots can still panic or leave the machine unsafe. Recovery is a hard
+power cycle, followed by read-only native-gate/IST4/scratch audit and
+UI check. Actual observations and recovery state remain **pending**;
+record them here after each approved run.
 
 ### Frame staging isolation run
 
