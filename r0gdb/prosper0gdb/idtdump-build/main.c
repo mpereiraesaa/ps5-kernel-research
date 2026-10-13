@@ -195,5 +195,66 @@ int main(int argc, char **argv)
     printf("[I6] gates using IST3/4/6: %d\n", haz);
     fflush(stdout);
 
+    /* [M] the IST-stack activity monitor (rung 2): every natural event on
+     * an IST-using vector leaves a frame footprint on that IST stack.
+     * Snapshot the top 1 KiB of all 7 IST stacks x 16 CPUs, sleep, snapshot
+     * again, diff: the natural event rates, measured with NO patching.
+     * The vector->IST map: v8->ist1, v2->ist2, v9/v13->ist3, v1->ist4,
+     * v30->ist5, v179->ist6 (shared, all CPUs), v3->ist7. */
+    {
+#define SNAP_SZ 0x400
+        static unsigned char snap_a[TSS_N * 7 * SNAP_SZ];
+        static unsigned char snap_b[TSS_N * 7 * SNAP_SZ];
+        for(int phase = 0; phase < 2; phase++) {
+            unsigned char *dst = phase ? snap_b : snap_a;
+            for(int cpu = 0; cpu < TSS_N; cpu++) {
+                const unsigned char *t = &tss[cpu * TSS_SZ];
+                for(int i = 0; i < 7; i++) {
+                    uint64_t ist = *(const uint64_t *)(t + tss_ist_off[i]);
+                    /* read the top 1 KiB BELOW the ist value (events push
+                     * downward from it) */
+                    if(copyout(dst + (cpu * 7 + i) * SNAP_SZ,
+                               ist - SNAP_SZ, SNAP_SZ) != SNAP_SZ) {
+                        printf("[M] cpu%d ist%d read FAIL at 0x%llx\n",
+                               cpu, i + 1, (unsigned long long)ist);
+                        fflush(stdout);
+                        return 5;
+                    }
+                }
+            }
+            if(phase == 0) {
+                printf("[M] baseline snapshot taken; sleeping 5s...\n");
+                fflush(stdout);
+                sleep(5);
+            }
+        }
+        int reports = 0;
+        for(int cpu = 0; cpu < TSS_N; cpu++) {
+            for(int i = 0; i < 7; i++) {
+                const unsigned char *a = snap_a + (cpu * 7 + i) * SNAP_SZ;
+                const unsigned char *b = snap_b + (cpu * 7 + i) * SNAP_SZ;
+                if(memcmp(a, b, SNAP_SZ) == 0)
+                    continue;
+                int first = -1, diffbytes = 0;
+                for(int k = 0; k < SNAP_SZ; k++) {
+                    if(a[k] != b[k]) {
+                        if(first < 0)
+                            first = k;
+                        diffbytes++;
+                    }
+                }
+                uint64_t ist = *(const uint64_t *)
+                    (&tss[cpu * TSS_SZ] + tss_ist_off[i]);
+                printf("[M] cpu%2d ist%d ACTIVE: %d bytes changed "
+                       "(first at top-0x%x; ist=0x%llx)\n",
+                       cpu, i + 1, diffbytes, SNAP_SZ - first,
+                       (unsigned long long)ist);
+                reports++;
+            }
+        }
+        printf("[M] active IST stacks: %d (of %d)\n", reports, TSS_N * 7);
+        fflush(stdout);
+    }
+
     return 0;
 }
