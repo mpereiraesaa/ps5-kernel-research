@@ -305,6 +305,8 @@ HCALL 0x0f → AP on root 0 → VMCB write.
 | `10-hcall-resume-window-and-noops.md` | This document |
 | `11-debunked-theories-and-corrections.md` | Register of debunked theories + corrections |
 | `12-acpi-static-anchor-corrections.md` | ACPI static-anchor corrections for this route (FACS, `+0x18e`, string scan) |
+| `13-ring0-freeze-instrumentation.md` | Ring-0 freeze capture set + hypotheses + falsifiable test |
+| `14-ring0-execution-alternatives.md` | Ring-0 execution alternatives to r0gdb |
 | `evidence-logs/` | Raw protocol logs |
 
 ### NOOP: FACS wake vector (2026-10-12)
