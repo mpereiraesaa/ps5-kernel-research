@@ -46,6 +46,7 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 30 | The 12.02 `sysent[24].sy_call` pointer identifies the `getuid` body, so its `+0xe` instruction is a usable test hook | **ENTRY/BODY CONFLATION** — 13.60 `sy_call` names a jump entry at `ktext+0x265330`, while its getuid body is `ktext+0x2a8d60`. 12.02 data locates only its entry at `ktext+0x3130a0`; no 12.02 text is held to resolve the body or instruction boundary. The old `746` sysent count was also wrong; the 13.60 declared count is 735. | [verified-on-dump] `kernel-dump-1360-boot1791893784/kernel-data.bin+0x1b6e50`, `kernel-text.bin+0x265330`, `kernel-data-only-1202/kernel-data.bin+0x1af4d0`; [verified-in-tree] `tools/sysent_trampoline_map.py:15-77`, `docs/16-byepervisor-12-02-port.md` §“getuid table entry versus hook body” |
 | 31 | A matching IST image/readback hash and `ist_matched` count prove the selected #DB stack points to the intended arm or dispatch frame | **UNLINKED STACK POINTER** — those checks can match an unchanged native pointer or the wrong staged address. KH2 B2 now requires the selected IST6 qword to equal `f1_slot+0x28` before TF; A2 requires `f2_slot+0x28` after the arm return, both different from B0's native pointer. | [verified-in-tree] `tools/khook_trace_classify.py:125-132,193-199`, `tests/test_khook_trace_classify.py:522-545`; [public-consensus] [`5299395/khook.c:341-345,371-376,443-454`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L341-L454); [inference] selected-pointer equality is required for the proposed frame placement |
 | 32 | The one-trap prearmed worker can sample continuously through both KH2 transactions while the main thread performs A2 and the test setup | **SHARED-PRIMITIVE RACE** — each observer read reconfigures its pipe with the inherited SDK kernel-write primitive, and `ps5log` is not thread-safe. The public test writes kernel data after the arm return and before `getuid`. A two-trap port needs explicit idle/sample/quiesce handoffs around both traps. Proposed R0/R1/Q1/R2/Q2 values and order are checked, and a host-only pthread schedule exercises the handoffs; no integrated 12.02 producer emits them. | [verified-in-tree] `tools/khook_trace_classify.py:100-112,145-165,202-241,379-382`, `tests/test_khook_trace_classify.py:400-433`; [inference] `engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`, `fullchain_prearmed.c:175-241,602-625`, `kh2_worker.c:40-125,201-236`; `engineering/homebrew_ps5/projects/logging_server/client/ps5log.h:31`; [public-consensus] [`5299395/main.c:71-80`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/main.c#L71-L80), [`main.c:462-482`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/main.c#L462-L482) |
+| 33 | D2's B0 scratch hash and `scratch_restored=1` prove the separately staged B1 image, big chain, and journal were restored | **UNCOVERED SPANS** — B1 permits three disjoint physical spans that need not lie inside the B0 scratch hash range. B1 now records each span's prewrite `before_sha`, and D2 requires a matching final hash for each span. A matching scratch hash alone cannot cover bytes outside that range. | [verified-in-tree] `tools/khook_trace_classify.py:75-83,244-263,369-373`, `tests/test_khook_trace_classify.py:407-419`, `docs/17-byepervisor-1202-chain-map-and-observability.md` KH2 contract; [inference] disjoint B1 placement in `17` leaves independent restore obligations |
 
 ## Detail on the load-bearing ones
 
@@ -67,6 +68,18 @@ offline requirements and fixtures, not evidence of console execution. A
 handoff line is still a report by its sender; without an integrated SDK and
 logger adapter it cannot prove those shared resources were serialized on a
 12.02 console.
+
+### #33 — Restore every staged span [inference]
+
+The proposed KH2 image, big chain, and journal are separate B1 write spans.
+The B0 scratch hash may cover none, some, or all of them, depending on a
+future layout. Therefore a D2 scratch match does not establish that bytes
+outside its range returned to their prewrite state. Capturing `before_sha`
+before each B1 write and comparing each D2 readback to it closes that
+specific logging gap. A proved layout in which all three B1 spans lie wholly
+inside the B0 scratch hash range would falsify the need for the three extra
+D2 hashes **for that layout**. The hashes still do not prove an unwritten
+address was safe or that the chain returned through a valid instruction.
 
 ### #31 — Read back the selected stack qword [inference]
 

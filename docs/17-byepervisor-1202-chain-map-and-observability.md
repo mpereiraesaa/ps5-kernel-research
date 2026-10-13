@@ -169,7 +169,7 @@ earlier one in the host parse.
 | Stage | Required KH2 fields after the common header | Host check |
 |---|---|---|
 | B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two aligned, nonoverlapping planned five-word frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
-| B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…`. The journal record also has `<stage>_addr=… <stage>_before=…` for each of `a1p`, `a1r`, `d1s`, `d1o`. | Each physical write span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. Both B0 frame slots fit wholly inside `image`. The journal preseed words occupy distinct aligned qwords inside its region. |
+| B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… before_sha=… image_sha=… readback_sha=…`. The journal record also has `<stage>_addr=… <stage>_before=…` for each of `a1p`, `a1r`, `d1s`, `d1o`. | Read and hash each span **before** its write, then hash the staged bytes and their readback. Each span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. Both B0 frame slots fit wholly inside `image`. The journal preseed words occupy distinct aligned qwords inside its region. |
 | R0 | `observer_cpu=… build_sha=… gate_lo=… gate_hi=… ist6=… pipe_ready=1 idle=1` | A distinct CPU reports that its pipe is open and it sampled the native selected gate/IST while idle after B0/B1, before main patches the gate. Build hash and readbacks must match B0; this is a worker report, not a kernel-frame observation. |
 | B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… ist6_actual=… ist6_expected=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403 f1_can0=…` through `f1_can4=…`, and `f2_can0=…` through `f2_can4=…` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. The selected IST6 readback and expectation must both equal `B0.f1_slot+0x28` and differ from native `B0.ist6`. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. All ten pretrigger frame canaries are distinct. This record belongs **after** the final context writes and **before** TF. |
 | R1 | `observer_cpu=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=… f1_can0..4=… f2_can0..4=…` and each `<stage>_addr=… <stage>_before=…` for `a1p`, `a1r`, `d1s`, `d1o` | Worker rereads the selected gate/IST, both frame preseeds, and all journal preseeds after B2. Values must match B0/B1/B2, and CPU must match R0. Main waits for this report and acknowledgment before TF. |
@@ -179,7 +179,7 @@ earlier one in the host parse.
 | A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The selected dispatch IST6 and armed-state readbacks agree; the IST value must equal `B0.f2_slot+0x28` and differ from native `B0.ist6`, and the armed state is nonzero. |
 | R2 | `observer_cpu=… gate_lo=… gate_hi=… ist6=… f2_slot=… f2_can0..4=… d1s_addr=… d1s_before=… d1o_addr=… d1o_before=…` | After A2, worker rereads the patched gate, selected dispatch IST6, untouched F2 canaries and dispatch journal words. Values must match B1/B2/A2; main waits for acknowledgment before the test syscall. |
 | Q2 | `observer_cpu=… reason=syscall_return idle=1 inflight=0 samples=…` | Worker reports quiescence after the second return signal. Main waits for acknowledgment before D2 restoration and logging. |
-| D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=…` | The return/restoration assertions are present; the restored IST count equals B2's count when available, and selected gate/IST/scratch readbacks equal B0. The AP phase has its own evidence set. |
+| D2 | `returned=1 gate_restored=1 scratch_restored=1 ist_restored=… gate_lo=… gate_hi=… ist6=… scratch_readback_sha=… image_restored_sha=… big_restored_sha=… journal_restored_sha=…` | The return/restoration assertions are present; restored IST count equals B2's count, selected gate/IST/scratch readbacks equal B0, and each B1 span's final hash equals its prewrite `before_sha`. A matching B0 scratch hash alone does not cover separate B1 spans (`11` #33). The AP phase has its own evidence set. |
 
 The planned phase order is `B0 B1 R0 B2 R1 F1 A1P A1R Q1 A2 R2 F2
 D1S D1O Q2 D2`; B1 has three physical-part records. Frame and journal
@@ -192,7 +192,7 @@ Legacy bare `KH1 … verified=1` records are rejected because they omit the
 frame, journal, and readback values. A KH2 line can still be false if its
 producer fabricated or sampled the wrong address; the classifier cannot
 authenticate a kernel event from text alone.
-The read-only sampler's `ERR` line `KH2E stage=… cpu=… operation=read
+The samplers' `ERR` line `KH2E stage=… cpu=… operation=read|hash
 region=… addr=…` is a separate failure report. The classifier preserves it
 as `capture_errors`/`first_capture_error` but never counts it as a KH2
 milestone. A retained R1 `KH2E` with no R1 record identifies the reported
@@ -205,7 +205,11 @@ B2 pretrigger frame readback and B1 journal preseed make these comparisons
 auditable across records. A same-attempt capture showing different preseed
 values at the stated addresses would falsify the reported change or the
 address map. The values still do not authenticate the producer or prove a
-valid #DB entry (`11` #29).
+valid #DB entry (`11` #29). Likewise, D2 must compare **all three** B1
+prewrite span hashes, because B0's scratch region need not contain those
+separate spans. A layout proving every B1 write lies wholly within the B0
+scratch hash region would falsify the need for separate D2 hashes for that
+specific layout (`11` #33).
 
 [public-consensus] The 11.60 installer writes one first-`0x500` image
 containing the arm and dispatch stacks/frames and separately writes its big
@@ -298,6 +302,19 @@ mocked, so this does not prove a distinct console CPU, real pipe ownership,
 logger serialization, or any #DB delivery. A timeout leaves ownership
 uncertain and cannot be treated as permission for another trigger.
 
+**Host-only main readback scaffold:** `kh2_main_capture.c/.h` reads and emits
+B0, the three B1 parts, B2, A2, and D2 through supplied read, SHA-256, and
+send callbacks. It requires a B1 prewrite snapshot for each physical span;
+D2 rereads all three spans and compares their hashes to those snapshots.
+B2/A2/D2 require the matching main-owned worker state. The host check used
+native C to emit seven main records and combined them with 11 records from
+the separate worker mock; the resulting 18-record transcript passed the
+classifier. An un-restored journal was rejected at D2. These are two mock
+processes, not one same-attempt console trace. The C source SHA-256 is
+`be3474e7e9c5717de6c170e281b639d9abe226f087d1dd8d43dae5b53d49ae50`;
+it cross-compiled as a PS5 SDK object. Its host SHA callback, expected
+12.02 addresses/values, and mock worker states still require real adapters.
+
 ### Two-transaction observer ownership schedule
 
 [inference] The one-trap prearmed worker cannot simply keep sampling across
@@ -331,9 +348,10 @@ The proposed KH2 contract now names R0/R1/Q1/R2/Q2 and the classifier
 checks their raw links and order. The host sampler can format them from mock
 data, but **no integrated 12.02 producer or worker emits them**, so this
 remains an offline log specification, not a verified ownership schedule.
-The host-only worker implements the source-level handoff and failure
-fixtures, but the real CPU pin, pipe open/close, SDK reads, logger adapter,
-B0/B1/B2/A2/D2 emitters, and 12.02 chain remain unconnected. An implementation
+The host-only worker and main emitter implement source-level handoffs and
+readbacks, but the real CPU pin, pipe open/close, SDK reads, SHA-256 and
+logger adapters, staging/restoration writes, and 12.02 chain remain
+unconnected. An implementation
 with a truly independent kernel read
 primitive and synchronized thread-safe logger would falsify the need for
 this exact ownership transfer, but not the need to capture both frames before

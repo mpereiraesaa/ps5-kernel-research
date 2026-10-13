@@ -77,6 +77,7 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             if fields.get("part") not in B1_PARTS:
                 raise ValueError("missing or unknown image part")
             number("addr")
+            sha("before_sha")
             if int(fields.get("bytes", "0")) <= 0:
                 raise ValueError("image part has no bytes")
             if sha("image_sha") != sha("readback_sha"):
@@ -243,6 +244,8 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
         elif stage == "D2":
             if baseline is None:
                 raise ValueError("B0 baseline missing for restoration comparison")
+            if set(state.get("b1_before", {})) != set(B1_PARTS):
+                raise ValueError("B1 span baselines missing for restoration")
             if fields.get("returned") != "1" or fields.get("gate_restored") != "1" or (
                     fields.get("scratch_restored") != "1"):
                 raise ValueError("return or restoration absent")
@@ -254,6 +257,9 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 (baseline["gate_lo"], baseline["gate_hi"],
                  baseline["ist6"], baseline["scratch_sha"])):
                 raise ValueError("restoration readback differs from B0")
+            for part in B1_PARTS:
+                if sha(f"{part}_restored_sha") != state["b1_before"][part]:
+                    raise ValueError(f"{part} restoration differs from B1 prewrite")
     except (TypeError, ValueError) as error:
         return str(error), None
     return None, None
@@ -283,7 +289,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                 address = fields["addr"]
                 region = fields["region"]
                 if (len(fields) != len(pairs) or stage not in STAGES or
-                        fields.get("operation") != "read" or
+                        fields.get("operation") not in ("read", "hash") or
                         not 0 <= cpu < 16 or
                         (baseline is not None and cpu != baseline["cpu"]) or
                         not HEX.fullmatch(address) or
@@ -294,7 +300,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                                  "reason": "malformed KH2E capture error"})
             else:
                 capture_errors.append({"seq": int(seq), "stage": stage,
-                                       "cpu": cpu, "region": region,
+                                       "cpu": cpu, "operation": fields["operation"],
+                                       "region": region,
                                        "addr": address})
             continue
         if "\tMARK\tKH1 " in line:
@@ -361,6 +368,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
             state["arm_return_ist"] = int(fields["ist_actual"], 16)
         if stage == "B1":
             b1_parts[fields["part"]] = int(seq)
+            state.setdefault("b1_before", {})[fields["part"]] = (
+                fields["before_sha"].lower())
             if fields["part"] == "journal":
                 journal_preseed = {
                     name: (int(fields[f"{name.lower()}_addr"], 16),

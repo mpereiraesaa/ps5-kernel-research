@@ -58,7 +58,10 @@ def record(stage, **overrides):
         "D2": {"returned": "1", "gate_restored": "1",
                "scratch_restored": "1", "ist_restored": "16",
                "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x900",
-               "scratch_readback_sha": "d" * 64},
+               "scratch_readback_sha": "d" * 64,
+               "image_restored_sha": "e" * 64,
+               "big_restored_sha": "f" * 64,
+               "journal_restored_sha": "0" * 64},
         "Q2": {"observer_cpu": "7", "reason": "syscall_return",
                "idle": "1", "inflight": "0", "samples": "1"},
     }
@@ -69,6 +72,9 @@ def record(stage, **overrides):
                     "journal": ("0x700", "256")}
         addr, length = geometry[part]
         raw[stage] = {"part": part, "addr": addr, "bytes": length,
+                      "before_sha": {"image": "e" * 64,
+                                     "big": "f" * 64,
+                                     "journal": "0" * 64}[part],
                       "image_sha": "c" * 64, "readback_sha": "c" * 64}
         if part == "journal":
             for name, address in (("a1p", "0x700"), ("a1r", "0x708"),
@@ -393,9 +399,32 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertEqual(result["first_missing_direct_evidence"], "R1")
         self.assertEqual(result["first_capture_error"],
                          {"seq": 7, "stage": "R1", "cpu": 3,
-                          "region": "f1", "addr": "0x118"})
+                          "operation": "read", "region": "f1",
+                          "addr": "0x118"})
         self.assertNotIn("R1", result["observed"])
         self.assertEqual(result["rejected"], [])
+
+    def test_d2_requires_restoration_of_all_three_b1_spans(self):
+        staged = [record("B0"), *(record("B1", part=part)
+                  for part in ("image", "big", "journal")), record("B2")]
+        result = classify_records(*staged,
+                                  record("D2", scratch_readback_sha="e" * 64))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "restoration readback differs from B0")
+        result = classify_records(*staged,
+                                  record("D2", journal_restored_sha="1" * 64))
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "journal restoration differs from B1 prewrite")
+        self.assertNotIn("D2", result["observed"])
+
+    def test_b1_hash_error_is_not_a_staging_record(self):
+        raw = ("1\t1000\tMARK\t" + record("B0") + "\n" +
+               "2\t2000\tERR\tKH2E stage=B1 cpu=3 operation=hash "
+               "region=big addr=0x1000\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["first_missing_direct_evidence"], "B1")
+        self.assertEqual(result["capture_errors"][0]["operation"], "hash")
+        self.assertNotIn("B1", result["observed"])
 
     def test_handoff_records_require_linked_raw_readbacks(self):
         staged = [record("B0"), *(record("B1", part=part)
@@ -495,7 +524,7 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertIn("image parts overlap", reasons)
         self.assertIn("gate equals native B0 baseline", reasons)
         self.assertIn("journal baseline differs from B1 preseed", reasons)
-        self.assertIn("restoration readback differs from B0", reasons)
+        self.assertIn("B1 span baselines missing for restoration", reasons)
 
     def test_gate_and_restoration_require_native_baseline(self):
         raw = ("1\t1\tMARK\t" + record("B2") + "\n" +
