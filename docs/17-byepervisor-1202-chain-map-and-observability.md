@@ -327,6 +327,23 @@ valid handler return. A same-attempt DR0 readback or instruction trace
 contradicting the asserted target would falsify its link to this F2 frame.
 The flag is unavailable in the legacy `kstuff-fullchain` mode.
 
+[inference] B2's gate readback currently compares with expected words supplied
+by the same producer; that alone cannot identify the intended pivot. With
+`--b2-pivot-ktext-base` from the **same run**, the classifier independently
+encodes the candidate `ktext+0x2ac2de` as a present DPL0 interrupt gate using
+selector `0x20` and IST6, then compares both accepted B2 qwords. It reports
+`equal`, `different`, or `no_accepted_b2` plus the decoded target, selector,
+IST, type, DPL, and present bit. The selector is the live native 12.02 value
+recorded in `16`; the target offset remains a cross-firmware candidate, not
+verified 12.02 instruction bytes (`11` #23). The base is an operator
+assertion, and an address match does not prove the pivot executes or the
+first #DB was delivered. A same-attempt gate readback with different words
+would falsify equality; a 12.02 text image lacking the required pivot bytes
+would falsify the candidate's execution contract. [public-consensus] The
+descriptor encoding follows the public
+[`gate_encode`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L22-L33).
+The option is unavailable in the legacy `kstuff-fullchain` mode.
+
 **Native format scaffold, built and host-tested offline:** the separate local
 payload workspace now contains `kh2_trace_format.c/.h` and
 `kh2_trace_format_host_test.py` under
@@ -866,6 +883,14 @@ Compiling this audit ELF validates none of those contracts.
    python3 tools/kh2_layout_check.py candidate.json \
      --log retained-run.log --manifest retained-run.json
    ```
+
+   [inference] Adding `--b2-pivot-ktext-base` with a same-run 12.02 text
+   base also brings the conditional descriptor comparison into this plan/log
+   join. A different accepted B2 gate makes `comparison_status=mismatch` and
+   exits nonzero; absent B2 remains a coverage gap. The supplied base and
+   candidate pivot bytes are not authenticated by that comparison. A
+   same-attempt gate readback with the encoded candidate words would falsify
+   a reported descriptor mismatch, but would not validate the gadget bytes.
 
    It joins only classifier-accepted B0, three B1 parts, B2, and A2 to the
    candidate. It compares selected CPU and frame slots; B1 span bases/sizes,
