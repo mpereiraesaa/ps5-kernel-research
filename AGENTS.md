@@ -35,6 +35,12 @@ correction rather than quietly reinterpreting.
 theories we already falsified (and why), so the same mistakes are not
 repeated. Add new falsifications there in the same PR.
 
+For the ring-0 freeze specifically, also read
+`docs/13-ring0-freeze-instrumentation.md` (the capture set, the three
+remaining hypotheses, and the falsifiable test for each) and
+`docs/14-ring0-execution-alternatives.md` (substrates vs r0gdb, and which
+freeze class each eliminates) before proposing a fix.
+
 ## Contribution workflow
 
 - Topic branches + pull requests only; never push directly to `main`.
