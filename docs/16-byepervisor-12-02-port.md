@@ -773,6 +773,43 @@ engine as “proven” would repeat a claim already corrected above.
   freeze remains unlocated because that run lacked the acknowledgment
   wait. The calibration did not trigger #DB or capture an exception frame.
 
+#### Pretrigger frame handshake attempt (2026-10-13)
+
+- **FW/build:** 12.02,
+  `byepervisor_probe_1202_observer_frame_handshake.elf`, SHA-256
+  `f9104be1641d84f1a1f7c246d81bda3d0d523fc4022effffd3ad51db7ef7e93c`.
+- **Expected:** use the calibrated worker to read the canary and complete
+  a PC `pretrigger sampled` send while IST4 and the shared #DB gate are
+  changed. On a failed or timed-out 250 ms acknowledgment, restore and
+  exit without a trigger. On success, issue one TF/NOP #DB and have the
+  worker report a stable five-qword frame if it can observe one.
+- **Risk and recovery:** this again intentionally dispatches #DB through
+  unverified 12.02 handler bytes after a longer changed-gate window. The
+  earlier frame attempt froze the console. A different CPU can encounter
+  the shared gate; a freeze or failed restoration requires a hard power
+  cycle. The owner approved this exact build and recovery plan before the
+  run.
+- **Actual:** elfldr returned P1/P2/P3, `[F1]`, and both E1 lines, then
+  timed out after 25 seconds without E2/E3/F2. The PC received READY and
+  `frame-observer pretrigger sampled cpu=9 canary=MATCH` 0.001487 seconds
+  later. It received no changed-frame or return marker. The session was
+  finalized on server shutdown with two records, no gaps, and no BYE.
+  Three subsequent pings failed.
+- **Recovery state:** the owner hard power-cycled the PS5 and confirmed
+  normal operation. Network reachability returned after startup; a later
+  two-ping check passed.
+- **Interpretation:** [verified-on-console] in this run the PC received a
+  post-patch canary read before the freeze, so the worker and PC channel
+  were active while the changed gate/IST4 were installed. [inference] the
+  main thread had completed both patch readbacks before setting the
+  observer phase that allowed this read; a different control-flow order
+  in the built ELF would falsify that claim. The marker is sent **before**
+  the worker stores the acknowledgment that releases the main thread, so
+  it does not prove the main thread reached TF/NOP. An unrelated #DB during
+  the changed-gate window, a failure at the intended trigger, or failure
+  later in handler/return processing remain possible. No exception frame
+  was captured and patched-stack delivery remains unvalidated.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
