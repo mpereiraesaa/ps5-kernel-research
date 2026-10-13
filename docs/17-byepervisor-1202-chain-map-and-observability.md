@@ -119,10 +119,10 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | B0 native baseline | User-mode read-only gate, all relevant IST slots, scratch/journal; `ps5log/1` with FW, build hash, boot identity without console identifiers, pinned CPU. | Starting state for this boot. |
 | B1 image staged | User-mode write/readback of each disjoint arm, dispatch, handler, and frame region; log their sizes and independent checksums. | Staging completed; no #DB implication. |
 | B2 gate armed | User-mode gate/IST readback plus a final pretrigger `ps5log/1` record. | Patch was observed before the deliberate first trap; does not prove the trap ran. |
-| F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; an independent read-only audit captures raw RIP/CS/RFLAGS/RSP/SS while the console is reachable. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
+| F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. An independent read-only audit captures raw RIP/CS/RFLAGS/RSP/SS while the console is reachable. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
 | A1 arm continuation | A first in-chain kernel-data marker **after** a verified pivot/store and a second after `DBREG_RESUME` continuation, if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
 | A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the dispatch IST pointer and journal. | First return completed and dispatch stack was selected. |
-| F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**, sampled independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
+| F2 second hardware frame | Distinct canaries in the **dispatch IST6 frame slot**; in the reference layout, IST6=`scratch+0x240` and the words start at `scratch+0x218`. Sample independently before recovery if a later failure occurs. | Supports kernel hook #DB delivery; not handler completion. |
 | D1 dispatch/handler | In-chain marker only **after** the required interrupted registers are saved and a 12.02 liveness review proves the marker's RAX/RCX clobbers harmless; later marker after the test oracle store and before the resume tail. Record raw frame and marker words in the independent audit. | Separates entry/register-save, handler action, and resume-tail failures, subject to verified store gadgets. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
 | H1 AP phase | Separate `entered`, selected-VMCB count, write count, verify count, and `done` evidence, following the 11.60 read-before-write validation pattern. | Only a full expected set and readback can support a 12.02 AP claim. |
@@ -144,6 +144,20 @@ marker slot is disjoint from both chains, both hardware frames, the saved
 baseline, and the AP stash. A marker written before the register-save stage
 would change the interrupted context and cannot be called passive logging.
 
+**Offline-built read-only capture scaffold (not run):** our local tooling
+`engineering/payloads/byepervisor_probe_1202/khook_1202_readonly_audit.c`
+builds `byepervisor_probe_1202_khook_readonly_audit.elf`, SHA-256
+`b3efc11a33eea37634eafcb598d4dd31c775e8fa85b0f242c59f4f9872ac549b`.
+It reads the vector-1 gate, all 16 IST6 pointers, four pages beginning at
+the **candidate** scratch address, raw five-word frames at the 11.60 arm
+and dispatch IST positions, and 32 qwords at provisional `scratch+0x700`.
+Its compiled `main` calls `kernel_copyout` and no `kernel_copyin`; no console
+operation was performed. [inference] A read-only sample can help distinguish
+frame delivery from later-chain progress if a future build uses those exact
+slots; a different finalized layout would falsify the positional reading and
+requires rebuilding the audit. The extra two pages, journal ownership, and
+marker-store path are not validated merely by compiling this ELF.
+
 ## Offline exit gates and console boundary
 
 1. Identify the 12.02 instruction bytes and containing basic blocks for the
@@ -156,9 +170,12 @@ would change the interrupted context and cannot be called passive logging.
    regions, 16 CPUs if per-CPU landings are used with the shared gate, and
    both #DB transactions. The validated two-page 12.02 scratch candidate
    cannot hold the reference `0x4000`-byte image as-is.
-4. Build a read-only audit that reports both frame slots, all journal words,
-   gate/IST state, and the saved baseline. Pair it with user-mode `ps5log/1`
-   records; validate its parsing on synthetic data before any live run.
+4. Finalize the read-only audit against the chosen layout, including both
+   frame slots, all journal words, gate/IST state, and the saved baseline.
+   The offline-built scaffold above covers the reference slot positions only;
+   it has not been run or paired with an executing chain. Pair the final
+   version with user-mode `ps5log/1` records and validate classification on
+   synthetic data before any live run.
 5. Only after those gates, specify one exact FW 12.02 build, the expected
    marker sequence and falsifiers, the risk of a stranded gate/IST or panic,
    hard power-cycle recovery, and read-only baseline verification. Obtain
