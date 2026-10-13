@@ -154,6 +154,45 @@ earlier marker is a coverage gap, and a reversed stage order is flagged. The
 classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
 real 12.02 run has yet produced this record format.
 
+### Current Kstuff-style one-`ICEBP` build
+
+The later offline build documented in `16` uses a different IST4 layout
+and Kstuff's `pop_all_iret` → `rep_movsb_pop_rbp_ret` → `pop_all_iret`
+continuation. The **IST6** audit scaffold below does not inspect its
+per-CPU `0x500`-byte slots. Its own `fullchain_audit.c` emits `[KA1]`
+gate/IST4/marker values and `[KA2]` changed-frame values. The live
+`fullchain_allcpu.c` emits `[K1]` and a `ps5log/1` staging record
+**before** the IST4 and gate writes (`fullchain_allcpu.c:327-356`),
+then `[K1r]` and `[K2]` only after returning and restoring
+(`fullchain_allcpu.c:370-395`). There is no durable PC marker between
+the final gate readback and `ICEBP` in that build. [inference] A run that
+stops after staging cannot distinguish patching failure, trap delivery,
+or later continuation without a same-attempt read-only audit; a later trace
+showing an intermediate marker would falsify this record inventory.
+
+The classifier accepts those **actual** records separately from the
+proposed two-transaction `KH1` format:
+
+```text
+python3 tools/khook_trace_classify.py elfldr.log --mode kstuff-fullchain \
+  --audit fullchain-audit.log --audit-same-attempt \
+  --pc-log run.log --manifest run.json --pc-same-run
+```
+
+`--audit-same-attempt` is an explicit operator assertion; absent a verified
+same-attempt link before recovery, audit values are shown but cannot
+advance the reported boundary. `--pc-same-run` likewise asserts that the
+PC log and elfldr output belong to the same run; its manifest checks integrity and gaps
+but does not by itself link two different output channels. A changed
+`[KA2]` frame with no marker bounds failure after
+the frame change and before the copy marker or its observation; a marker
+with no return bounds it after the copy and before the user return or its
+log. Those are **classes**, not instruction identifications. The audit
+reports canary replacement, not an independently validated #DB frame;
+raw RIP/CS/RFLAGS/RSP/SS still require review. A post-power-cycle audit
+cannot negate an earlier delivery. Tests cover these cases with synthetic
+`[K]`/`[KA]`/`ps5log/1` transcripts.
+
 [inference] The first divergence between a preseeded frame, an in-chain
 marker, and a post-return marker localizes the **class** of failure, not
 necessarily the exact instruction. An independent observer must sample the
