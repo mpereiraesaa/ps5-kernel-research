@@ -623,8 +623,9 @@ engine as “proven” would repeat a claim already corrected above.
   IST4 pointer, hardware-frame address, return-frame address, and
   one-qword gate swap. No E2 or E3 appeared. The sender timed out
   after 30 seconds; a subsequent three-ping check received no replies.
-- **Recovery state:** console unreachable after the run; owner hard
-  power cycle requested, outcome pending.
+- **Recovery state:** console unreachable after the run; the owner
+  performed the agreed hard power cycle and confirmed normal operation.
+  A later two-ping check also succeeded.
 - **Interpretation:** [verified-on-console] the checks and staging
   reached E1, followed by a freeze before the return marker.
   [inference] The failure lies somewhere after E1: IST4 write/readback,
@@ -632,6 +633,34 @@ engine as “proven” would repeat a claim already corrected above.
   restoration. The lack of an E2 marker does **not** prove #DB reached
   the patched CPU or IST4 slot. Evidence of a hardware frame is still
   absent; the experiment does not validate step 1 of the boundary below.
+
+### Exact-value IST4/#DB write isolation run (2026-10-13)
+
+- **FW/build:** 12.02 (`0x12020000`),
+  `byepervisor_probe_1202_patch_only_ist4_gate.elf`, SHA-256
+  `8f61011a969f2928e8aad53a8b472448236865349b944797c560e3445b940ac0`.
+  The owner explicitly approved this exact build and a hard
+  power-cycle recovery plan after the frozen attempt.
+- **Expected:** repeat the frozen build's preflight and frame staging,
+  write/read back the same changed selected-CPU IST4 qword and
+  shared #DB gate low qword targeting `ktext+0x2b3626`, restore and
+  verify the original full gate, IST4, and scratch, then emit S2 and
+  exit without a TF/#DB trigger.
+- **Actual:** E1 reported CPU 15 and a single-CPU affinity mask. S2
+  printed the changed IST4 pointer and gate low qword after successful
+  readback, then `originals restored=YES; no #DB trigger`. The sender
+  received the required response, and a post-run two-ping check passed.
+- **Recovery state:** payload exited normally; console remained
+  reachable; no hard power cycle was needed for this run. Other console
+  services were not checked.
+- **Interpretation:** [verified-on-console] these exact changed values
+  were writable, readable, and restorable in this new run. [inference]
+  The frozen attempt is more likely to have failed in the later
+  TF/#DB/return path than because these writes are deterministically
+  rejected. A timing-sensitive write failure or concurrent #DB could
+  still distinguish the frozen run; S2 cannot retrospectively locate
+  its last completed instruction. This run does **not** establish
+  exception delivery or IST4 frame use.
 
 ### Frame staging isolation run
 
