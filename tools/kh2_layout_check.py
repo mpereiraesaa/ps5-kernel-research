@@ -174,12 +174,12 @@ def check(plan):
 
 
 def locate_write_error(plan, error):
-    """Map a reported failed B1/B2 write address to the candidate plan."""
+    """Map a reported failed write address to the candidate plan."""
     address = number(error["addr"])
     stage, region = error["stage"], error["region"]
     location = {"seq": error["seq"], "stage": stage, "region": region,
                 "addr": error["addr"], "plan_match": False}
-    if stage == "B1" and region in plan["b1"]:
+    if stage in ("B1", "D2") and region in plan["b1"]:
         part = plan["b1"][region]
         base, size = number(part["base"]), number(part["size"])
         if base <= address < base + size:
@@ -190,13 +190,14 @@ def locate_write_error(plan, error):
                     if start <= address < start + length:
                         location["landing_cpu"] = number(landing["cpu"])
                         break
-    elif stage == "B2" and region == "gate":
+    elif stage in ("B2", "D2") and region == "gate":
         base = number(plan["gate"]["base"])
         if address in (base, base + 8):
             location.update(plan_match=True, word=(address - base) // 8)
-    elif stage == "B2" and region == "ist6":
+    elif stage in ("B2", "A2", "D2") and region == "ist6":
         for cpu, item in enumerate(plan["ist_qwords"]):
-            if address == number(item):
+            if address == number(item) and (stage != "A2" or
+                                            cpu == number(plan["selected_cpu"])):
                 location.update(plan_match=True, cpu=cpu)
                 break
     elif stage == "B2" and region == "context":
@@ -205,6 +206,14 @@ def locate_write_error(plan, error):
                 location.update(plan_match=True,
                                 context=("rbp", "rip", "rsp", "dr7")[index])
                 break
+    elif stage == "A2" and region == "armed":
+        if address == number(plan["journal_qwords"][4]):
+            location["plan_match"] = True
+    elif stage == "D2" and region == "scratch" and "scratch" in plan:
+        scratch = plan["scratch"]
+        base, size = number(scratch["base"]), number(scratch["size"])
+        if base <= address < base + size:
+            location.update(plan_match=True, offset=hex(address - base))
     return location
 
 

@@ -328,7 +328,8 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                 operation = fields.get("operation")
                 if (len(fields) != len(pairs) or stage not in STAGES or
                         operation not in ("read", "hash", "write") or
-                        (operation == "write" and stage not in ("B1", "B2")) or
+                        (operation == "write" and stage not in
+                         ("B1", "B2", "A2", "D2")) or
                         not 0 <= cpu < 16 or
                         (baseline is not None and cpu != baseline["cpu"]) or
                         not HEX.fullmatch(address) or

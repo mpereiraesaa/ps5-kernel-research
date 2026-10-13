@@ -108,7 +108,11 @@ through supplied kernel-read, SHA-256, and log callbacks. Its supplied write
 callback stages B1 in `0x500`-byte calls and requires all 16 IST6 writes
 before the B2 gate write, followed by four context writes. A failed callback
 emits `KH2E operation=write` with its attempted address and blocks the
-success record. It captures each
+success record. The A2 wrapper writes the selected IST6 and armed journal
+word in the main-owned interval; the D2 wrapper restores the native gate,
+all 16 IST6 words, three B1 spans, and B0 scratch after the worker stops.
+Their failed callbacks also emit `KH2E` and block further wrapper writes.
+It captures each
 B1 span's prewrite hash, verifies the staged/readback bytes, and later
 checks **all three** restored span hashes at D2 alongside the B0 scratch
 baseline (`11` #33). The image B1 record now bounds all four later context
@@ -119,13 +123,14 @@ mismatch before permitting the second trigger. The main host check rejects both
 out-of-span cases. `kh2_main_host_test.py` combined seven native main
 records with 11 records from a separate worker mock into a classifier-accepted
 18-record transcript; an un-restored journal and a changed nonselected IST6
-pointer were rejected at D2 and A2 respectively. Injected B1/B2 write
-failures produced `KH2E` without their success records. This verifies
+pointer were rejected at D2 and A2 respectively. Injected B1/B2/A2/D2 write
+failures produced `KH2E` without their success records, and retries were
+rejected. This verifies
 format and baseline linkage across two mock processes, not a same-attempt
 console trace. Source SHA-256: `kh2_main_capture.c`
-`dfcdf963275054625be7ebd7c4b28cd9b04db271120f414505900e65f34fd72e`,
+`7db41b76c390133fe82d4d82e41a7cfc266f4c4428a646607ab91c8171cbd7c9`,
 `kh2_main_capture.h`
-`90650c699ae6de744993532b5937ca97b5ae53654c73ba7630306c4af3650a29`.
+`d67821c844abc9e69220e3ba3e23fe4fb77cd32f65c3038c644f8216af0c0ca3`.
 The C source cross-compiled as a PS5 SDK object. No 12.02 payload invokes
 this producer.
 
@@ -152,7 +157,7 @@ the wrong owner. The `kh2_integrated_host_test.py` check, pointed at this
 notes checkout with `--notes-repo`, classified 20 complete 18-record attempts with
 no callback-owner violation or stage-order conflict; a journal left changed
 was rejected at D2. Source SHA-256: `kh2_integrated_host.c`
-`937a99dd156cc7d210cb003ce8e54f6320540ca238039a1eee5857569b354357`,
+`d51fa2a7b262a05c70858a5c39389200a0d880cf03a5b217070ad6908eb9965d`,
 `kh2_integrated_host_test.py`
 `0cbcffccbd59fcdbb8ce32dc3133fbc9dcd7f56fd34247c0bdcd73b418ffc252`.
 The two mock kernel events set frame/journal bytes directly; they are not
