@@ -866,6 +866,21 @@ Earlier minchain/r0gdb attempts exercised parts of Kstuff's separate
 `run_in_kernel`/INT9 bootstrap; none completed a verified
 call/return and restoration on this console (the correction above).
 
+[public-consensus] A long-mode `iretq` can return from CPL0 to CPL3 by
+loading the saved user RIP, CS, RFLAGS, RSP, and SS; that privilege
+transition is not itself an NPT violation. AMD's
+[architecture manual](https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2)
+describes the `iretq` frame and separately specifies that SMEP blocks an
+instruction fetch from a user page **while still at CPL0–2**. [inference]
+If the intended user TF/NOP caused this #DB, returning to its adjacent
+user code through a valid CPL3 frame would not be rejected merely for
+crossing from kernel to user mode. An exception record showing a denied
+fetch at the return RIP would falsify that inference. Frame/selector
+errors, a page permission or translation fault, and a secondary exception
+while the gate/IST4 patch is active remain possible. The pretrigger marker
+does not establish that the probe reached `iretq`, and the missing return
+marker does not identify NPT as the cause.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.
