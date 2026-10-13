@@ -197,12 +197,17 @@ region=… addr=…` is a separate failure report. The classifier preserves it
 as `capture_errors`/`first_capture_error` but never counts it as a KH2
 milestone. A retained R1 `KH2E` with no R1 record identifies the reported
 failed read; it says nothing about whether a later trap could have fired.
-`write` is accepted only for pretrigger B1/B2. The off-tree main producer's
-write wrappers report an attempted B1 chunk or B2 gate/IST6/context address
-if their callback fails. `tools/kh2_layout_check.py --log` maps such errors
+`write` is accepted for B1/B2/A2/D2. The off-tree main producer's
+write wrappers report an attempted B1 chunk, B2 gate/IST6/context, A2
+selected IST6/armed word, or D2 gate/IST6/span/scratch address if its
+callback fails. `tools/kh2_layout_check.py --log` maps such errors
 to the proposed B1 offset and landing CPU when applicable, IST6 CPU,
-gate word, or context field in
+gate word, context field, or armed journal word in
 `write_error_locations`; a failed write leaves that stage unverified.
+The D2 scratch address remains raw with `plan_match=false` unless the plan
+also includes a scratch base and size. A reported address identifies the
+failed callback attempt, not the last byte written or the first instruction
+that failed.
 [inference] A callback may have changed part of a span before returning an
 error; a same-attempt read of the entire original span would falsify a
 partial-change claim for that event. The logger's send result is not a
@@ -329,6 +334,13 @@ calls, reporting a failed call's address as `KH2E`. The B2 wrapper requires
 all 16 IST6 writes before the gate write, then four context writes, and
 reports any callback failure before the final B2 readback. A failed write
 does not authorize a trigger or imply successful restoration.
+The A2 wrapper requires the main-owned intertrap interval, writes the
+selected IST6 pointer to F2 and then a nonzero free journal word. The D2
+wrapper requires the worker stopped, writes the native gate and all 16 IST6
+words, then three B1 spans in `0x500`-byte chunks and B0 scratch. Failed
+A2/D2 callbacks report `KH2E` and block a wrapper retry. A failed D2
+restoration leaves the actual kernel state unknown until a separate read or
+recovery.
 D2 rereads all three spans and compares their hashes to those snapshots.
 B2/A2/D2 require the matching main-owned worker state. A2 now rereads all
 16 IST6 qwords, compares them with B2's arm image after advancing only the
@@ -337,11 +349,11 @@ The host check used
 native C to emit seven main records and combined them with 11 records from
 the separate worker mock; the resulting 18-record transcript passed the
 classifier. An un-restored journal was rejected at D2; changing another
-CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected B1
-image and CPU-7 IST6 write failures emitted retained `KH2E` without the
-corresponding B1/B2 success record. These are two mock
+CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected
+B1/B2/A2/D2 write failures emitted retained `KH2E` without the
+corresponding success record. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`dfcdf963275054625be7ebd7c4b28cd9b04db271120f414505900e65f34fd72e`;
+`7db41b76c390133fe82d4d82e41a7cfc266f4c4428a646607ab91c8171cbd7c9`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
@@ -366,7 +378,8 @@ transport integrity.
 
 **Single-process host rehearsal:** `kh2_integrated_host.c` uses the real
 main emitter and pthread worker against one mock memory image and one log,
-with callback ownership checks through both transactions. The host test
+with callback ownership checks through both transactions, including A2
+and D2 writes. The host test
 completed 20 ordered 18-record transcripts; an un-restored journal caused
 D2 rejection. The source hashes and test name are in `05`. The two
 frame/journal changes are simulated mock writes, so the passing transcripts

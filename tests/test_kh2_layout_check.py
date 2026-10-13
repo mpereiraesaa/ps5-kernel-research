@@ -130,6 +130,26 @@ class LayoutCheck(unittest.TestCase):
         context["addr"] = "0x20320"
         self.assertFalse(locate_write_error(plan, context)["plan_match"])
 
+    def test_late_write_error_addresses_use_dispatch_and_restore_fields(self):
+        plan = candidate()
+        error = {"seq": 9, "stage": "A2", "region": "ist6",
+                 "addr": plan["ist_qwords"][0]}
+        self.assertEqual(locate_write_error(plan, error)["cpu"], 0)
+        error["addr"] = plan["ist_qwords"][7]
+        self.assertFalse(locate_write_error(plan, error)["plan_match"])
+        error.update(region="armed", addr=plan["journal_qwords"][4])
+        self.assertTrue(locate_write_error(plan, error)["plan_match"])
+        error.update(stage="D2", region="image", addr="0x1ba00")
+        self.assertEqual(locate_write_error(plan, error)["landing_cpu"], 2)
+        error.update(region="gate", addr=plan["gate"]["base"])
+        self.assertEqual(locate_write_error(plan, error)["word"], 0)
+        error.update(region="ist6", addr=plan["ist_qwords"][7])
+        self.assertEqual(locate_write_error(plan, error)["cpu"], 7)
+        error.update(region="scratch", addr="0x30000")
+        self.assertFalse(locate_write_error(plan, error)["plan_match"])
+        plan["scratch"] = {"base": "0x30000", "size": "0x100"}
+        self.assertEqual(locate_write_error(plan, error)["offset"], "0x0")
+
     def test_ambiguous_sequence_cannot_be_joined_to_plan(self):
         plan = candidate()
         raw = planned_log(plan)
