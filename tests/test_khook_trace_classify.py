@@ -14,12 +14,13 @@ def record(stage, **overrides):
     raw = {
         "B0": {"fw": "12.02", "build_sha": "a" * 64,
                "scratch_sha": "d" * 64,
-               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x140",
+               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x900",
                "f1_slot": "0x118", "f2_slot": "0x318"},
         "B2": {"gate_lo": "0x333", "expected_lo": "0x333",
                "gate_hi": "0x444", "expected_hi": "0x444",
                "ist_count": "16", "ist_matched": "16",
                "ist_image_sha": "b" * 64, "ist_readback_sha": "b" * 64,
+               "ist6_actual": "0x140", "ist6_expected": "0x140",
                "rbp_actual": "0x100", "rbp_expected": "0x100",
                "rip_actual": "0x200", "rip_expected": "0x200",
                "rsp_actual": "0x300", "rsp_expected": "0x300",
@@ -36,7 +37,7 @@ def record(stage, **overrides):
                "armed_actual": "0x55", "armed_expected": "0x55"},
         "D2": {"returned": "1", "gate_restored": "1",
                "scratch_restored": "1", "ist_restored": "16",
-               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x140",
+               "gate_lo": "0x111", "gate_hi": "0x222", "ist6": "0x900",
                "scratch_readback_sha": "d" * 64},
     }
     if stage == "B1":
@@ -423,6 +424,32 @@ class OtherClassifierTests(unittest.TestCase):
                 self.assertNotIn("B2", result["observed"])
                 self.assertEqual(result["first_missing_direct_evidence"], "B1")
                 self.assertEqual(len(result["rejected"]), 1)
+
+    def test_selected_ist_must_point_at_each_planned_frame(self):
+        for value in (record("B2", ist6_actual="0x900", ist6_expected="0x900"),
+                      record("B2", ist6_actual="0x148", ist6_expected="0x148")):
+            with self.subTest(value=value):
+                raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
+                       "2\t2\tMARK\t" + value + "\n").encode()
+                result = classify(raw)
+                self.assertNotIn("B2", result["observed"])
+                self.assertEqual(result["rejected"][0]["reason"],
+                                 "selected IST6 does not point to first frame")
+
+        raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
+               "2\t2\tMARK\t" + record("A2", ist_actual="0x348",
+                                           ist_expected="0x348") + "\n").encode()
+        result = classify(raw)
+        self.assertNotIn("A2", result["observed"])
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "selected IST6 does not point to dispatch frame")
+
+    def test_arm_return_ist_requires_baseline(self):
+        raw = ("1\t1\tMARK\t" + record("A2") + "\n").encode()
+        result = classify(raw)
+        self.assertNotIn("A2", result["observed"])
+        self.assertEqual(result["rejected"][0]["reason"],
+                         "B0 baseline missing for dispatch IST")
 
     def test_frame_and_journal_changes_require_earlier_samples(self):
         payloads = [record("B0"), record("B1", part="journal"),
