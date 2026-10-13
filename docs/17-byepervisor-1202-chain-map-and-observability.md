@@ -57,7 +57,7 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 | Required object | 12.02 evidence | Status for faithful #DB port |
 |---|---|---|
 | IDT and common TSS | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:8,10`: `kdata+0x2e88300`, `kdata+0x2e8afe0`; `16` §“Derived 12.02 data and structure offsets” records TSS stride `0x68` from `r0gdb/prosper0gdb/minchain2-build/main.c:72,395`. | Addressed; selected CPU, native gate type/IST, and saved qwords must still be read live. |
-| Scratch | [verified-on-console] `16` setup-only run wrote, read back, and restored **two pages (`0x2000` bytes)** at `kdata+0x2099000`. [public-consensus] `5299395/include/khook.h:30-37` reserves `0x4000` bytes and begins its big chain at `+0x3a00`. | The tested 12.02 region is **too small for a literal 11.60 image**. A new disjoint layout or a separately verified larger cave is required; zero contents do not establish ownership or cross-boot safety. |
+| Scratch | [verified-on-console] The earlier two-page setup at `kdata+0x2099000` was superseded by PR #97's setup-only run: `16` §“Full Kstuff-style continuation probe” records staging/readback/restoration of **16 × `0x500` = `0x5000` bytes** there. [public-consensus] `5299395/include/khook.h:30-37` reserves `0x4000` bytes and begins its big chain at `+0x3a00`. | The tested byte span is large enough for the **reference image by size alone**. The existing all-CPU slots already occupy the entire `0x5000` span, so overlaying that image would collide. A disjoint or redesigned joint layout and independent ownership evidence are still required. |
 | Test hook target | [verified-in-tree] `12_02.h:29` identifies `sysents`; [public-consensus] the 11.60 test uses `getuid + 0xe` (`5299395/main.c:63`). | Function pointer can be located through `sysents`; the **12.02 instruction boundary** and safe resume address are unknown. Do not transfer `+0xe`. |
 | Resume-window hook target and AP init vector | [public-consensus] 11.60 identifies both in its `include/offsets/11_60.h`. | No verified 12.02 addresses. Neither the debunked `acpi_sleep_machdep+0x18e` nor a global text delta supplies one (`11` #14, #18). |
 | `resumectx` layout | [public-consensus] `5299395/include/khook.h:12-15` uses RBP `+0x20`, RSP `+0x28`, RIP `+0x38`, DR7 `+0xa0`. | Candidate FreeBSD lineage only (`16`, PCB table). Validate the 12.02 consumer before a DR7 arm. |
@@ -66,6 +66,17 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 The local 12.02 kdata dump was taken while Kstuff ran; its patched gate and
 IST values are **not** a native baseline (`11` #19). A fresh read-only live
 baseline is required for any later experiment.
+
+[verified-in-tree] In the current `fullchain_allcpu.c` layout, CPU `i` owns
+`[scratch+i×0x500, scratch+(i+1)×0x500)`. The 11.60 reference image uses
+`[scratch, scratch+0x4000)`, including its big chain at
+`[scratch+0x3a00, scratch+0x4000)` (`5299395/include/khook.h:30-37`).
+Overlaying them at the same base would intersect the first 13 CPU slots;
+the big chain alone intersects CPU 11 and 12 slots. [inference] A direct
+combined build therefore needs separate regions or a proved repacking,
+even though `0x5000 > 0x4000`. A disjoint layout with readback on every
+region would falsify the claimed overlap for that redesigned placement;
+the overlap calculation applies to the current shared base only (`11` #25).
 
 [inference] The shared vector-1 gate plus a **selected-core-only** IST6
 rewrite in 11.60 leaves another core's incidental #DB with the new pivot but
@@ -350,8 +361,10 @@ marker-store path are not validated merely by compiling this ELF.
    `sysent` function pointer alone does not identify an interior instruction.
 3. Freeze a disjoint frame/journal layout and check it offline for all staged
    regions, 16 CPUs if per-CPU landings are used with the shared gate, and
-   both #DB transactions. The validated two-page 12.02 scratch candidate
-   cannot hold the reference `0x4000`-byte image as-is.
+   both #DB transactions. PR #97 demonstrated write/readback/restoration
+   across `0x5000` bytes, but its 16 per-CPU slots occupy that entire span.
+   A separate `0x4000` reference image cannot be overlaid at the same base;
+   a jointly packed layout needs explicit interval and ownership proofs.
 4. Finalize a **pre-armed observer** against the chosen layout, including both
    frame slots, all journal words, gate/IST state, and the saved baseline.
    The offline-built audit scaffold above covers the reference slot positions

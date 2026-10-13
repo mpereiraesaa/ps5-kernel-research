@@ -38,8 +38,22 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 22 | An immediate CPL0→CPL3 `iretq` frame is an adequate first khook probe because the architecture permits it | **UNSUPPORTED EXPERIMENT DESIGN** — the reviewed working implementations use staged kernel continuation before returning to user mode; our direct frame had no such precedent, and the console power-off did not identify the failing step. Architectural legality did not establish this 12.02 path. | [verified-on-console] `16` pretrigger handshake; [public-consensus] Kstuff `kelf.asm`, Byepervisor `khook.c` |
 | 23 | Kstuff's 12.02 `cpu_switch` entry is a verified replacement for Byepervisor's `DBREG_RESUME`, and the 13.60 gadget starts by loading DR0 from `[rdi+0x78]` | **WRONG ENTRY CONTRACT** — `cpu_switch` is only a same-region anchor. In the 13.60 donor, `DBREG_RESUME` starts at `mov dr0,rax`; the preceding RAX load is skipped, because the arm chain supplies DR0 in RAX. The proposed 12.02 address remains a byte-unverified candidate. | [verified-on-dump] 13.60 `kernel-text.bin+0x2529d4..0x252a32`; [public-consensus] Byepervisor `khook.c`; [inference] `16` cross-dump candidate |
 | 24 | A read-only audit ELF is a safe way to collect a frame after a live #DB probe stops returning, if the console still answers ping | **UNSUPPORTED RECOVERY ASSUMPTION** — after the Kstuff-style probe emitted `[K1]` without a return marker, ping and elfldr initially worked; the follow-up audit ELF timed out, and the console then stopped answering. This does not prove the audit caused the outage, but read-only intent did not make loading new code safe while shared gate/IST4 state was unknown. | [verified-on-console] `16` full-continuation run; [inference] possible persistent changed gate |
+| 25 | The tested 12.02 scratch span is only `0x2000`, so it is too small for the `0x4000` 11.60 image | **OUTDATED CAPACITY CLAIM** — PR #97's setup-only run staged, read back, and restored `16 × 0x500 = 0x5000` bytes. The byte count can fit the reference image in isolation, but the current 16 CPU slots consume the same span; overlaying both at one base collides. Runtime ownership remains unproved. | [verified-on-console] `16` §“Full Kstuff-style continuation probe”; [verified-in-tree] `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:8-20,275-326`; [public-consensus] `5299395/include/khook.h:30-37` |
 
 ## Detail on the load-bearing ones
+
+### #25 — Capacity and layout are separate questions [verified-in-tree]
+
+The earlier `0x2000` result was a historical measurement, not the latest
+tested bound. The later setup-only ELF staged and checked sixteen disjoint
+`0x500`-byte slots, then restored them (`16`, full-continuation run). Its
+`0x5000` total is numerically larger than the 11.60 `0x4000` image, so
+“too small” is false as a capacity statement. In the present layout,
+however, CPU slots cover the whole `0x5000`; the 11.60 image at the same
+base intersects them. The corrected requirement is a disjoint or jointly
+proved layout with live baseline and ownership checks. A future layout
+showing nonoverlap would falsify the collision claim for that new design;
+it would not retroactively make zero bytes evidence of ownership.
 
 ### #24 — Post-stall auditing must be pre-armed [inference]
 
