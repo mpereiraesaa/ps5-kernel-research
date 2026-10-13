@@ -138,7 +138,8 @@ def check(source: str, structs: str) -> dict:
                       r"\(\(uint64_t\)cpu\s*<<\s*8\)\s*([|+])\s*"
                       r"\(uint64_t\)(?:word|i)")
     formulas = re.findall(canary_pattern, source, re.S)
-    expected_formulas = 2 if "observer_worker" in source else 1
+    expected_formulas = (3 if "phase=PRETRIGGER" in source else
+                         2 if "observer_worker" in source else 1)
     if len(formulas) != expected_formulas or len(set(formulas)) != 1:
         errors.append("canary expression missing or inconsistent")
         unique_canaries = None
