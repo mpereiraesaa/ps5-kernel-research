@@ -40,8 +40,52 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 24 | A read-only audit ELF is a safe way to collect a frame after a live #DB probe stops returning, if the console still answers ping | **UNSUPPORTED RECOVERY ASSUMPTION** — after the Kstuff-style probe emitted `[K1]` without a return marker, ping and elfldr initially worked; the follow-up audit ELF timed out, and the console then stopped answering. This does not prove the audit caused the outage, but read-only intent did not make loading new code safe while shared gate/IST4 state was unknown. | [verified-on-console] `16` full-continuation run; [inference] possible persistent changed gate |
 | 25 | The tested 12.02 scratch span is only `0x2000`, so it is too small for the `0x4000` 11.60 image | **OUTDATED CAPACITY CLAIM** — PR #97's setup-only run staged, read back, and restored `16 × 0x500 = 0x5000` bytes. The byte count can fit the reference image in isolation, but the current 16 CPU slots consume the same span; overlaying both at one base collides. Runtime ownership remains unproved. | [verified-on-console] `16` §“Full Kstuff-style continuation probe”; [verified-in-tree] `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:15-19,278-325`; [public-consensus] `5299395/include/khook.h:30-37` |
 | 26 | Bitwise OR of the frame-canary base with `cpu<<8` makes all 16 CPU canary values distinct | **FALSE** — the base already has bits set in that byte. The PR #97 source produces 20 unique values across 80 CPU/word combinations, although per-CPU slot addresses remain disjoint. The isolated prearmed variant uses addition and produces 80 distinct values. | [verified-in-tree] `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:287-290`, `fullchain_prearmed.c:123-124,507-508`; `tools/fullchain_layout_check.py` |
+| 27 | The KH2 observer's PC report order proves the order of kernel frame and journal writes | **WRONG CAUSAL READING** — independent sampling and sending can lag the writes or scan addresses in a different order. A reversed pair of `F*`/`A1*`/`D1*` reports is an arrival-order difference, not an execution-order reversal. Only the ordered user-mode control records support the narrower causal check. | [verified-in-tree] `tools/khook_trace_classify.py` `classify`, `engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-262`; [inference] asynchronous sampling can reorder reports |
+| 28 | The 11.60 khook's arm, dispatch, handler, and frame are five disjoint physical B1 writes, and gate readback alone is its final preparation step | **WRONG STAGING MODEL** — the first `0x500` image contains arm/dispatch/frame material; the big chain is a separate write. After installation, `kh_trigger` still patches saved RBP and arm RIP/RSP before TF. A closer port needs a final context readback to bound this preparation gap. | [public-consensus] `5299395/khook.c:390-478`; [verified-in-tree] `docs/17-byepervisor-1202-chain-map-and-observability.md` KH2 contract |
 
 ## Detail on the load-bearing ones
+
+### #28 — Physical staging and final trigger preparation [public-consensus]
+
+The first KH2 draft required five nonoverlapping B1 writes named arm,
+dispatch, handler, frame, and journal. That made a direct representation of
+the 11.60 installer impossible: its arm and dispatch entries plus both frame
+slots reside in one `0x500` image, while the big chain is written separately
+(`5299395/khook.c:390-441`). A proposed 12.02 diagnostic journal is a third
+physical span. B1 now records these three disjoint *writes*, with logical
+substructures allowed to share an image.
+
+The first draft also treated gate/IST readback as final pretrigger evidence.
+In the reference, `kh_trigger` writes the saved user RBP and the arm
+continuation RIP/RSP **after** `kh_install` has installed and read back the
+gate, then sets TF and executes a NOP (`khook.c:458-478`). A future 12.02
+copy with only pre-context gate readback cannot localize a bad continuation
+value versus a delivery failure. B2 now specifies a readback of those final
+fields and DR7 before TF. A trace proving that a finalized 12.02 trigger
+does not perform any such post-install context write would falsify the
+need for this extra readback in that design. This correction adds evidence
+requirements; it does not claim that the 12.02 gadget path works.
+
+### #27 — Observer arrival order is not kernel execution order [inference]
+
+The proposed KH2 classifier initially called any stage reversal a
+contradiction of the chain order. That overread the evidence. A hardware
+frame can be written before an in-chain journal marker, while a separate
+worker notices and sends the marker first because it sampled that address
+earlier or because its frame report was delayed. The same problem applies
+to two persistent journal words sampled in scan order. The prearmed worker's
+targeted read and later sweep (`fullchain_prearmed.c:113-262`) establish an
+independent sampling path, not a synchronized instruction trace. A future
+emitter with a validated monotonic counter written at each kernel milestone
+and a proven ordered capture protocol would falsify this limitation for that
+emitter; neither exists for 12.02 today.
+
+The host classifier now calls such a difference `out_of_order` and explains
+it as **report arrival order**. `causal_order_conflict` is limited to
+user-mode control records that the same run emits in sequence. A missing
+frame or journal report remains a coverage gap, especially when transport
+ends without a clean BYE. This correction is about inference from logs; it
+does not establish that any 12.02 kernel transaction executed.
 
 ### #26 — Slot address, not the old canary value, names the CPU [verified-in-tree]
 

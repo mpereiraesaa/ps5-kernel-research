@@ -138,8 +138,8 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | Milestone | Writer and durable evidence | What a positive observation establishes |
 |---|---|---|
 | B0 native baseline | User-mode read-only gate, all relevant IST slots, scratch/journal; `ps5log/1` with FW, build hash, boot identity without console identifiers, pinned CPU. | Starting state for this boot. |
-| B1 image staged | User-mode write/readback of each disjoint arm, dispatch, handler, and frame region; log their sizes and independent checksums. | Staging completed; no #DB implication. |
-| B2 gate armed | User-mode gate/IST readback plus a final pretrigger `ps5log/1` record. | Patch was observed before the deliberate first trap; does not prove the trap ran. |
+| B1 image staged | User-mode write/readback of three **physical** spans: the small image containing arm, dispatch, and frame slots; the big chain; and a separate preseeded journal. Log sizes and independent checksums. | Staging completed; no #DB implication. |
+| B2 final pretrigger state | After all `kh_trigger`-style RBP/RIP/RSP writes, read back the selected gate/IST, those three fields, and the planned DR7 value; send the final pretrigger `ps5log/1` record before setting TF. | Gate and return context were observed before the deliberate first trap; does not prove the trap ran. |
 | F1 first hardware frame | Preseed five distinct canaries at the **selected IST6 hardware-frame slot**; in the reference layout, IST6=`scratch+0x40` and the five words start at `scratch+0x18`. A **pre-armed** independent observer captures raw RIP/CS/RFLAGS/RSP/SS without loading a new ELF after a stall. | Matching replacement by a plausible frame supports first #DB delivery to that stack, even if the pivot fails. Changed bytes alone need raw-frame review. |
 | A1P / A1R arm continuation | Separate in-chain kernel-data markers **after** a verified pivot/store (A1P) and after `DBREG_RESUME` continuation (A1R), if those store sequences can be validated without losing live registers. | Narrows entry/pivot versus debug-register restore/continuation; neither marker alone proves DR7 value. |
 | A2 arm returned | User-mode `ps5log/1` record after the TF/NOP arm return, with readback of the dispatch IST pointer and journal. | First return completed and dispatch stack was selected. |
@@ -161,8 +161,8 @@ same-attempt capture are separate requirements.
 | Stage | Required KH2 fields after the common header | Host check |
 |---|---|---|
 | B0 | `fw=12.02 build_sha=… scratch_sha=… gate_lo=… gate_hi=… ist6=… f1_slot=… f2_slot=…` | Records the native gate/IST/scratch baseline and two distinct planned frame slots. A run identity and layout version remain in the surrounding `ps5log/1` manifest. |
-| B1 | Five records, one each with `part=arm`, `dispatch`, `handler`, `frame`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…` | Each part has positive length, matching staged/readback hashes, and a region disjoint from the other four; only all five count as B1. |
-| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=…` | Gate words agree and differ from the B0 native pair; the count of matching IST slots equals the planned count (1–16), and the IST image hash matches its readback. |
+| B1 | Three records, one each with `part=image`, `big`, `journal`; each has `addr=… bytes=… image_sha=… readback_sha=…` | Each physical write span has positive length, matching staged/readback hashes, and is disjoint from the other two; only all three count as B1. The frame canaries and arm/dispatch chains are **inside** `image`, not separate write spans. |
+| B2 | `gate_lo=… expected_lo=… gate_hi=… expected_hi=… ist_count=… ist_matched=… ist_image_sha=… ist_readback_sha=… rbp_actual=… rbp_expected=… rip_actual=… rip_expected=… rsp_actual=… rsp_expected=… dr7_actual=0x403 dr7_expected=0x403` | Gate words agree and differ from B0; matching IST count equals the planned count (1–16), and the IST image hash matches its readback. Final RBP/RIP/RSP values match the captured user continuation, RIP/RSP are nonzero, and the `resumectx` DR7 arm word matches the 11.60 value. This record belongs **after** the final context writes and **before** TF. |
 | F1 / F2 | `slot=… rip=… cs=… flags=… rsp=… ss=… can0=… can1=… can2=… can3=… can4=…` | Slot matches B0; the raw five-word frame differs from its five-word canary. A plausible hardware frame still needs human review. |
 | A1P / A1R / D1S / D1O | `addr=… before=… after=… expected=…` | The journal word changed and equals the expected marker at a distinct address for each milestone. Marker ownership and gadget placement still need independent proof. |
 | A2 | `ist_actual=… ist_expected=… armed_actual=… armed_expected=…` | The dispatch IST and armed-state readbacks agree, and the armed state is nonzero. |
@@ -173,12 +173,31 @@ frame, journal, and readback values. A KH2 line can still be false if its
 producer fabricated or sampled the wrong address; the classifier cannot
 authenticate a kernel event from text alone.
 
-`tools/khook_trace_classify.py RUN.log --manifest RUN.json` checks this
-proposed record order, the ps5logd manifest's gaps/clean flag, and the
+[public-consensus] The 11.60 installer writes one first-`0x500` image
+containing the arm and dispatch stacks/frames and separately writes its big
+chain (`5299395/khook.c:390-441`). Its `kh_trigger` then patches the saved
+user RBP and arm RIP/RSP **after** the gate has been installed and just before
+setting TF (`khook.c:458-478`). [inference] A 12.02 copy that logs only the
+image hash and gate readback before these final writes leaves a preparation
+gap: it cannot tell a bad return-context value from a failed exception
+delivery. B2 closes that *logging* gap by reading the final fields before
+TF; it does not validate the 12.02 `resumectx` consumer or guarantee safe
+delivery. A future trace showing the final fields differ despite B2 claiming
+equality would falsify the proposed readback or its address calculation.
+
+`tools/khook_trace_classify.py RUN.log --manifest RUN.json` compares this
+proposed phase order with **report arrival order**, checks the ps5logd manifest's gaps/clean flag, and the
 verbatim log SHA-256. It returns the **first missing direct observation**,
 later records, and transport status; it does not inspect the kernel bytes or
 turn absence into a claim that a trap failed. A later stage with a missing
-earlier marker is a coverage gap, and a reversed stage order is flagged. The
+earlier marker is a coverage gap. `out_of_order` flags a difference in report
+arrival order; it is **not** proof that kernel execution reversed. The
+independent observer may sample frame and journal addresses after subsequent
+steps have already run, or emit their reports in scan order.
+`causal_order_conflict` is reserved for reversal among the user-mode control
+records `B0`, `B1`, `B2`, `A2`, and `D2`, including any B1 part sent before
+B0. B2 gate and D2 restoration claims require the B0 native baseline for
+comparison (`11` #27). The
 classifier has synthetic tests in `tests/test_khook_trace_classify.py`; no
 real 12.02 run has yet produced this record format.
 

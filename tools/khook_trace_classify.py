@@ -15,7 +15,8 @@ from pathlib import Path
 
 STAGES = ("B0", "B1", "B2", "F1", "A1P", "A1R", "A2", "F2",
           "D1S", "D1O", "D2")
-B1_PARTS = ("arm", "dispatch", "handler", "frame", "journal")
+B1_PARTS = ("image", "big", "journal")
+USER_STAGES = ("B0", "B1", "B2", "A2", "D2")
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
     "A1P": "journal", "A1R": "journal", "A2": "user",
@@ -67,10 +68,12 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             if sha("image_sha") != sha("readback_sha"):
                 raise ValueError("image/readback hash mismatch")
         elif stage == "B2":
+            if baseline is None:
+                raise ValueError("B0 baseline missing for gate comparison")
             if (number("gate_lo") != number("expected_lo") or
                     number("gate_hi") != number("expected_hi")):
                 raise ValueError("gate readback differs")
-            if baseline and (number("gate_lo"), number("gate_hi")) == (
+            if (number("gate_lo"), number("gate_hi")) == (
                     baseline["gate_lo"], baseline["gate_hi"]):
                 raise ValueError("gate equals native B0 baseline")
             count = int(fields.get("ist_count", "0"))
@@ -78,6 +81,13 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
                 raise ValueError("IST readback count differs")
             if sha("ist_image_sha") != sha("ist_readback_sha"):
                 raise ValueError("IST readback hash mismatch")
+            for name in ("rbp", "rip", "rsp", "dr7"):
+                if number(f"{name}_actual") != number(f"{name}_expected"):
+                    raise ValueError(f"pretrigger {name} readback differs")
+            if number("rip_actual") == 0 or number("rsp_actual") == 0:
+                raise ValueError("pretrigger return target or stack is zero")
+            if number("dr7_actual") != 0x403:
+                raise ValueError("pretrigger DR7 differs from reference arm value")
             return None, count
         elif stage in ("F1", "F2"):
             if baseline is None:
@@ -102,16 +112,18 @@ def _raw_fields(stage: str, fields: dict[str, str], baseline: dict | None,
             if number("armed_actual") == 0:
                 raise ValueError("arm-return state is zero")
         elif stage == "D2":
+            if baseline is None:
+                raise ValueError("B0 baseline missing for restoration comparison")
             if fields.get("returned") != "1" or fields.get("gate_restored") != "1" or (
                     fields.get("scratch_restored") != "1"):
                 raise ValueError("return or restoration absent")
             restored = int(fields.get("ist_restored", "0"))
             if restored < 1 or (ist_count is not None and restored != ist_count):
                 raise ValueError("IST restoration count differs")
-            if baseline and ((number("gate_lo"), number("gate_hi"),
-                              number("ist6"), sha("scratch_readback_sha")) !=
-                             (baseline["gate_lo"], baseline["gate_hi"],
-                              baseline["ist6"], baseline["scratch_sha"])):
+            if ((number("gate_lo"), number("gate_hi"),
+                 number("ist6"), sha("scratch_readback_sha")) !=
+                (baseline["gate_lo"], baseline["gate_hi"],
+                 baseline["ist6"], baseline["scratch_sha"])):
                 raise ValueError("restoration readback differs from B0")
     except (TypeError, ValueError) as error:
         return str(error), None
@@ -180,9 +192,14 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
             seen[stage] = int(seq)
 
     ordered = sorted(seen, key=seen.get)
-    # Compare the two orderings directly; a skipped stage is a coverage gap,
-    # whereas a reversed pair is an inconsistency.
+    # Observer reports can arrive later than the corresponding kernel write.
+    # Only records made on the user-mode control path support a causal order
+    # check. A skipped stage remains a coverage gap, not a failed stage.
     out_of_order = ordered != sorted(ordered, key=STAGES.index)
+    user_order = [stage for stage in ordered if stage in USER_STAGES]
+    causal_order_conflict = user_order != sorted(user_order, key=USER_STAGES.index)
+    if "B0" in seen and any(seq < seen["B0"] for seq in b1_parts.values()):
+        causal_order_conflict = True
     first_missing = next((stage for stage in STAGES if stage not in seen), None)
     later = (list(stage for stage in STAGES[STAGES.index(first_missing) + 1:]
                   if stage in seen) if first_missing else [])
@@ -196,8 +213,11 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
                      manifest.get("gaps") == [] and integrity == "match"
                      else "incomplete")
 
-    if out_of_order:
-        interpretation = "record order contradicts the proposed milestone order"
+    if causal_order_conflict:
+        interpretation = "user-mode control records contradict the required stage order"
+    elif out_of_order:
+        interpretation = ("observer report order differs from phase order; "
+                          "asynchronous sampling does not prove execution-order reversal")
     elif first_missing is None:
         interpretation = "all diagnostic milestones directly recorded; AP phase unassessed"
     else:
@@ -211,6 +231,7 @@ def classify(raw: bytes, manifest: dict | None = None) -> dict:
         "first_missing_direct_evidence": first_missing,
         "later_direct_evidence": later,
         "out_of_order": out_of_order,
+        "causal_order_conflict": causal_order_conflict,
         "rejected": rejected,
         "integrity": integrity,
         "transport": transport,

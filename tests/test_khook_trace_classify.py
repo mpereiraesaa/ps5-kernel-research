@@ -19,7 +19,11 @@ def record(stage, **overrides):
         "B2": {"gate_lo": "0x333", "expected_lo": "0x333",
                "gate_hi": "0x444", "expected_hi": "0x444",
                "ist_count": "16", "ist_matched": "16",
-               "ist_image_sha": "b" * 64, "ist_readback_sha": "b" * 64},
+               "ist_image_sha": "b" * 64, "ist_readback_sha": "b" * 64,
+               "rbp_actual": "0x100", "rbp_expected": "0x100",
+               "rip_actual": "0x200", "rip_expected": "0x200",
+               "rsp_actual": "0x300", "rsp_expected": "0x300",
+               "dr7_actual": "0x403", "dr7_expected": "0x403"},
         "F1": {"slot": "0x118", "rip": "0x1234", "cs": "0x43",
                "flags": "0x202", "rsp": "0x5678", "ss": "0x3b",
                **{f"can{i}": hex(i + 1) for i in range(5)}},
@@ -34,7 +38,7 @@ def record(stage, **overrides):
                "scratch_readback_sha": "d" * 64},
     }
     if stage == "B1":
-        raw[stage] = {"part": "arm", "addr": "0x1000", "bytes": "128",
+        raw[stage] = {"part": "image", "addr": "0x1000", "bytes": "128",
                       "image_sha": "c" * 64, "readback_sha": "c" * 64}
     if stage in ("A1P", "A1R", "D1S", "D1O"):
         addr = {"A1P": "0x700", "A1R": "0x708",
@@ -51,8 +55,7 @@ def run(*stages, clean=False, gaps=None):
     for stage in stages:
         if stage == "B1":
             payloads.extend(record(stage, part=part, addr=hex(0x1000 + 0x100 * i))
-                            for i, part in enumerate(
-                                ("arm", "dispatch", "handler", "frame", "journal")))
+                            for i, part in enumerate(("image", "big", "journal")))
         else:
             payloads.append(record(stage))
     lines = [f"{i}\t{i * 1000}\tMARK\t{payload}\n"
@@ -325,10 +328,18 @@ class OtherClassifierTests(unittest.TestCase):
     def test_reversed_or_wrong_source_record_is_flagged(self):
         result = run("B1", "B0", clean=True)
         self.assertTrue(result["out_of_order"])
+        self.assertTrue(result["causal_order_conflict"])
         raw = ("1\t1\tMARK\t" + record("F1", source="user") + "\n").encode()
         result = classify(raw)
         self.assertNotIn("F1", result["observed"])
         self.assertEqual(result["rejected"][0]["reason"], "wrong source")
+
+    def test_delayed_frame_report_is_not_execution_order_conflict(self):
+        result = run("B0", "B1", "B2", "A1P", "F1", clean=True)
+        self.assertTrue(result["out_of_order"])
+        self.assertFalse(result["causal_order_conflict"])
+        self.assertIn("asynchronous sampling", result["interpretation"])
+        self.assertEqual(result["first_missing_direct_evidence"], "A1R")
 
     def test_manifest_hash_or_sequence_gap_degrades_transport(self):
         result = run("B0", clean=True, gaps=[{"expected": 2, "got": 3}])
@@ -346,7 +357,7 @@ class OtherClassifierTests(unittest.TestCase):
         partial = ("1\t1\tMARK\t" + record("B1") + "\n").encode()
         result = classify(partial)
         self.assertNotIn("B1", result["observed"])
-        self.assertEqual(len(result["b1_missing_parts"]), 4)
+        self.assertEqual(len(result["b1_missing_parts"]), 2)
 
     def test_unchanged_frame_and_wrong_journal_value_are_rejected(self):
         same = record("F1", rip="0x1", cs="0x2", flags="0x3",
@@ -361,7 +372,7 @@ class OtherClassifierTests(unittest.TestCase):
 
     def test_cross_stage_readbacks_and_disjoint_evidence(self):
         lines = [record("B0"), record("B1"),
-                 record("B1", part="dispatch", addr="0x1040"),
+                 record("B1", part="big", addr="0x1040"),
                  record("B2", gate_lo="0x111", expected_lo="0x111",
                         gate_hi="0x222", expected_hi="0x222"),
                  record("A1P"), record("A1R", addr="0x700"),
@@ -375,6 +386,28 @@ class OtherClassifierTests(unittest.TestCase):
         self.assertIn("gate equals native B0 baseline", reasons)
         self.assertIn("journal address reused", reasons)
         self.assertIn("restoration readback differs from B0", reasons)
+
+    def test_gate_and_restoration_require_native_baseline(self):
+        raw = ("1\t1\tMARK\t" + record("B2") + "\n" +
+               "2\t2\tMARK\t" + record("D2") + "\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["observed"], {})
+        self.assertEqual(result["first_missing_direct_evidence"], "B0")
+        self.assertTrue(all("B0 baseline missing" in item["reason"]
+                            for item in result["rejected"]))
+
+    def test_final_pretrigger_context_must_be_read_back(self):
+        cases = [record("B2", rip_actual="0x0", rip_expected="0x0"),
+                 record("B2", dr7_actual="0x0", dr7_expected="0x0"),
+                 record("B2", rsp_actual="0x301")]
+        for value in cases:
+            with self.subTest(value=value):
+                raw = ("1\t1\tMARK\t" + record("B0") + "\n" +
+                       "2\t2\tMARK\t" + value + "\n").encode()
+                result = classify(raw)
+                self.assertNotIn("B2", result["observed"])
+                self.assertEqual(result["first_missing_direct_evidence"], "B1")
+                self.assertEqual(len(result["rejected"]), 1)
 
 
 if __name__ == "__main__":
