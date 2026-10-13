@@ -208,12 +208,26 @@ The D2 scratch address remains raw with `plan_match=false` unless the plan
 also includes a scratch base and size. A reported address identifies the
 failed callback attempt, not the last byte written or the first instruction
 that failed.
+[inference] `KH2E` cannot appear if a console freeze prevents the write
+callback from returning. The off-tree producer now emits `KH2W
+stage=… cpu=… region=… addr=… bytes=… state=begin|done` before and after
+each B1/B2/A2/D2 write callback. Its send must return before the callback
+starts; a failed `begin` send blocks that write. The classifier pairs these
+records and reports `open_write_attempts` and `last_write_attempt`, while
+`tools/kh2_layout_check.py --log` maps each attempt to the proposed span,
+landing CPU, or field. A retained `begin` without `done` or `KH2E` narrows
+the unobserved interval to that callback or its following log send; missing
+transport, a partial write, or an unobserved later record can produce the
+same pattern. A retained same-attempt `done` would falsify the claim that
+this particular callback stayed in flight. `done` means the callback
+returned success, not that the kernel bytes were read back; the KH2 stage
+record still carries that later evidence.
 [inference] A callback may have changed part of a span before returning an
 error; a same-attempt read of the entire original span would falsify a
 partial-change claim for that event. The logger's send result is not a
 durable PC acknowledgment (`engineering/projects/logging_server/client/ps5log.h:734-749`).
-[verified-in-tree] `tools/khook_trace_classify.py:324-344` and
-`tools/kh2_layout_check.py:176-208,269-271,321` define the host-side
+[verified-in-tree] `tools/khook_trace_classify.py:326-409,535-540` and
+`tools/kh2_layout_check.py:176-219,280-287,321-342` define the host-side
 distinction; their focused tests exercise it.
 
 [inference] A later frame report cannot establish a canary replacement by
@@ -334,6 +348,10 @@ calls, reporting a failed call's address as `KH2E`. The B2 wrapper requires
 all 16 IST6 writes before the gate write, then four context writes, and
 reports any callback failure before the final B2 readback. A failed write
 does not authorize a trigger or imply successful restoration.
+Each wrapper sends `KH2W begin` before the supplied write callback and
+`KH2W done` only after it returns success. A send failure blocks later
+wrapper writes. The host check exercised 47 paired attempts in its complete
+transcript and a failed `begin` send that invoked no write callback.
 The A2 wrapper requires the main-owned intertrap interval, writes the
 selected IST6 pointer to F2 and then a nonzero free journal word. The D2
 wrapper requires the worker stopped, writes the native gate and all 16 IST6
@@ -353,7 +371,7 @@ CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected
 B1/B2/A2/D2 write failures emitted retained `KH2E` without the
 corresponding success record. These are two mock
 processes, not one same-attempt console trace. The C source SHA-256 is
-`7db41b76c390133fe82d4d82e41a7cfc266f4c4428a646607ab91c8171cbd7c9`;
+`94fe0dda2617965c46c7bce7421d9d2971241f49faf62e78041582363e2e3e86`;
 it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
@@ -380,7 +398,8 @@ transport integrity.
 main emitter and pthread worker against one mock memory image and one log,
 with callback ownership checks through both transactions, including A2
 and D2 writes. The host test
-completed 20 ordered 18-record transcripts; an un-restored journal caused
+completed 20 ordered transcripts with 18 KH2 milestones and 94 `KH2W`
+bracket lines each; an un-restored journal caused
 D2 rejection. The source hashes and test name are in `05`. The two
 frame/journal changes are simulated mock writes, so the passing transcripts
 establish callback ordering and record linkage, not a #DB, an SDK pipe
