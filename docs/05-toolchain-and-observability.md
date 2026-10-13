@@ -48,6 +48,22 @@
 3. **klog forwarder (3232)** — kernel log stream (ps5debug-NG service
    family), e.g. watching `[modovld] overlay ON` live.
 
+### KH2 formatting boundary (offline)
+
+The local payload workspace has a pure native formatter at
+`engineering/payloads/byepervisor_probe_1202/kh2_trace_format.c/.h`.
+It bounds a `KH2` text record to 960 bytes before the `ps5log/1` wrapper,
+selects the stage's source tag, and rejects duplicate/malformed fields.
+Its host check, `kh2_trace_format_host_test.py --notes-repo /path/to/ps5-kernel-research`,
+compiled it with the host C compiler and passed all 11 stage formats and
+13 records through this repo's `tools/khook_trace_classify.py`. The source
+SHA-256 is `40835ec33e7c3d9e0bfe2f75c32e4ea7f79880928ff816ee09969cd0e0ccda72`.
+No console operation was performed. This formatter has no kernel read path
+and is not wired into a 12.02 KH2 chain. A future user-mode producer must
+check each `ps5log_line` result; even a successful send is not proof that the
+PC persisted the line. The retained PC log and matching manifest are the
+evidence that the classifier assesses (`17`).
+
 ## Elevation for homebrew processes (Lapy)
 
 - `PS5-Lapy-JB-Daemon` (owned-root fork): resident daemon + one-shot

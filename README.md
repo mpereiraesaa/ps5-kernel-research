@@ -79,6 +79,7 @@ hanging the console on a bad assumption.
 | [`tools/stub_verify3.py`](tools/stub_verify3.py) | Ported; first live run pending | Level 3: level-2 pattern + CR0 read + sanity check |
 | [`tools/r0gdb_session.py`](tools/r0gdb_session.py) | v5.1, ported; pending live validation | The production ring-0 session client (computed-port discovery, staged return frame, SMEP-safe restore) |
 | [`tools/khook_marker_layout.py`](tools/khook_marker_layout.py) | Offline source check | Computes four proposed journal-marker intervals and relocated save slots from the pinned public 11.60 `khook` source; no 12.02 instruction validation |
+| [`tools/khook_trace_classify.py`](tools/khook_trace_classify.py) | Offline trace check | Classifies proposed KH2 frame, journal, readback, and transport evidence; an off-tree native formatter is host-tested but no 12.02 chain emits KH2 yet (`17`) |
 | [`tools/sysent_trampoline_map.py`](tools/sysent_trampoline_map.py) | Offline dump check | Resolves the 13.60 getuid `sy_call` jump, reports the 12.02 table entry, and leaves its jump target unresolved without matching text (`11` #30) |
 
 Levels 2/3 and the session client refuse ring-0 work until the live
