@@ -1392,13 +1392,27 @@ uses `pop_all_iret` with a populated register frame to enter
 Its [12.02 table](https://github.com/EchoStretch/kstuff-lite/blob/main/prosper0gdb/offsets/12_02.h)
 names `add_rsp_iret`, `pop_all_iret`, `rep_movsb_pop_rbp_ret`, and
 `doreti_iret`; these yield text-relative offsets `0x2b3626`,
-`0x2b35ce`, `0x2efbba`, and `0x2b362d` with the dump-derived
+`0x2b35ce`, `0x2efdba`, and `0x2b362d` with the dump-derived
 `kdata−ktext=0xd50000`. [verified-on-dump] The 13.60 donor decodes the
 corresponding `rep_movsb_pop_rbp_ret` entry as `rep movsb; pop rbp; ret`
 and `pop_all_iret` as full-GPR loads followed by a conditional `swapgs`
 and `iretq`. The exact 12.02 bytes are still unknown. This approach
 uses Kstuff's documented chain primitives instead of projecting
 Byepervisor's missing individual pop/store gadgets onto 12.02.
+
+[verified-in-tree] The 2026-10-14 source audit found a `0x200` transcription
+error: historical `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:43`
+and the original unrun prearmed v2 source both used `0x2efbba` for this
+copy entry. `r0gdb/prosper0gdb/offsets/12_02.h:15` gives
+`0xd50000−0xa60246 = 0x2efdba`. `tools/fullchain_layout_check.py`
+now compares six probe constants with the public FW 12.02 table; it
+reports this one mismatch in the retained PR #97 source and passes the
+corrected prearmed v3 source. [inference] If execution reached the copy
+entry, the old source would jump `0x200` before the table target; unknown
+12.02 bytes prevent a stronger outcome claim. PR #97 emitted `[K1]`
+before IST4 writes, gate patch, or `ICEBP`, so the observed shutdown does
+not establish that this bad address was fetched (`11` #46; `17` §“Isolated
+prearmed Kstuff variant”).
 
 [inference] A one-shot diagnostic can stage, for each of 16 CPUs, a
 five-word hardware-frame canary at `F−0x28`, a first kernel `iretq`

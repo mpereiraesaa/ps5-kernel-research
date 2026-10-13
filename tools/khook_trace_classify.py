@@ -763,8 +763,8 @@ def _fc1_records(pc_text: str) -> dict:
         sample = fields.get("sample")
         version = ready["fields"].get("build") if ready else None
         if sample is None:
-            if version == "prearmed-v2":
-                issues.append("prearmed-v2 frame or marker lacks sample mode")
+            if version in ("prearmed-v2", "prearmed-v3"):
+                issues.append(f"{version} frame or marker lacks sample mode")
                 return False
             return True
         if sample not in ("targeted", "sweep") or (

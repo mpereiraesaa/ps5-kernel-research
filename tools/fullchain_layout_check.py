@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Check the one-trap source layout against public Kstuff trapframe offsets.
+"""Check one-trap source geometry and optional public Kstuff coordinates.
 
-This is a source-geometry check. It cannot validate FW 12.02 instruction
+These are source/address checks. They cannot validate FW 12.02 instruction
 bytes, scratch ownership, register preservation, or exception delivery.
 """
 
@@ -18,6 +18,8 @@ def expression(value: str, known: dict[str, int]) -> int:
             return node.value
         if isinstance(node, ast.Name):
             return known[node.id]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return -evaluate(node.operand)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             return evaluate(node.left) + evaluate(node.right)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub):
@@ -33,11 +35,44 @@ def parse_definitions(raw: str, kind: str) -> dict[str, int]:
     values = {}
     if kind == "c":
         entries = re.findall(r"^\s*([A-Z][A-Z_0-9]+)\s*=\s*([^,]+),", raw, re.M)
+    elif kind == "kstuff":
+        entries = re.findall(r"^DEF\((\w+),\s*([^)]*)\)", raw, re.M)
     else:
         entries = re.findall(r"^%define\s+(iret_[a-z]+)\s+([^\n;]+)", raw, re.M)
     for name, value in entries:
         values[name] = expression(value.strip(), values)
     return values
+
+
+def check_offsets(source: str, header: str, ktext_gap: int) -> dict:
+    """Compare source literals to the FW 12.02 public Kstuff table."""
+    if ktext_gap <= 0 or not re.search(r"^START_FW\(1202\)", header, re.M):
+        raise ValueError("positive ktext gap and FW 12.02 Kstuff header required")
+    c = parse_definitions(source, "c")
+    k = parse_definitions(header, "kstuff")
+    bindings = (
+        ("IDT_OFF", "idt"),
+        ("TSS_OFF", "tss_array"),
+        ("ADD_RSP_IRET_OFF", "add_rsp_iret"),
+        ("POP_ALL_IRET_OFF", "pop_all_iret"),
+        ("REP_MOVSB_POP_RBP_RET_OFF", "rep_movsb_pop_rbp_ret"),
+        ("DORETI_IRET_OFF", "doreti_iret"),
+    )
+    checks, errors = [], []
+    for own, public in bindings:
+        if own not in c or public not in k:
+            errors.append(f"missing source/header binding {own}/{public}")
+            continue
+        expected = k[public] + (ktext_gap if k[public] < 0 else 0)
+        match = c[own] == expected
+        checks.append({"source": own, "public": public,
+                       "actual": f"0x{c[own]:x}",
+                       "expected": f"0x{expected:x}", "match": match})
+        if not match:
+            errors.append(f"{own}=0x{c[own]:x}, expected 0x{expected:x} from {public}")
+    return {"offsets_valid": not errors, "checks": checks, "errors": errors,
+            "ktext_gap": f"0x{ktext_gap:x}",
+            "scope": "public header coordinate check only; no 12.02 instruction bytes"}
 
 
 def check(source: str, structs: str) -> dict:
@@ -139,10 +174,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="local fullchain C source")
     parser.add_argument("structs", type=Path, help="public Kstuff structs.inc")
+    parser.add_argument("--offsets", type=Path, help="public FW 12.02 Kstuff offset header")
+    parser.add_argument("--ktext-gap", type=lambda value: int(value, 0),
+                        help="same-firmware kdata-minus-ktext coordinate gap")
     args = parser.parse_args()
+    if (args.offsets is None) != (args.ktext_gap is None):
+        parser.error("--offsets and --ktext-gap must be supplied together")
     result = check(args.source.read_text(), args.structs.read_text())
+    if args.offsets is not None:
+        result["offset_audit"] = check_offsets(
+            args.source.read_text(), args.offsets.read_text(), args.ktext_gap
+        )
     print(json.dumps(result, indent=2))
-    if not result["geometry_valid"]:
+    if not result["geometry_valid"] or (
+        args.offsets is not None and not result["offset_audit"]["offsets_valid"]
+    ):
         raise SystemExit(1)
 
 
