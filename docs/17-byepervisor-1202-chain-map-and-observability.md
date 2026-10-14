@@ -647,7 +647,7 @@ the faithful two-trap test. Its `observer_channel_read` writes its pipe fields
 through the inherited SDK primitive before reading from a distinct pipe
 (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:65-75`);
 the existing worker yields that primitive to main only after stopping
-(`fullchain_prearmed.c:602-625`). The `ps5log` client also states that calls
+(`fullchain_prearmed.c:608-631`). The `ps5log` client also states that calls
 from different threads must be serialized
 (`engineering/homebrew_ps5/projects/logging_server/client/ps5log.h:31`).
 [inference] If stdout capture is enabled, main-thread `printf` also writes
@@ -768,7 +768,7 @@ python3 tools/khook_trace_classify.py elfldr.log --mode kstuff-fullchain \
 `--audit-same-attempt` is an explicit operator assertion; absent a verified
 same-attempt link before recovery, audit values are shown but cannot
 advance the reported boundary. For prearmed v1–v5, `--pc-same-run` likewise
-asserts that the PC log and elfldr output belong to the same run. For v6,
+asserts that the PC log and elfldr output belong to the same run. For v6/v7,
 the classifier instead requires matching stdout/PC attempt tokens and
 rejects a mismatch even if `--pc-same-run` was supplied (`11` #60).
 The manifest checks integrity and gaps but does not itself link two
@@ -802,8 +802,13 @@ available logs do not establish what caused the outage.
 
 **Isolated prearmed Kstuff variant, built offline and not run.**
 [verified-in-tree] Our separate local source
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:116-305,570-729`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:116-316,576-735`
 builds the current `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
+`1529aad99a0baebfa0570801d6d501b795399bb8f70c1ce76c1d1e9d06b61ddf`.
+The unrun v6 source and exact ELF are preserved outside this repo at
+`engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v6.c`
+and `historical/byepervisor_probe_1202_fullchain_prearmed_v6.elf`; the
+archived ELF SHA-256 is
 `8f3231b2960538645de0c661dbf75cbcf72a02238d57d72ef6a67855347f7fa7`.
 The unrun v5 source is preserved outside this repo at
 `engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v5.c`;
@@ -823,11 +828,12 @@ Rebuilding it at the original source path reproduced its ELF SHA-256
 `39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`;
 v3 corrected the copy-gadget offset (`11` #46); v4 adds a pretrigger
 observer/main handoff; v5 adds main-thread patch-phase records; v6 adds
-attempt-linked PC/stdout records. None was run.
+attempt-linked PC/stdout records; v7 qualifies returned observer read
+failures by site and error code. None was run.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
 main thread stages IST4 or changes the gate. [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:642-699`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:648-705`
 has main send `FCM IST4_BEGIN`, one `FCM IST4_DONE slot=0..15` after each
 write and readback, `FCM GATE_BEGIN`, then `FCM GATE_DONE` after the low
 gate qword write and readback. A failed PC send aborts and attempts restore.
@@ -835,7 +841,7 @@ After those records, the worker independently reads the
 full gate and all 16 IST4 values and sends `FC1 GATE_VERIFIED` with raw gate
 qwords, expected qwords, matched count, and first mismatch. The trigger waits
 for that PC send and acknowledgment. [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:217-266,699-729`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:226-272,705-735`
 then has the worker read the selected `0x500`-byte slot, compare its five
 frame canaries and zero destination marker, and send `FC1 PRETRIGGER` with
 the five raw canaries before
@@ -857,29 +863,29 @@ shutdown. A timeout or unsafe teardown parks.
 [verified-in-tree] The `FC1` local sequence begins at 1; its stages are
 `READY`, `GATE_VERIFIED`, `PRETRIGGER`, zero or more `FRAME`/`MARKER` records, and
 `QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
-`build=prearmed-v6`, an attempt token, and selected/observer CPU numbers.
+`build=prearmed-v7`, an attempt token, and selected/observer CPU numbers.
 The exact ELF SHA is recorded above, while `ps5log/1`'s `HELLO` boot token
 identifies the PC session; the version tag is not an ELF hash.
-[verified-in-tree] `fullchain_prearmed.c:447-462` prints `[KSTART]` and
+[verified-in-tree] `fullchain_prearmed.c:453-469` prints `[KSTART]` and
 sends `FCM START` with the same monotonic-clock/PID token after opening
 the PC logger and before its first `kernel_copyout`. Its `[K1]`, `[K2]`,
 PC staging/completion, and all FC1/FCM records repeat that token
-(`fullchain_prearmed.c:116-305,609-759`). The classifier requires the
+(`fullchain_prearmed.c:116-316,615-765`). The classifier requires the
 single PC start to precede READY, exact token agreement across every
 control record and output channel, and token consistency on staging and
-completion records (`tools/khook_trace_classify.py:699-1010,1017-1220`).
+completion records (`tools/khook_trace_classify.py:732-1063,1065-1284`).
 It rejects a cross-attempt mix as `conflicting_attempt_records`, including
 when `--pc-same-run` is passed. A matching token correlates the producer
 records; it is not collision-proof or proof that any kernel read or #DB
 completed (`11` #60). `tools/khook_trace_classify.py` preserves raw `FC1`
-fields and sequence issues. With a matching v6 token, a
+fields and sequence issues. With a matching v6/v7 token, a
 matching gate/16 IST4 record advances the observed boundary beyond PR #97's
 prepatch `[K1]`. V5 adds boundaries for the contiguous main-thread patch
 prefix: the last IST4 slot read back, gate-write entry, and gate readback.
 It retains v4's separate boundaries for a matching selected-frame
 pretrigger baseline and a linked main-thread `FCM TRIGGER_BEGIN`. A selected
 CPU's changed frame or copy marker narrows it further. Older versions need
-the operator assertion; without a v6 token link or that legacy assertion,
+the operator assertion; without a v6/v7 token link or that legacy assertion,
 PC records remain visible but do not advance a separate elfldr transcript.
 An `FC1` marker is only a copy
 side effect, not proof of a valid return or debug-register arm. A changed
@@ -896,11 +902,11 @@ It accepts `FC1 READY` as a link only when its local sequence is 1, FW is
 CPUs are distinct values in 0–15. A malformed READY remains in the raw
 record list but cannot authorize a later gate, patch, or trigger boundary
 (`11` #49).
-For `prearmed-v2` through `prearmed-v6` it requires the sample mode and rejects a `targeted`
+For `prearmed-v2` through `prearmed-v7` it requires the sample mode and rejects a `targeted`
 record naming a CPU other than the trigger CPU; v1 records remain readable.
-For v4–v6, a frame/marker needs an earlier accepted `PRETRIGGER` record with
+For v4–v7, a frame/marker needs an earlier accepted `PRETRIGGER` record with
 all five raw canaries matching the selected CPU's staged values.
-For v5/v6, a retained `FCM TRIGGER_BEGIN` advances the classifier only after
+For v5–v7, a retained `FCM TRIGGER_BEGIN` advances the classifier only after
 the full ordered patch prefix, verified gate, and pretrigger baseline. A
 missing phase record stops patch-prefix progress at the last contiguous
 readback; its absence does not prove the next write was never attempted.
@@ -920,8 +926,18 @@ observer read, or transport; it cannot exclude #DB delivery. A same-attempt
 plausible frame at the selected slot would falsify a claim of no delivery.
 
 [verified-in-tree] The worker also emits `FC1 READ_FAIL` if its private-pipe
-read fails and emits an `ERR`-level `GATE_VERIFIED` with raw values if the
-gate or an IST4 pointer differs (`fullchain_prearmed.c:181-213,250-256`).
+read returns an error and emits an `ERR`-level `GATE_VERIFIED` with raw values
+if the gate or an IST4 pointer differs (`fullchain_prearmed.c:194-226,297-316`).
+In v7, `READ_FAIL` includes `stage=gate|ist4|pretrigger|targeted|sweep`,
+`index`, `addr`, `bytes`, and the `observer_channel_read` return code `rc`,
+plus the attempt token. `index=-1` names the gate; for IST4 it is the CPU,
+for pretrigger/targeted it is the selected CPU, and for the sweep it is
+the page. [verified-in-tree] `tools/khook_trace_classify.py:_fc1_read_fail_detail`
+checks the stage-specific index and size, canonical kernel address, and
+negative callback code. A malformed v7 failure remains in raw PC records
+but cannot advance a read-failure boundary. A valid one appears in
+`signals.fc1.read_fail_details`; the data does not independently
+authenticate that the claimed kernel address was read.
 The host classifier reports these separately as
 `observer_read_failed_after_main_patch_phase` and
 `observer_gate_or_ist_mismatch_after_main_readback` when linked to the same
@@ -941,7 +957,7 @@ two-transaction port. Its second `pop_all_iret` frame does not restore an
 incidental CPU's original GPRs, and the observer itself runs during the
 shared-gate window. A byte-level all-register save/restore path in the
 current build would falsify this source reading; none is present in
-`fullchain_prearmed.c:502-534` or `fullchain_icebp.S:9-27`. The 12.02 gadget
+`fullchain_prearmed.c:508-540` or `fullchain_icebp.S:9-27`. The 12.02 gadget
 bytes remain unavailable. Building and classifying it offline do not approve
 a console run.
 
@@ -982,17 +998,14 @@ word canaries; the collision limits value-only CPU attribution. This
 checker does **not** inspect the ELF's actual instructions, 12.02 gadget
 bytes, runtime scratch ownership, or exception delivery.
 
-[inference] A read-only `llvm-objdump` check of the exact prearmed ELF above
-found `fullchain_icebp` at ELF `.text+0x2270`, its literal trap byte `f1`
-at `+0x227d`, and `fullchain_after_icebp` at `+0x227e`. In `main`, the
-emitted call at `+0xf6d` targets that wrapper, followed by `stop_observer`
-at `+0xf73` and `restore_all` at `+0xf91`. The worker has four emitted
-`observer_channel_read` call sites: the targeted `0x500` read at `+0x1cab`
-precedes `report_slot` at `+0x1d03`, then the page-sweep read at `+0x1d5f`
-precedes the sweep report at `+0x1df5`. This corroborates the selected source
-path and intended postreturn ordering in this build; it does not prove
-any instruction after `ICEBP` executed on the console. A different
-disassembly for the recorded SHA-256 would falsify this binary reading.
+[verified-in-tree] A read-only `llvm-objdump` check of the current v7 ELF
+(SHA-256 above) found `fullchain_icebp` at ELF `.text+0x2ad0`, its literal
+trap byte `f1` at `+0x2add`, and `fullchain_after_icebp` at `+0x2ade`.
+In `main`, the call at `+0x1308` targets that wrapper, followed by
+`stop_observer` at `+0x130e` and `restore_all` at `+0x132c`. This
+corroborates the source's trap and postreturn order; it does not prove any
+instruction after `ICEBP` executed on the console. A different disassembly
+for the recorded SHA-256 would falsify this binary reading.
 
 **Pre-armed observer contract for a later two-transaction build [inference].** The
 separate-pipe calibration in `16` observed a pinned worker reading the

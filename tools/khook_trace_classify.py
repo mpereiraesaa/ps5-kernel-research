@@ -23,6 +23,11 @@ HANDOFF_STAGES = ("R0", "R1", "Q1", "R2", "Q2")
 FRAME_BYTES = 0x28
 GETUID_ENTRY_1202 = 0x3130A0
 PIVOT_1202_CANDIDATE = 0x2AC2DE
+ATTEMPT_BUILDS = ("prearmed-v6", "prearmed-v7")
+PATCH_BUILDS = ("prearmed-v5", *ATTEMPT_BUILDS)
+BASELINE_BUILDS = ("prearmed-v4", *PATCH_BUILDS)
+SAMPLED_BUILDS = ("prearmed-v2", "prearmed-v3", *BASELINE_BUILDS)
+KNOWN_PREARMED_BUILDS = ("prearmed-v1", *SAMPLED_BUILDS)
 SOURCES = {
     "B0": "user", "B1": "user", "B2": "user", "F1": "frame",
     "A1P": "journal", "A1R": "journal", "A2": "user",
@@ -696,6 +701,34 @@ def _transport(raw: bytes | None, manifest: dict | None) -> str:
     return "incomplete"
 
 
+def _fc1_read_fail_detail(record: dict, trigger_cpu: int) -> dict | None:
+    """Validate one v7 returned-read error without treating it as a trap record."""
+    fields = record["fields"]
+    stage = fields.get("stage")
+    lengths = {"gate": 16, "ist4": 8, "pretrigger": 0x500,
+               "targeted": 0x500, "sweep": 0x1000}
+    if stage not in lengths:
+        return None
+    try:
+        index = int(fields["index"])
+        address = int(fields["addr"], 0)
+        size = int(fields["bytes"])
+        rc = int(fields["rc"])
+    except (KeyError, ValueError):
+        return None
+    expected_index = (
+        index == -1 if stage == "gate" else
+        0 <= index < 16 if stage == "ist4" else
+        index == trigger_cpu if stage in ("pretrigger", "targeted") else
+        0 <= index < 5
+    )
+    if (not expected_index or size != lengths[stage] or
+            (address >> 47) != 0x1ffff or rc not in (-1, -2, -3, -4)):
+        return None
+    return {"stage": stage, "index": index, "addr": fields["addr"],
+            "bytes": size, "rc": rc, "seq": record["seq"]}
+
+
 def _fc1_records(pc_text: str) -> dict:
     """Keep raw pre-armed observer reports and reject broken local ordering."""
     records = []
@@ -736,7 +769,7 @@ def _fc1_records(pc_text: str) -> dict:
         fields = start["fields"]
         token = fields.get("attempt", "")
         if not (start["level"] == "MARK" and fields.get("fw") == "12.02" and
-                fields.get("build") == "prearmed-v6" and
+                fields.get("build") in ATTEMPT_BUILDS and
                 re.fullmatch(r"0x[0-9a-f]+", token) and int(token, 16) != 0):
             issues.append("invalid FCM START identity")
             start = None
@@ -758,18 +791,17 @@ def _fc1_records(pc_text: str) -> dict:
         except (KeyError, ValueError):
             trigger_cpu = observer_cpu = -1
         if not (ready["seq"] == 1 and fields.get("fw") == "12.02" and
-                fields.get("build") in
-                ("prearmed-v1", "prearmed-v2", "prearmed-v3",
-                 "prearmed-v4", "prearmed-v5", "prearmed-v6") and
+                fields.get("build") in KNOWN_PREARMED_BUILDS and
                 0 <= trigger_cpu < 16 and 0 <= observer_cpu < 16 and
                 trigger_cpu != observer_cpu and
-                (fields.get("build") != "prearmed-v6" or
+                (fields.get("build") not in ATTEMPT_BUILDS or
                  (start is not None and
                   start["line_index"] < ready["line_index"] and
-                  fields.get("attempt") == start["fields"].get("attempt")))):
+                  fields.get("attempt") == start["fields"].get("attempt") and
+                  fields.get("build") == start["fields"].get("build")))):
             issues.append("invalid FC1 READY identity")
             ready = None
-    if start and ready and ready["fields"].get("build") != "prearmed-v6":
+    if start and ready and ready["fields"].get("build") not in ATTEMPT_BUILDS:
         issues.append("FCM START with legacy FC1 READY")
         start = None
     raw_control = []
@@ -782,7 +814,7 @@ def _fc1_records(pc_text: str) -> dict:
         index >= start["line_index"] and token == start["fields"]["attempt"]
         for index, token in raw_control))
     if start and not attempt_integrity:
-        issues.append("prearmed-v6 PC attempt mismatch")
+        issues.append("attempt-linked PC token mismatch")
     if len(gate_reports) > 1:
         issues.append("duplicate GATE_VERIFIED")
     if gate_report:
@@ -811,6 +843,18 @@ def _fc1_records(pc_text: str) -> dict:
                 issues.append("GATE_VERIFIED level and values disagree")
     read_fail = [r for r in records if r["phase"] == "READ_FAIL"
                  and r["level"] == "ERR"]
+    read_fail_details = []
+    if ready and ready["fields"].get("build") == "prearmed-v7":
+        valid_failures = []
+        for record in read_fail:
+            detail = _fc1_read_fail_detail(
+                record, int(ready["fields"]["trigger_cpu"]))
+            if detail is None:
+                issues.append("malformed prearmed-v7 READ_FAIL detail")
+            else:
+                valid_failures.append(record)
+                read_fail_details.append(detail)
+        read_fail = valid_failures
     read_fail_before_gate = bool(ready and not gate_report and any(
         r["seq"] > ready["seq"] for r in read_fail))
     pretrigger_reports = [r for r in records if r["phase"] == "PRETRIGGER"]
@@ -838,7 +882,7 @@ def _fc1_records(pc_text: str) -> dict:
             pass
     pretrigger_verified = bool(
         ready and gate and pretrigger_report and
-        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
+        ready["fields"].get("build") in BASELINE_BUILDS and
         pretrigger_report["level"] == "MARK" and
         pretrigger_report["seq"] > gate["seq"] and
         pretrigger_report["fields"].get("cpu") ==
@@ -849,7 +893,7 @@ def _fc1_records(pc_text: str) -> dict:
     )
     pretrigger_mismatch = bool(
         ready and gate and pretrigger_report and
-        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
+        ready["fields"].get("build") in BASELINE_BUILDS and
         pretrigger_report["level"] == "ERR" and
         pretrigger_report["seq"] > gate["seq"] and
         pretrigger_report["fields"].get("cpu") ==
@@ -866,7 +910,7 @@ def _fc1_records(pc_text: str) -> dict:
     patch_progress = -1
     patch_records = [r for r in main_reports
                      if r["fields"].get("phase") not in ("START", "TRIGGER_BEGIN")]
-    if version in ("prearmed-v5", "prearmed-v6"):
+    if version in PATCH_BUILDS:
         expected_patch = ([('IST4_BEGIN', None)] +
                           [('IST4_DONE', str(cpu)) for cpu in range(16)] +
                           [('GATE_BEGIN', None), ('GATE_DONE', None)])
@@ -886,20 +930,20 @@ def _fc1_records(pc_text: str) -> dict:
                      fields.get("build") == version and
                      fields.get("cpu") == ready["fields"].get("trigger_cpu") and
                      fields.get("slot") == expected_slot and
-                     (version != "prearmed-v6" or
+                     (version not in ATTEMPT_BUILDS or
                       fields.get("attempt") == start["fields"]["attempt"]))
             if not valid:
                 issues.append(f"out-of-order or malformed FCM patch phase at step {next_step}")
                 break
             patch_progress = next_step
     elif patch_records:
-        issues.append("FCM patch phase without prearmed-v5/v6 READY")
+        issues.append("FCM patch phase without patch-aware READY")
     ist4_begin = patch_progress >= 0
     ist4_last_done = min(patch_progress - 1, 15) if patch_progress >= 1 else None
     gate_begin = patch_progress >= 17
     gate_done = patch_progress >= 18
     patch_complete = gate_done and len(patch_records) == 19
-    if (version in ("prearmed-v5", "prearmed-v6") and gate_done and pretrigger_report and
+    if (version in PATCH_BUILDS and gate_done and pretrigger_report and
             pretrigger_report["line_index"] <= patch_records[18]["line_index"]):
         issues.append("FC1 pretrigger precedes FCM gate readback")
         pretrigger_verified = False
@@ -916,21 +960,21 @@ def _fc1_records(pc_text: str) -> dict:
         fields = trigger_report["fields"]
         trigger_begin = bool(
             pretrigger_verified and ready and level == "MARK" and
-            version in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
+            version in BASELINE_BUILDS and
             line_index > pretrigger_report["line_index"] and
             fields.get("phase") == "TRIGGER_BEGIN" and
             fields.get("fw") == "12.02" and
             fields.get("build") == version and
             fields.get("cpu") == ready["fields"].get("trigger_cpu") and
             fields.get("pretrigger") == "1" and
-            (version != "prearmed-v6" or
+            (version not in ATTEMPT_BUILDS or
              fields.get("attempt") == start["fields"]["attempt"]) and
-            (version not in ("prearmed-v5", "prearmed-v6") or patch_complete)
+            (version not in PATCH_BUILDS or patch_complete)
         )
         if not trigger_begin:
             issues.append("malformed or unlinked FCM trigger report")
     read_fail_after_gate_before_pretrigger = bool(
-        gate and ready and version in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
+        gate and ready and version in BASELINE_BUILDS and
         not pretrigger_report and
         any(r["seq"] > gate["seq"] for r in read_fail)
     )
@@ -940,7 +984,7 @@ def _fc1_records(pc_text: str) -> dict:
         sample = fields.get("sample")
         version = ready["fields"].get("build") if ready else None
         if sample is None:
-            if version in ("prearmed-v2", "prearmed-v3", "prearmed-v4", "prearmed-v5", "prearmed-v6"):
+            if version in SAMPLED_BUILDS:
                 issues.append(f"{version} frame or marker lacks sample mode")
                 return False
             return True
@@ -960,7 +1004,7 @@ def _fc1_records(pc_text: str) -> dict:
                and r["level"] == "MARK"
                and r["fields"].get("value") == "0x4b53545546464348"
                and valid_sample(r)]
-    if version in ("prearmed-v4", "prearmed-v5", "prearmed-v6"):
+    if version in BASELINE_BUILDS:
         if not pretrigger_verified or any(
             r["seq"] <= pretrigger_report["seq"] for r in frames + markers
         ):
@@ -1007,6 +1051,7 @@ def _fc1_records(pc_text: str) -> dict:
             "read_fail_after_gate_before_pretrigger":
                 read_fail_after_gate_before_pretrigger,
             "read_fail": bool(read_fail),
+            "read_fail_details": read_fail_details,
             "attempt": start["fields"]["attempt"] if start else None,
             "start_line_index": start["line_index"] if start else None,
             "attempt_integrity": attempt_integrity,
@@ -1032,19 +1077,23 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     audit_text = audit.decode("utf-8", errors="replace") if audit else ""
     fc1 = _fc1_records(pc_text)
     stdout_starts = re.findall(
-        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) build=prearmed-v6\r?$",
+        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) build=(prearmed-v[67])\r?$",
         live_text)
-    stdout_attempt = stdout_starts[0] if len(stdout_starts) == 1 else None
-    v6_mode = ("[KSTART]" in live_text or "build=prearmed-v6" in pc_text or
-               "FCM phase=START" in pc_text)
+    stdout_attempt = stdout_starts[0][0] if len(stdout_starts) == 1 else None
+    stdout_build = stdout_starts[0][1] if len(stdout_starts) == 1 else None
+    attempt_mode = ("[KSTART]" in live_text or
+                    any(f"build={build}" in pc_text for build in ATTEMPT_BUILDS) or
+                    "FCM phase=START" in pc_text)
     attempt_conflict = (len(stdout_starts) > 1 or
                         "duplicate FCM START" in fc1["issues"] or
                         ("[KSTART]" in live_text and stdout_attempt is None) or
                         (fc1["attempt"] is not None and
                          not fc1["attempt_integrity"]) or
+                        (stdout_build is not None and fc1["version"] is not None and
+                         stdout_build != fc1["version"]) or
                         (stdout_attempt is not None and fc1["attempt"] is not None and
                          stdout_attempt != fc1["attempt"]))
-    if v6_mode:
+    if attempt_mode:
         for line in live_text.splitlines():
             if not line.startswith(("[K1]", "[K2]")):
                 continue
@@ -1061,9 +1110,11 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
                     token.group(1) != fc1["attempt"] or
                     line_index <= fc1["start_line_index"])):
                 attempt_conflict = True
-    pc_linked = (bool(stdout_attempt and fc1["attempt"] == stdout_attempt and
+    pc_linked = (bool(stdout_attempt and fc1["ready"] and
+                      stdout_build == fc1["version"] and
+                      fc1["attempt"] == stdout_attempt and
                       fc1["attempt_integrity"] and not attempt_conflict)
-                 if v6_mode else pc_same_run_verified)
+                 if attempt_mode else pc_same_run_verified)
 
     stage = re.search(r"\[K1\] fw=12\.02 cpu=(\d+) frames=16\b", live_text)
     returned = re.search(
@@ -1127,7 +1178,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "staged_pc": bool(pc_stage),
         "pc_same_run_verified": pc_linked,
         "pc_same_run_asserted": pc_same_run_verified,
-        "pc_attempt_linked": pc_linked and v6_mode,
+        "pc_attempt_linked": pc_linked and attempt_mode,
         "attempt_conflict": attempt_conflict,
         "stdout_attempt": stdout_attempt,
         "pc_attempt": fc1["attempt"],
@@ -1222,7 +1273,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
             (pc_linked and cpu is not None and
              (set(fc1["frame_cpus"] + fc1["marker_cpus"]) - {cpu}))),
         "caveat": ("Audit evidence needs an explicit same-attempt assertion; "
-                   "prearmed-v6 PC evidence needs matching attempt tokens, "
+                   "prearmed-v6/v7 PC evidence needs matching attempt tokens, "
                    "while older PC logs need an explicit same-run assertion. "
                    "A changed audit frame "
                    "supports delivery "

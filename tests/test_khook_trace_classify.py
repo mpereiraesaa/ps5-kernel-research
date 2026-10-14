@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from khook_trace_classify import (  # noqa: E402
-    STAGES, SOURCES, classify, classify_kstuff_fullchain,
+    STAGES, SOURCES, _fc1_read_fail_detail, classify, classify_kstuff_fullchain,
 )
 
 
@@ -729,6 +729,72 @@ class FullchainTests(unittest.TestCase):
                                   f"attempt={token}")
         completed = classify_kstuff_fullchain(stdout, pc=pc_return)
         self.assertEqual(completed["boundary"], "one_trap_return_and_checks_passed")
+
+    def test_prearmed_v7_links_and_locates_returned_observer_read_failure(self):
+        token = "0x1234abcd"
+
+        def line(number, level, message):
+            return (f"{number}\t{number * 1000}\t{level}\t{message}\n").encode()
+
+        stdout = (
+            f"[KSTART] attempt={token} build=prearmed-v7\n"
+            f"[K1] fw=12.02 cpu=3 frames=16 attempt={token}\n"
+        ).encode()
+        start = line(1, "MARK", f"FCM phase=START fw=12.02 build=prearmed-v7 attempt={token}")
+        staged = line(2, "MARK", "staged frames=16 cpu=3 "
+                      f"chain=popall-copy-popall-doreti attempt={token}")
+        ready = line(3, "MARK", "FC1 seq=1 phase=READY fw=12.02 build=prearmed-v7 "
+                     f"attempt={token} trigger_cpu=3 observer_cpu=7")
+        phases = (["FCM phase=IST4_BEGIN"] +
+                  [f"FCM phase=IST4_DONE slot={slot}" for slot in range(16)] +
+                  ["FCM phase=GATE_BEGIN", "FCM phase=GATE_DONE"])
+        patch = b"".join(line(4 + index, "MARK", phase +
+                              f" fw=12.02 build=prearmed-v7 cpu=3 attempt={token}")
+                         for index, phase in enumerate(phases))
+        failure = line(23, "ERR", "FC1 seq=2 phase=READ_FAIL stage=gate index=-1 "
+                       "addr=0xffffffff884c0010 bytes=16 rc=-4 "
+                       f"attempt={token}")
+        pc = start + staged + ready + patch + failure
+        result = classify_kstuff_fullchain(stdout, pc=pc)
+        self.assertEqual(result["boundary"],
+                         "observer_read_failed_after_main_patch_phase")
+        self.assertTrue(result["signals"]["pc_attempt_linked"])
+        self.assertEqual(result["signals"]["fc1"]["read_fail_details"], [{
+            "stage": "gate", "index": -1, "addr": "0xffffffff884c0010",
+            "bytes": 16, "rc": -4, "seq": 2,
+        }])
+
+        malformed = classify_kstuff_fullchain(
+            stdout, pc=pc.replace(b"bytes=16", b"bytes=15"))
+        self.assertEqual(malformed["boundary"],
+                         "gate_readback_observer_or_later_unproven")
+        self.assertIn("malformed prearmed-v7 READ_FAIL detail",
+                      malformed["signals"]["fc1"]["issues"])
+        wrong_build = classify_kstuff_fullchain(
+            stdout.replace(b"prearmed-v7", b"prearmed-v6"), pc=pc)
+        self.assertEqual(wrong_build["boundary"], "conflicting_attempt_records")
+        bad_ready = classify_kstuff_fullchain(
+            stdout, pc=pc.replace(b"observer_cpu=7", b"observer_cpu=3"))
+        self.assertFalse(bad_ready["signals"]["pc_attempt_linked"])
+        self.assertIn("invalid FC1 READY identity",
+                      bad_ready["signals"]["fc1"]["issues"])
+
+    def test_prearmed_v7_read_failure_site_contract(self):
+        for stage, index, size in (
+            ("gate", -1, 16), ("ist4", 15, 8),
+            ("pretrigger", 3, 0x500), ("targeted", 3, 0x500),
+            ("sweep", 4, 0x1000),
+        ):
+            fields = {"stage": stage, "index": str(index),
+                      "addr": "0xffffffff884c0010", "bytes": str(size),
+                      "rc": "-4"}
+            record = {"fields": fields, "seq": 2}
+            with self.subTest(stage=stage):
+                self.assertEqual(_fc1_read_fail_detail(record, 3)["stage"], stage)
+                self.assertIsNone(_fc1_read_fail_detail(
+                    {"fields": {**fields, "rc": "0"}, "seq": 2}, 3))
+                self.assertIsNone(_fc1_read_fail_detail(
+                    {"fields": {**fields, "addr": "0x1234"}, "seq": 2}, 3))
 
     def test_prearmed_gate_mismatch_and_nonselected_frame(self):
         bad_gate = self.FC1.replace(b"gate_lo=0x111", b"gate_lo=0x112")
