@@ -126,9 +126,11 @@ python3 tools/stub_verify.py  # level 1 — the regression gate
 | EFER.SVME | **Set** (kernel runs SVM virtualization) [verified-on-console] |
 | VMCB intercept at runtime | **VMMCALL clear** (userland hcalls impossible) [verified-on-console] |
 
-Findings only. No Sony proprietary code, no kernel dumps, no Ghidra
-databases — links and knowledge, never payload material (see
-`AGENTS.md`).
+This repo contains findings and independently authored source for
+homebrew support, kernel patches, payloads, and research tooling. Sony
+proprietary code, firmware or memory dumps, decompiler databases, and
+generated binaries stay out of Git; see `AGENTS.md` for the contribution
+policy.
 
 ## Evidence labels
 
