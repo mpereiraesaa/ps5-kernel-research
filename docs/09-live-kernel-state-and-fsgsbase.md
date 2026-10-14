@@ -106,7 +106,7 @@ unidentified globals across boots.
   pages and execute" plan unless SMEP is first cleared — which itself
   needs a kernel-text CR4 gadget.
 
-## The missing piece and the Phase-B redirect
+## The missing piece and the historical Phase-B redirect
 
 Reading (and later writing) CR4 requires kernel-text gadget
 addresses: `mov rax, cr4` (`0f 20 e0`) / `mov cr4, rax`
@@ -116,9 +116,10 @@ prerequisite is a **Phase-B text read**:
 1. **qa_probe v2 → rest cycle → qa_check v2** (the A1 QA-flags chain:
    HV builds text pages RW without xotext → text readable → byte-scan
    for the CR4 gadgets) — now the prioritized next console phase
-2. or **gpuvm_read v3** (PDB2 scan → retarget to .text → PM4 DMA),
-   historically proposed but blocked by the source audit in `07`
-   §“gate upgrade” and `11` #45
+2. **GPUVM/PM4 was a historical proposal**, retired as a 12.02
+   text-read option: the older public implementation patches the
+   IOMMU, local v1/v2 never reached text DMA, and v3 was blocked by
+   source audit (`07` §“gate upgrade”; `11` #45, #81)
 
 Both were built and staged; the v3 abstract read gate did not cover its
 PTE address domain, DMA GPU VAs, or restoration [verified-in-tree] (`07`
@@ -182,8 +183,9 @@ VMCB bases: 3.00 0x6290B000+core*0x3000; 4.x 0x62A05000+core*0x3000;
 5.x 0x62a08000+core*0x2000; 6.00-6.02 0x62a57000+core*0x2000;
 6.50/7.x hv_stack 0x628d0000 / 0x628ec000. hv_shm: 0x62a01000 (5.x),
 0x62a22000 (6.00-6.02). Our emulator's "HV-own physical regions"
-(NPT-denied) align with this band. The 12.02 equivalents are unknown —
-findable via our GPUVM/PM4 route into the 0x62 band.
+(NPT-denied) align with this band. The 12.02 equivalents are unknown.
+The proposed GPUVM/PM4 route into the 0x62 band is retired; it has no
+validated 12.02 access (`11` #81).
 
 ### E-TMR: risk correction (owner challenge accepted)
 
@@ -221,9 +223,9 @@ Corrected ladder for E-TMR:
 - **E-TMR-2**: only if an alias exists — validate the underlying
   physical page with the established oracle methodology (the
   anchor_read discipline: 146 pages, 0 faults) BEFORE any read.
-- **E-TMR-3**: if the page is NPT-denied, no guest-side reader can
-  read it at all — the question moves to the GPUVM/PM4 route or a
-  root-0 execution, not to a riskier pipe attempt.
+- **E-TMR-3**: if the page is NPT-denied, no validated guest-side
+  reader can read it. A root-0 route remained the historical research
+  target; GPUVM/PM4 is not a validated 12.02 fallback (`11` #81).
 
 ## 2026-10-12 — E-TMR-1 answered entirely offline from the existing dump
 
@@ -254,8 +256,9 @@ One alias-engine read of phys `0xE00C2080` (TMR index register):
 map the page as an uncacheable device page into the payload's PT,
 read as userland memory. If the NPT allows guest ECAM access, we
 walk the index/data protocol for all 22 TMR regions and dump the
-full hardware-protection table. If NPT-denied → SIGSEGV (caught,
-zero kernel risk) and the question moves to GPUVM/PM4.
+full hardware-protection table. If NPT-denied → SIGSEGV (caught);
+the old GPUVM/PM4 fallback was retired without a 12.02 protected-page
+read (`11` #81).
 
 ## 2026-10-12 — HCALL H0: VMMCALL from CPL3 = #UD; hcalls need kernel context
 

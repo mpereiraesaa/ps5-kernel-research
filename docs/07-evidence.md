@@ -610,21 +610,16 @@ izes/validates the flags on modern FW, and whether the resume-reinit
 asymmetry still exists. Falsifiable in one owner-approved session;
 recovery = reboot (worst case: flags left set — also writable back).
 
-### GPUVM text-read viability assessment [inference from public-consensus + our data]
+### GPUVM text-read viability assessment [historical inference; retired]
 
-The wiki's "Sony moved the IOMMU to the hypervisor" line implies GPU
-DMA is gated by an HV-managed IOMMU **in addition to** any GPUVM
-translation. The experiment's real question: does the IOMMU's device
-table / IOPTE permission model independently deny device reads of
-xotext-marked physical pages (likely), or does it pass GPUVM-resolved
-addresses straight to memory (then GPUVM PTE injection wins)? What we
-have going: GPUVM page tables are kernel memory (writable by our
-primitives), the aperture constants are in our dump, and this lab has
-production AGC command-submission experience (gears/xash3d). Viability
-verdict: **medium-low odds, cheap to falsify given our toolchain, and
-the strongest-skills match in our queue.** The IOMMU DTE for the GPU
-is itself an HV-managed structure worth enumerating first (host-side:
-find GPU DTE candidates in existing dumps).
+**2026-10-14 correction** [public-consensus; verified-on-console;
+verified-in-tree; inference]: The original 2026-10-09 assessment called
+GPUVM a promising, cheap text-read test. That ranking is withdrawn.
+The cited older-firmware implementation patches the IOMMU before its
+HV defeat; our v1/v2 12.02 runs stopped before any text DMA request,
+and v3 was blocked by source audit. No protected-text byte was read.
+GPUVM is retired from the 12.02 text-read plan (`11` #81). These
+observations do not identify the exact 12.02 device-denial mechanism.
 
 ### NPT-covers-HV premise (owner-stated fact for 12.02) — synthesis
 
@@ -1222,6 +1217,7 @@ This was the 2026-10-09 plan: both ELFs were built and staged, and
 the next proposed console phase was the QA chain after the owner's
 power cycle #3. The GPUVM v3 *modeled read sequence* passed its narrow
 gate, but the 2026-10-14 source audit above blocks the actual v3 ELF.
+The GPUVM text-read route is retired for 12.02 (`11` #81).
 The QA direct pipe baseline later panicked (`11` #44), so this historical
 phase plan is not a current run recommendation.
 
