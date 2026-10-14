@@ -1028,11 +1028,13 @@ Compiling this audit ELF validates none of those contracts.
 1. Identify the 12.02 instruction bytes and containing basic blocks for the
    pivot, `DBREG_RESUME`, return, stores, pops, and DR7 disarm; record stack
    deltas and clobbers. The current data-only 12.02 dump cannot prove these.
-   [verified-in-tree] `tools/kh2_gadget_contract.py:16-37,51-67,70-115`
+   [verified-in-tree] `tools/kh2_gadget_contract.py:16-57,60-111`
    checks four proposed
    entry instruction sequences at explicitly supplied offsets in a raw text
-   image. It uses bounded `objdump` disassembly, records the image SHA-256 and
-   the first mismatching instruction, and exits nonzero on a mismatch. For a
+   image. It uses bounded `objdump` disassembly, retains every decoded line
+   including `(bad)`, and checks that the expected instructions occupy
+   contiguous encoded bytes. It records the image SHA-256 and first mismatch,
+   then exits nonzero on a mismatch (`11` #56). For a
    matching FW 12.02 image outside this notes repo, run:
 
    ```sh
@@ -1058,7 +1060,7 @@ Compiling this audit ELF validates none of those contracts.
    separate evidence. The `--firmware` value is a label, not authentication;
    retain independent image provenance alongside the reported digest.
 
-   [verified-in-tree] `tools/kh2_gadget_contract.py:37-55,113-168,197-230`
+   [verified-in-tree] `tools/kh2_gadget_contract.py:37-55,131-177,206-239`
    also accepts `--offsets` with a JSON manifest. It checks the bounded
    instruction sequence at every supplied entry among the 21 public
    `KERNEL_GADGET_*` names, reports every omitted name, and returns failure
