@@ -1,10 +1,12 @@
 # 15 — The `AcpiGbl_FACS` resume trigger, and the 12.02 global anchor
 
-Status: **offline analysis, 2026-10-13. Nothing here has been run on-console.**
+Status: **historical offline proposal, 2026-10-13; no 12.02 #GP trigger
+or return was validated.**
 This document corrects the *kind* of resume trigger the HCALL 0x0f route
 (`10`) has been assuming, and records a new, dump-verified kernel-data
 anchor for FW 12.02. Read it with `12` (anchor corrections) and `14`
-(execution substrates) — it changes the recommended substrate.
+(execution substrates). Its suggested substrate remains a design, not a
+12.02 console result (`16` §“Our 12.02 trigger”).
 
 ## 1. The premise we had, and why it was the wrong *kind* of trigger [verified-in-source]
 

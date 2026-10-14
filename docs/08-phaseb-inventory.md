@@ -1,6 +1,11 @@
 # 08 — Phase B capability inventory & mechanism notes
 
-**⚠ SUPERSEDED 2026-10-12**: The Phase B text-read routes (QA-flags chain, GPUVM DMA, CR4 gadget hunting) are deprioritized. The HCALL 0x0f resume-window AP launch reads kernel text from root 0 directly, making these routes unnecessary. See [10-hcall-resume-window-and-noops.md](10-hcall-resume-window-and-noops.md) for the current route and the full NOOP catalog.
+**⚠ SUPERSEDED 2026-10-12**: The Phase B text-read routes (QA-flags
+chain, GPUVM DMA, CR4 gadget hunting) were deprioritized in favor of the
+HCALL 0x0f resume-window AP-launch design. The public implementation
+shows root-0 kernel-text access; the FW 12.02 port has not reached it
+(`17`). See [10-hcall-resume-window-and-noops.md](10-hcall-resume-window-and-noops.md)
+for the historical route and NOOP catalog.
 
 Recorded 2026-10-08 so the Phase B starting position is not lost. Labels
 per README (`[verified-in-tree]` / `[public-consensus]` / `[inference]`).

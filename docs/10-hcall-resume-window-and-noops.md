@@ -1,7 +1,9 @@
 # HCALL 0x0f resume-window route: complete state and NOOP catalog
 
-Status document for sharing with other researchers. Everything here is
-labeled with its evidence class. Last updated 2026-10-12.
+Historical mechanism and NOOP catalog, first written 2026-10-12.
+Later FW 12.02 #DB diagnostics did not establish a complete launch or
+kernel-text access; the current port boundary is in `17` and the README.
+The dated observations below retain their evidence labels.
 
 ## The route in one paragraph
 

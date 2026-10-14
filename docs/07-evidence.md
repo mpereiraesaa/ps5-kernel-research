@@ -418,14 +418,16 @@ existing dump [verified-on-dump]:
    **active fPKG fake-key interception hooks** on this boot — the
    deref #GP is caught by kstuff's trap handler and the crypto call is
    redirected. The mechanism is visible in a static dump.
-3. **dmap_sweep built** (`payloads/dmap_sweep/`, sha256
-   `61cbaa9c99a2373888201d22302cf99a283c1c384a4e18e643027f0da45dae33`),
-   ready to run once the console is power-cycled: 2 GiB PTE-gated
+3. **Historical dmap_sweep build** (`payloads/dmap_sweep/`, sha256
+   `61cbaa9c99a2373888201d22302cf99a283c1c384a4e18e643027f0da45dae33`).
+   It was proposed for a 2 GiB PTE-gated
    sweep of `[dmap, dmap+2G)` — kalias_sweep safety class (PTE-gated,
    PCD-filtered, fault-guarded, self-verifying), NOT the gpa_map raw
    class. Targets: the singleton objects (with poisoned slots), the
    region list, namecache (rootvnode names), budget back-object,
-   pool arrays — all known to live under 512 MiB phys.
+   pool arrays — all known to live under 512 MiB phys. The later run
+   wedged the console; see the next section. This is not a current run
+   recommendation.
 
 ## 2026-10-09 — dmap_sweep run: console WEDGED in phys [16, 18.8 MiB] (fourth down event)
 
