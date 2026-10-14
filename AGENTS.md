@@ -1,17 +1,28 @@
 # Agent guidance — ps5-kernel-research
 
-Research-notes repository for the PS5 FW 12.02 kernel-privilege
-stack. Contributions from other agents are welcome; follow the rules
-below.
+Research and original-tooling repository for the PS5 FW 12.02
+kernel-privilege stack and homebrew support. Contributions from other
+agents are welcome; follow the rules below.
 
 ## Scope and material boundaries
 
-- **Findings and knowledge only.** Never commit Sony proprietary code,
-  kernel dumps (`.data` or `.text`), Ghidra/IDB databases, decrypted
-  firmware images, memory captures, or any payload material. Links and
-  derived knowledge (offsets, structures, techniques) are fine.
-- Never embed console identity data, pairing credentials, or anything
-  from the private research trees into this repo.
+- **Original source is welcome.** This repo may contain research notes,
+  independently authored homebrew and kernel-patch source, payload
+  source, build scripts, tests, and tooling. Code informed by observed
+  behavior or reverse engineering is allowed; explain its provenance,
+  purpose, and firmware assumptions in the PR. Existing in-repo source
+  such as `r0gdb/` is within scope.
+- Never commit Sony proprietary code, copied or closely translated
+  decompiler output, kernel dumps (`.data` or `.text`), Ghidra/IDB
+  databases, decrypted firmware images, or memory captures. Derived
+  knowledge such as offsets, structures, and techniques is allowed.
+- Keep generated binaries (`.elf`, `.bin`, `.prx`), object files, and
+  build outputs out of Git. Publish reviewable source and build
+  instructions instead. Respect licenses and attribution when using
+  public third-party code; do not vendor third-party source.
+- Never embed console identity data, pairing credentials, secrets, or
+  private third-party material. Original source developed in a private
+  lab tree may be moved here after checking it for excluded material.
 - Keep the repo offline-reproducible in spirit: every technique
   documented should be executable from the public sources in
   `docs/06-sources.md` plus our own tooling.
@@ -44,11 +55,13 @@ freeze class each eliminates) before proposing a fix.
 ## Contribution workflow
 
 - Topic branches + pull requests only; never push directly to `main`.
-- Keep PRs small and single-purpose (3–7 changed files). Split
-  dependency-ordered work into separate PRs.
+- Keep PRs focused and reviewable. Small documentation PRs should
+  usually change 3–7 files; a cohesive source change may need more.
+  Split dependency-ordered work into separate PRs.
 - New findings go into the numbered doc that fits, or a new numbered doc
   if the topic is distinct; update `README.md`'s index in the same PR.
-- No generated artifacts, no vendored third-party source.
+- For source changes, include build or test instructions and distinguish
+  offline validation from results observed on a console.
 
 ## Console-experiment policy
 
