@@ -14,7 +14,8 @@ from pathlib import Path
 
 HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
 SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
-PHASES = ("gate begin", "gate done", "ist6 begin", "ist6 done", "R0")
+PHASES = ("main baseline", "gate begin", "gate done", "ist6 begin",
+          "ist6 done", "R0")
 
 
 def fields(payload):
@@ -69,7 +70,19 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
             level, payload = parts[2], parts[3]
             kind, text = payload.split(" ", 1)
             data = fields(text)
-            if kind == "KH2R" and level == "MARK":
+            if kind == "KH2C" and level == "MARK":
+                if set(data) != {"stage", "fw", "cpu", "build_sha", "gate_lo",
+                                 "gate_hi", "ist6"} or \
+                        data["stage"] != "MAIN_BASELINE" or \
+                        data["fw"] != "12.02" or \
+                        data["build_sha"].lower() != build_sha.lower():
+                    raise ValueError("main baseline firmware or build mismatch")
+                events.append({"phase": "main baseline", "seq": seq,
+                               "cpu": decimal(data["cpu"], 0, 15),
+                               "gate_lo": address(data["gate_lo"]),
+                               "gate_hi": address(data["gate_hi"]),
+                               "ist6": address(data["ist6"])})
+            elif kind == "KH2R" and level == "MARK":
                 if set(data) != {"stage", "cpu", "region", "addr", "bytes", "state"}:
                     raise ValueError("invalid read bracket fields")
                 if data["stage"] != "R0" or data["region"] not in ("gate", "ist6") \
@@ -112,12 +125,19 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
         if gate + 16 > 1 << 64 or ist6 + 8 > 1 << 64:
             raise ValueError("derived gate or IST6 address overflows uint64")
         expected = [
+            {"phase": "main baseline"},
             {"phase": "gate begin", "addr": gate, "bytes": 16},
             {"phase": "gate done", "addr": gate, "bytes": 16},
             {"phase": "ist6 begin", "addr": ist6, "bytes": 8},
             {"phase": "ist6 done", "addr": ist6, "bytes": 8},
             {"phase": "R0"},
         ]
+    baseline = next((event for event in events
+                     if event["phase"] == "main baseline"), None)
+    worker_r0 = next((event for event in events if event["phase"] == "R0"), None)
+    if baseline and expected:
+        expected[-1].update({key: baseline[key]
+                             for key in ("gate_lo", "gate_hi", "ist6")})
     prefix = 0
     for index, event in enumerate(events):
         if index >= len(expected) or any(event.get(key) != value for key, value in
@@ -127,6 +147,9 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
         prefix += 1
     if len(events) > len(expected):
         issues.append("extra R0 calibration records")
+    if baseline and worker_r0 and any(
+            baseline[key] != worker_r0[key] for key in ("gate_lo", "gate_hi", "ist6")):
+        issues.append("worker R0 values differ from main baseline")
     transport = "unknown"
     if manifest is not None:
         transport = ("complete" if manifest.get("sha256") == hashlib.sha256(raw).hexdigest()

@@ -526,18 +526,19 @@ send result still needs a retained PC run file and manifest to establish
 transport integrity.
 
 **Native R0 calibration, built offline and not run:** [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:53-124,131-153`
+`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:53-165`
 and `Makefile:31-32,60,136-137` now build
 `byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
 pthread worker, separate-pipe reader, and `ps5log/1` sender. The built ELF
 SHA-256 is
-`7c03918b8a71eae8c006eaffb7ea4756ea51e793e2f4794d677d3c8d353c2a80`;
+`e711307b15e509cf41e51772644cb40d1cac1432c819f34912b2b77178e181b7`;
 its source-list build tag is
-`9d9b10866bb4e1e6432c728d13cb15611eb0f02201afefe90d9ce0b761834975`
+`b960b76f260cba8a29b215c03c1bbacaffff07f4f20a097288f58f14d3077735`
 (the tag is **not** the ELF hash). `make kh2-r0-calibration` completed with
 `-Wall -Wextra -Werror`; the actual-adapter host runtime check passed.
 The calibration main selects two permitted CPUs, pins itself, reads the
-native vector-1 gate and selected IST6, starts the worker for its R0
+native vector-1 gate and selected IST6, sends a `KH2C MAIN_BASELINE`
+record with those raw words, then starts the worker for its R0
 read/send, then stops it and restores affinity. Its frame/journal fields
 are deliberately unused placeholders for the shared plan validator;
 they are **not** a verified 12.02 layout. It calls no main-side target
@@ -546,8 +547,9 @@ still changes its own kernel pipe metadata before each read and must restore
 it (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:60-105`).
 
 [inference] For any separately approved FW 12.02 calibration run, the
-expected PC evidence is `KH2R` gate/IST6 begin/done, then a single R0
-record with the build tag and native words; after the worker stops, the ELF
+expected PC evidence is the main baseline, `KH2R` gate/IST6 begin/done,
+then a single R0 record with the build tag and matching native words;
+after the worker stops, the ELF
 prints a pipe-restored `[KH2R0]` marker, closes `ps5log`, restores main
 affinity, then prints a build-tagged `[KH2R0] exit rc=0 ...` marker.
 A returned prepare/read/finish error or missing R0
@@ -570,12 +572,14 @@ R0, so it rejects the standalone ELF's R0-only log (`11` #52). Use
 python3 tools/kh2_r0_calibration_check.py retained-r0.log \
   --manifest retained-r0.json --stdout elfldr-r0.txt \
   --kdata-base <same-boot-kdata-base> \
-  --build-sha 9d9b10866bb4e1e6432c728d13cb15611eb0f02201afefe90d9ce0b761834975
+  --build-sha b960b76f260cba8a29b215c03c1bbacaffff07f4f20a097288f58f14d3077735
 ```
 
 It derives the 12.02 gate and selected IST6 addresses from the supplied
-same-boot base and reported CPU, checks ordered begin/done read brackets,
-the distinct observer CPU and exact build tag, the PC manifest's digest and
+same-boot base and reported CPU, checks that the main baseline precedes
+the ordered begin/done read brackets and that R0 repeats its gate/IST6
+values exactly (`11` #54), the distinct observer CPU and exact build tag,
+the PC manifest's digest and
 clean close, and the final stdout marker with that build tag. A missing
 gate/IST bracket leaves the last contiguous phase in `confirmed_prefix`;
 an address/order/build
