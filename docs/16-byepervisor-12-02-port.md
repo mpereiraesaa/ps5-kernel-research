@@ -93,13 +93,13 @@ match is missing.
 
 | Their gadget | Semantics | Our 12.02 coverage |
 |---|---|---|
-| `DBREG_RESUME` | starts with `mov dr0,rax`, then loads DR1–3/6/7 and restores/pivots context | candidate `ktext+0x2acb78` from a 13.60 local anchor; `cpu_switch` is only a containing-function anchor, and the 12.02 bytes/entry contract are unverified (`11` #23) |
+| `DBREG_RESUME` | starts with `mov dr0,rax`, then loads DR1–3/6/7 and restores/pivots context | candidate `ktext+0x2acb78` independently projected from 11.60/12.70 and 13.xx local anchors; `cpu_switch` is only a containing-function anchor, and the 12.02 bytes/entry contract are unverified (`11` #23) |
 | `REP_MOVSB` | rep movsb; ret | 12.02 table has `rep_movsb_pop_rbp_ret`; its extra pop requires a different frame, and bytes are unverified |
 | `RET_TRAMP` | ret | `nop_ret` has a 12.02 table address; instruction bytes not yet read |
 | `IRETQ` | iretq | `doreti_iret` / `pop_all_iret` have 12.02 table addresses; frame contract needs validation |
 | `store_rax_rdi`-class stores | mov [rX], rY; ret | 12.02 table names `store_rax_rdi`; exact bytes and the other register pairs need validation or chain rewrite |
 | `pop rXX; ret` ×7 | pop reg; ret | individual pops remain unknown; `pop_all_iret` has a different frame contract |
-| `PIVOT_ADD_RSP28_RET` | add rsp,0x28; ret | low-confidence candidate `ktext+0x2ac2de` (`16`, cross-dump table); 12.02 bytes unknown and Kstuff's iret-shaped pivot is not equivalent |
+| `PIVOT_ADD_RSP28_RET` | add rsp,0x28; ret | competing address candidates: `ktext+0x2a82de` from 11.60/12.70, `ktext+0x2ac2de` from 13.xx; neither has 12.02 bytes, and Kstuff's iret-shaped pivot is not equivalent |
 | `OR_RCX_EAX`, `SET_DR7`, `MOV_RAX_RSI/RDI`, `CLD` | assorted | unresolved; one-shot omits `OR_RCX_EAX`, but the other 12.02 instruction addresses and contracts require evidence (`17`) |
 
 Their constants worth recording: `KH_DR7_BP0_EXEC = 0x403`,
@@ -538,6 +538,63 @@ complete gadget contracts are safe. A 12.02 text disassembly with a
 different local offset or instruction sequence would falsify either
 projection. The 13.00 and 13.20 rows share identical published values,
 so they are corroborating versions, not separate byte audits.
+
+#### New 11.60/12.70 bracketing audit (2026-10-14)
+
+[public-consensus] The working [11.60 offset table](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/include/offsets/11_60.h#L24-L46)
+and [PR #12's 12.70 candidate table](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/include/offsets/12_70_candidate.h#L30-L52)
+put `PIVOT_ADD_RSP28_RET` at `cpu_switch−0x4022` and
+`DBREG_RESUME` at `cpu_switch+0x878` in **both** donors. Three independent
+data symbols (`IDT_ARRAY`, `COMMON_TSS`, `PMAP_STORE`) give a consistent
+`kdata−ktext` gap of `0xd30000` for 11.60 and `0xd50000` for 12.70;
+the 12.70 symbols also match the public 12.02 Kstuff data offsets.
+Unlike the 13.xx audit, this does not equate Byepervisor's `IRETQ`
+with Kstuff's `doreti_iret`: the 12.70 table selects a different
+`IRETQ` occurrence. [verified-in-tree] `tools/kh2_12xx_projection.py:20-120`
+checks these three gap equations and then compares each nonzero gadget
+to common Kstuff text anchors within `0x4000` bytes. Reproduce with
+the two pinned public headers stored outside this notes repo:
+
+```sh
+python3 tools/kh2_12xx_projection.py \
+  --kstuff-dir r0gdb/prosper0gdb/offsets \
+  --byepervisor-1160 /path/to/public/11_60.h \
+  --byepervisor-1270 /path/to/public/12_70_candidate.h
+```
+
+[inference] The 11.60/12.70 relation projects a **second** 12.02 pivot
+candidate at `ktext+0x2a82de`. The nearest shared Kstuff anchor is
+`store_rax_rdi−0x3e34`; `cpu_switch−0x4022` independently yields the
+same address just outside the reporting cutoff. It is `0x4000` before
+the 13.xx projection `+0x2ac2de`. This difference retracts any reading
+that the latter was the unique likely pivot. Both may be distinct
+`add rsp,0x28; ret` sites, or either may lack the needed sequence on
+12.02. A 12.02 text image showing the instruction and bounded return
+contract at neither/both/one address would decide the address question;
+the address equations alone cannot decide it. The same 12.xx pass
+projects `DBREG_RESUME` to `+0x2acb78`, agreeing with the 13.xx
+`mov_cr3_rax_mov_ds+0xe1` projection. Its full 12.02 entry contract
+remains unverified.
+
+[verified-in-tree] `tools/kh2_12xx_projection.py:67-120` at the stated `0x4000` cutoff selects
+only these **2 of 18** gadget names with nonzero entries in both donors;
+16 remain unresolved, and 3 have a zero 11.60 donor entry. A global
+11.60→12.70 text delta therefore does not fill the 12.02 gadget table.
+[inference] A closer 12.xx source narrows two addresses but cannot prove
+the other entries or a safe #DB return; matching 12.02 instruction bytes
+and frame behavior would falsify that remaining uncertainty.
+
+[public-consensus] [PR #12's port note](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/PORT_12_70.md#L29-L48)
+reports one launch-model 12.70 rest/resume success, `16` surveyed VMCBs,
+and a kernel-text eight-byte read. It says inherited table entries were
+not all exercised. Its text-map preparation also changes `342` page
+entries in that reported run
+([`PORT_12_70.md` lines 21–38](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/PORT_12_70.md#L21-L38)).
+[inference] That report supports the contributor's particular 12.70
+path, not a 12.02 text-map topology or a 12.02 gadget contract. A
+separate 12.02 page-table survey or text image disagreeing with those
+assumptions would falsify direct reuse. No 12.02 console experiment is
+authorized by this offline map.
 
 #### Bounded scan of the remaining public gadget entries
 

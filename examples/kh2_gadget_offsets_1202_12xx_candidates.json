@@ -1,0 +1,9 @@
+{
+  "firmware": "12.02",
+  "source": "docs/16-byepervisor-12-02-port.md 11.60/12.70 bracketing audit; tools/kh2_12xx_projection.py",
+  "status": "address candidates only; 12.02 bytes unavailable; pivot competes with the 13.xx projection",
+  "offsets": {
+    "PIVOT_ADD_RSP28_RET": "0x2a82de",
+    "DBREG_RESUME": "0x2acb78"
+  }
+}
