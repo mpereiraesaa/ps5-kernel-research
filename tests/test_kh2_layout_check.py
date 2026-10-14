@@ -73,6 +73,34 @@ class LayoutCheck(unittest.TestCase):
         self.assertEqual(matched["comparison_status"], "partial_address_evidence")
         self.assertEqual(matched["b2_pivot_gate_comparison"]["status"], "equal")
 
+    def test_cli_selects_12xx_candidate_for_plan_log_join(self):
+        plan_path = Path(__file__).resolve().parents[1] / "examples/kh2_layout_synthetic.json"
+        checker = Path(__file__).resolve().parents[1] / "tools/kh2_layout_check.py"
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "run.log"
+            log_path.write_bytes(planned_log(
+                candidate(), b2_gate_lo="0x88768e06002082de",
+                b2_gate_hi="0xffffffff"))
+            command = [sys.executable, str(checker), str(plan_path),
+                       "--log", str(log_path),
+                       "--b2-pivot-ktext-base", "0xffffffff884c0000",
+                       "--b2-pivot-candidate", "12xx"]
+            completed = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 1, completed.stderr)
+            result = json.loads(completed.stdout)["log_comparison"]
+            comparison = result["b2_pivot_gate_comparison"]
+            self.assertEqual(comparison["candidate_family"], "12xx")
+            self.assertEqual(comparison["candidate_offset"], "0x2a82de")
+            self.assertEqual(comparison["status"], "equal")
+            self.assertNotIn("B2.pivot_gate", [item["field"] for item in
+                                                result["mismatches"]])
+            missing_base = subprocess.run(
+                [sys.executable, str(checker), str(plan_path),
+                 "--log", str(log_path), "--b2-pivot-candidate", "12xx"],
+                capture_output=True, text=True)
+            self.assertEqual(missing_base.returncode, 2)
+            self.assertIn("requires --b2-pivot-ktext-base", missing_base.stderr)
+
     def test_retained_report_matches_plan_but_does_not_verify_ownership(self):
         plan = candidate()
         result = compare_log(plan, planned_log(plan))
@@ -324,7 +352,8 @@ class LayoutCheck(unittest.TestCase):
             self.assertEqual(json.loads(no_brackets.stdout)["log_comparison"]
                              ["comparison_status"], "partial_address_evidence")
             pivot = subprocess.run(command + ["--b2-pivot-ktext-base",
-                                           "0xffffffff884c0000"],
+                                           "0xffffffff884c0000",
+                                           "--b2-pivot-candidate", "13xx"],
                                    capture_output=True, text=True, check=False)
             self.assertEqual(pivot.returncode, 1, pivot.stderr)
             self.assertEqual(json.loads(pivot.stdout)["log_comparison"]["mismatches"][0]["field"],

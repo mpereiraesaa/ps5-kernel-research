@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from khook_trace_classify import (  # noqa: E402
     STAGES, SOURCES, _fc1_read_fail_detail, classify, classify_kstuff_fullchain,
+    pivot_candidate_target,
 )
 
 
@@ -236,17 +237,55 @@ class ClassifierTests(unittest.TestCase):
             self.assertEqual(comparison["expected"], "0x3140a0")
             self.assertEqual(comparison["status"], "equal")
             pivot_command = command + ["--b2-pivot-ktext-base",
-                                       "0xffffffff884c0000"]
+                                       "0xffffffff884c0000",
+                                       "--b2-pivot-candidate", "13xx"]
             pivot = subprocess.run(pivot_command, capture_output=True,
                                    text=True, check=True)
             pivot_result = json.loads(pivot.stdout)["b2_pivot_gate_comparison"]
             self.assertEqual(pivot_result["expected_target"],
                              "0xffffffff8876c2de")
+            self.assertEqual(pivot_result["candidate_family"], "13xx")
             self.assertEqual(pivot_result["status"], "different")
             legacy = subprocess.run(command + ["--mode", "kstuff-fullchain"],
                                     capture_output=True, text=True)
             self.assertEqual(legacy.returncode, 2)
             self.assertIn("requires --mode khook", legacy.stderr)
+
+    def test_cli_selects_12xx_pivot_and_records_candidate_identity(self):
+        gate = {"gate_lo": "0x88768e06002082de",
+                "expected_lo": "0x88768e06002082de",
+                "gate_hi": "0xffffffff", "expected_hi": "0xffffffff"}
+        payloads = (record("B0"), record("B2", **gate))
+        raw = "".join(f"{i}\t{i * 1000}\tMARK\t{payload}\n"
+                      for i, payload in enumerate(payloads, 1))
+        script = Path(__file__).resolve().parents[1] / "tools" / "khook_trace_classify.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log = Path(temp_dir) / "trace.log"
+            log.write_text(raw)
+            command = [sys.executable, str(script), str(log),
+                       "--b2-pivot-ktext-base", "0xffffffff884c0000",
+                       "--b2-pivot-candidate", "12xx"]
+            completed = subprocess.run(command, capture_output=True, text=True,
+                                       check=True)
+            comparison = json.loads(completed.stdout)["b2_pivot_gate_comparison"]
+            self.assertEqual(comparison["candidate_family"], "12xx")
+            self.assertEqual(comparison["candidate_offset"], "0x2a82de")
+            self.assertEqual(comparison["expected_target"], "0xffffffff887682de")
+            self.assertEqual(comparison["status"], "equal")
+            missing_base = subprocess.run(
+                [sys.executable, str(script), str(log),
+                 "--b2-pivot-candidate", "12xx"],
+                capture_output=True, text=True)
+            self.assertEqual(missing_base.returncode, 2)
+            self.assertIn("requires --b2-pivot-ktext-base", missing_base.stderr)
+            missing_candidate = subprocess.run(
+                [sys.executable, str(script), str(log),
+                 "--b2-pivot-ktext-base", "0xffffffff884c0000"],
+                capture_output=True, text=True)
+            self.assertEqual(missing_candidate.returncode, 2)
+            self.assertIn("requires --b2-pivot-candidate", missing_candidate.stderr)
+        with self.assertRaisesRegex(ValueError, "canonical kernel"):
+            pivot_candidate_target(0x1000, "12xx")
 
     def test_optional_f2_entry_comparison_preserves_frame_evidence(self):
         equal = run("B0", "B2", "F2", f2_target=0x4321)
