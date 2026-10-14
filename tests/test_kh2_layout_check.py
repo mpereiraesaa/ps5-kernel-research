@@ -70,14 +70,19 @@ class LayoutCheck(unittest.TestCase):
         matched = compare_log(plan, planned_log(
             plan, b2_gate_lo="0x88768e060020c2de",
             b2_gate_hi="0xffffffff"), b2_target=target)
-        self.assertEqual(matched["comparison_status"], "observed_fields_match")
+        self.assertEqual(matched["comparison_status"], "partial_address_evidence")
         self.assertEqual(matched["b2_pivot_gate_comparison"]["status"], "equal")
 
     def test_retained_report_matches_plan_but_does_not_verify_ownership(self):
         plan = candidate()
         result = compare_log(plan, planned_log(plan))
-        self.assertEqual(result["comparison_status"], "observed_fields_match")
+        self.assertEqual(result["comparison_status"], "partial_address_evidence")
         self.assertEqual(result["missing_layout_records"], [])
+        self.assertFalse(result["address_bracket_coverage"]["complete"])
+        self.assertIn("B0.scratch address/size absent from plan",
+                      result["address_bracket_coverage"]["unplanned_regions"])
+        self.assertTrue(result["address_bracket_coverage"]["missing_reads"])
+        self.assertTrue(result["address_bracket_coverage"]["missing_writes"])
         self.assertIn("B2.ist_image_sha", result["compared_fields"])
         self.assertIn("A2.ist_image_sha", result["compared_fields"])
         self.assertEqual(result["transport"], "unknown")
@@ -224,10 +229,15 @@ class LayoutCheck(unittest.TestCase):
                     f"8\t8000\tMARK\tKH2R stage=B2 cpu=0 region=gate "
                     f"addr={address} bytes=16 state=done\n").encode()
 
+        without = compare_log(plan, planned_log(plan))
         correct = compare_log(plan, planned_log(plan) +
                               bracket(plan["gate"]["base"]))
-        self.assertEqual(correct["comparison_status"], "observed_fields_match")
+        self.assertEqual(correct["comparison_status"], "partial_address_evidence")
         self.assertEqual(correct["read_attempt_locations"][0]["plan_match"], True)
+        def missing_read_count(result):
+            return sum(item["count"] for item in
+                       result["address_bracket_coverage"]["missing_reads"])
+        self.assertEqual(missing_read_count(without) - missing_read_count(correct), 1)
 
         wrong = compare_log(plan, planned_log(plan) + bracket("0x2e88410"))
         self.assertEqual(wrong["comparison_status"], "mismatch")
@@ -270,6 +280,11 @@ class LayoutCheck(unittest.TestCase):
             self.assertEqual(json.loads(mismatch.stdout)["log_comparison"]["mismatches"][0]["field"],
                              "B1.image.addr")
             log_path.write_bytes(planned_log(candidate()))
+            no_brackets = subprocess.run(command, capture_output=True,
+                                         text=True, check=False)
+            self.assertEqual(no_brackets.returncode, 1, no_brackets.stderr)
+            self.assertEqual(json.loads(no_brackets.stdout)["log_comparison"]
+                             ["comparison_status"], "partial_address_evidence")
             pivot = subprocess.run(command + ["--b2-pivot-ktext-base",
                                            "0xffffffff884c0000"],
                                    capture_output=True, text=True, check=False)
