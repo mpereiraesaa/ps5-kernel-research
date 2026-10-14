@@ -1168,9 +1168,13 @@ zero nonzero scratch bytes; its hash and full recovery record are in
 
 [inference] These retained records eliminate the missing-patch-readback
 ambiguity for **this attempt**: the observer read the patched gate and
-all 16 IST4 pointers before the trigger handoff. They do not show that
+all 16 IST4 pointers before the trigger handoff. The pretrigger callback
+also completed a selected-slot `0x500` read, the same size and address
+as its first targeted post-trigger read
+(`fullchain_prearmed.c:230-233,271-274`). They do not show that
 `ICEBP` was fetched, that #DB entered, or that the worker's first
-post-trigger read completed. The worker can start sampling after the
+post-trigger read completed under the changed execution schedule. The
+worker can start sampling after the
 `OBS_SAMPLE` release and before main executes `ICEBP`; no sample was
 retained. A same-attempt changed hardware frame, fault trace, or
 post-trigger observer record would falsify the present unobserved
