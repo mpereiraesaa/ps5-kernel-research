@@ -13,6 +13,9 @@ chain still requires byte-verified 12.02 gadget entries and a same-attempt
 delivery/continuation witness; a completed first arm with a checked return
 would falsify this current boundary. This document preserves the earlier
 mapping and historical diagnostic record, not an approved live run plan.
+The historical probe sources and generated ELFs named below were removed
+from the off-repo payload workspace on 2026-10-14; their names and hashes
+identify recorded attempts, not available build targets.
 
 Reference material (public, cloned read-only in the lab third-party area —
 reference only, never run as-is on our console):
@@ -1390,7 +1393,7 @@ needed for its UELF handoff; this candidate performs no such handoff.
 different control flow or a captured post-`justreturn` stack differing
 from the hardware frame would falsify this candidate.
 
-The separate offline build `byepervisor_probe_1202_justreturn_allcpu.c`
+The retired offline `justreturn_allcpu` design
 stages 16 disjoint 0x200-byte frame regions across two zero-checked
 candidate scratch pages, saves/writes each CPU's IST4 as a qword, and
 changes the shared #DB gate last. Its first return frame uses Kstuff's
@@ -1619,7 +1622,7 @@ CPU, is:
    `F−0x28`, so `iretq` consumes the CPU's original frame. The
    trigger wrapper must declare every other changed caller-saved
    register (at least RAX/RCX/R8 for this chain) as clobbered; the
-   existing `justreturn_allcpu.c` inline `ICEBP` wrapper does not
+   retired `justreturn_allcpu` inline `ICEBP` wrapper did not
    declare those clobbers and cannot be reused unchanged. [inference]
    A mismatch in the saved registers, frame, or post-return kernel
    state would falsify the proposed preservation/return contract.
@@ -1715,14 +1718,15 @@ and `iretq`. The exact 12.02 bytes are still unknown. This approach
 uses Kstuff's documented chain primitives instead of projecting
 Byepervisor's missing individual pop/store gadgets onto 12.02.
 
-[verified-in-tree] The 2026-10-14 source audit found a `0x200` transcription
-error: historical `engineering/payloads/byepervisor_probe_1202/fullchain_allcpu.c:43`
-and the original unrun prearmed v2 source both used `0x2efbba` for this
+[verified-in-tree] The retained `tools/fullchain_layout_check.py` records
+the 2026-10-14 source audit's `0x200` transcription error: the now-retired
+PR #97 and unrun prearmed v2 sources both used `0x2efbba` for this
 copy entry. `r0gdb/prosper0gdb/offsets/12_02.h:15` gives
 `0xd50000−0xa60246 = 0x2efdba`. `tools/fullchain_layout_check.py`
 now compares six probe constants with the public FW 12.02 table; it
-reports this one mismatch in the retained PR #97 source and passes the
-corrected prearmed v3 source. [inference] If execution reached the copy
+reported this one mismatch for the PR #97 source and passed the
+corrected prearmed v3 source before those sources were retired.
+[inference] If execution reached the copy
 entry, the old source would jump `0x200` before the table target; unknown
 12.02 bytes prevent a stronger outcome claim. PR #97 emitted `[K1]`
 before IST4 writes, gate patch, or `ICEBP`, so the observed shutdown does
@@ -1752,24 +1756,25 @@ state after cleanup. This validates a Kstuff-style continuation and
 return; it would **not** validate Byepervisor's unverified 12.02
 `add rsp,0x28; ret` dispatch pivot or DR7 arm pass.
 
-The isolated local source (outside this notes repo) now builds three
+At the time of this offline design, the now-retired source built three
 FW 12.02 ELFs: setup-only SHA-256
 `074ec7dfa2feeff63cee4a096bf00590afe209e76bca4b688e1e55a2d838e99a`,
 live SHA-256
 `c057f484e66d137a14ddc041e02776da28193c1d9a741b32e27f6b0772fb7aff`,
 and read-only audit SHA-256
 `0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`.
-Build success is an offline fact; **none has been sent** as of this note.
-Each CPU gets a `0x500`-byte disjoint slot (`0x5000` total), within a
-zero run in the 12.02 data dump; the payload refuses nonzero live
-scratch. It also refuses a non-native #DB gate, an unexpected IST4
+None had been sent at that point; later console results are recorded below.
+Each CPU was assigned a `0x500`-byte disjoint slot (`0x5000` total), within a
+zero run in the 12.02 data dump; the retired payload refused nonzero live
+scratch. It also refused a non-native #DB gate, an unexpected IST4
 user, wrong kernel CS, failed single-CPU affinity, or a readback
-mismatch. The gate is shared, so all 16 IST4 slots are prepared before
+mismatch. The gate is shared, so all 16 IST4 slots were prepared before
 changing it. [inference] Zero bytes alone do not prove this scratch is
 unowned; a live change or concurrent owner would falsify the cave
 assumption.
 
-**Console plan approved by the owner on 2026-10-13:**
+**Historical console plan approved by the owner on 2026-10-13 and
+executed below:**
 read-only baseline first; then setup-only, expecting `[K1]`, restored
 `[K1r]`, and `[K2]` without #DB. Only after clean setup and a fresh
 baseline, the live ELF would expect `[K2] frame=MATCH marker=MATCH` and
@@ -1813,71 +1818,31 @@ the post-stall audit part of the plan above.
 
 ### Prearmed-v7 live run
 
-**Approved FW 12.02 attempt, 2026-10-14.** [verified-on-console] The
-owner approved a single run of `prearmed-v7` ELF SHA-256
-`1529aad99a0baebfa0570801d6d501b795399bb8f70c1ce76c1d1e9d06b61ddf`,
-with a hard power cycle and read-only native gate/IST4 audit after
-reboot. The expected first post-trigger evidence was a changed
-hardware-frame canary or copy marker in the independent PC log, then
-return and restored-state markers if the chain completed. The retained
-PC record instead ends at `FCM TRIGGER_BEGIN` after the observer verified
-the patched #DB gate, all 16 IST4 pointers, and the selected frame's five
-unchanged canaries. Elfldr printed `[KSTART]` and `[K1]` only. The PC
-manifest has 25 records, no gaps, and an unclean EOF; the full phase
-sequence and log hash are in `17` §“FW 12.02 prearmed-v7 run”.
-
-[inference] This attempt passed the patch/readback and pretrigger
-observer boundaries that PR #97's `[K1]` could not establish. It did
-not retain a changed frame, marker, observer read failure, or return,
-so #DB delivery and the Kstuff continuation remain unproved. A ping
-reply after the sender closed is evidence of network response only, not
-restoration of the shared gate. A same-attempt frame or fault trace
-would falsify the current delivery boundary. No new ELF was sent into
-the uncertain post-trigger state. **Recovery:** [verified-on-console]
-The owner confirmed a hard power cycle and elfldr restart. The approved
-read-only audit ELF SHA-256
+[verified-on-console] The approved FW 12.02 ELF SHA-256
+`1529aad99a0baebfa0570801d6d501b795399bb8f70c1ce76c1d1e9d06b61ddf`
+recorded full gate/IST4 and pretrigger readback, then stopped at
+`TRIGGER_BEGIN` without a changed frame, marker, return, or restoration.
+The owner hard power-cycled; audit v1 SHA-256
 `0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`
-then reported native #DB target `+0x3188b0`, gate IST4, zero staged
-IST4 slots, zero nonzero scratch bytes, and no marker or changed frame
-on any CPU. The local audit transcript SHA-256 is
+reported native gate, zero staged IST4, and zero scratch on the new boot.
+The audit transcript SHA-256 was
 `e43a80aa20e752fdeeea7e0586a0f37e9bc7ec95f8bc1f2e8dd9df5ee66d57e6`.
-This is the post-reboot baseline; it cannot reconstruct a frame or
-marker that may have existed before the power cycle.
+The result does not establish #DB delivery. See `17` §“Historical
+Kstuff-style one-`ICEBP` diagnostics” for the PC log hash and boundary.
 
 ### Prearmed-v8 live run
 
-**Approved FW 12.02 attempt, 2026-10-14.** [verified-on-console] The
-owner approved one follow-up probe with a first targeted-read begin/done
-bracket, ELF SHA-256
-`cad6274b6c9f38b8a151363b7fb238184b8ef7145925e114394602640f656e69`.
-The expected new boundary was a retained `FC1 SAMPLE_BEGIN` before the
-first post-release `0x500` read and `SAMPLE_DONE` with raw frame/marker
-words after it. The PC log instead ended at `FCM TRIGGER_BEGIN`, after
-the same complete gate/IST4 verification and pretrigger baseline as v7.
-There was no begin, completion, changed frame, marker, read failure, or
-return. `17` §“FW 12.02 prearmed-v8 run” records both log hashes and
-the classifier result.
-
-[inference] Missing `SAMPLE_BEGIN` leaves worker scheduling, PC send,
-trap fetch/delivery, and a broader stop unresolved; it does not prove
-that the observer never ran or that #DB did not fire. A same-attempt
-worker record or direct fault trace would falsify this boundary.
-**Recovery state at capture:** the owner reported a usable console, and
-ping replied. No additional ELF was loaded before recovery; the shared
-gate, IST4 pointers, and scratch were unknown at that point. The owner
-subsequently hard power-cycled and restarted elfldr. [verified-on-console]
-The existing read-only `fullchain_audit.elf` (SHA-256
-`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`)
-then completed: native #DB target `+0x3188b0`, IST4 gate, zero staged
-IST4 slots, zero nonzero scratch bytes, and no marker on all 16 CPUs.
-The transcript SHA-256 is
+[verified-on-console] The approved FW 12.02 ELF SHA-256
+`cad6274b6c9f38b8a151363b7fb238184b8ef7145925e114394602640f656e69`
+again stopped at `TRIGGER_BEGIN`, without a retained `SAMPLE_BEGIN`,
+frame, marker, return, or restoration. The owner reported a usable UI,
+then hard power-cycled. The same audit v1 ELF reported native gate,
+zero staged IST4, and zero scratch on the new boot; transcript SHA-256
 `eb3d784c3d9b9ee78c581ae46072b85fff0eec76ed19472a7b3c208dd5c378e9`.
-This verifies the **post-reboot** baseline. It cannot reconstruct whether
-v8 entered #DB or changed a frame before the reboot. [inference] A
-same-boot audit after a responsive UI/elfldr restart could retain that
-evidence; a same-boot audit with no frame or marker would falsify the
-prediction that v8 left one in the staged slot, subject to whether its
-scratch still exists. No such v8 audit was captured.
+[inference] Missing `SAMPLE_BEGIN` does not distinguish worker scheduling,
+transport loss, trap delivery, or a stop. A same-attempt frame or
+instruction trace would falsify the unobserved boundary. See `17` for
+the PC log hash and classifier result.
 
 ### Frame staging isolation run
 
