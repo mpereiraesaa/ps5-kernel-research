@@ -802,6 +802,11 @@ failed observer on return using synthetic transcripts.
 `[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
 asserted. A disagreement yields `conflicting_probe_cpu_records` before any
 gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
+It accepts `FC1 READY` as a link only when its local sequence is 1, FW is
+12.02, its build tag names a known prearmed version, and trigger/observer
+CPUs are distinct values in 0–15. A malformed READY remains in the raw
+record list but cannot authorize a later gate, patch, or trigger boundary
+(`11` #49).
 For `prearmed-v2` through `prearmed-v5` it requires the sample mode and rejects a `targeted`
 record naming a CPU other than the trigger CPU; v1 records remain readable.
 For v4/v5, a frame/marker needs an earlier accepted `PRETRIGGER` record with
