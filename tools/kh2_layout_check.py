@@ -396,21 +396,28 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
         return Counter((attempt["stage"], attempt["region"],
                         number(attempt["addr"]), attempt["bytes"])
                        for attempt in attempts if attempt["result"] == "done")
-    def missing(expected, attempts):
+    def bracket_rows(counts):
         return [{"stage": stage, "region": region, "addr": hex(address),
                  "bytes": size, "count": count}
                 for (stage, region, address, size), count in
-                sorted((expected - completed(attempts)).items())]
-    missing_reads = missing(expected_reads, classification["read_attempts"])
-    missing_writes = missing(expected_writes, classification["write_attempts"])
+                sorted(counts.items())]
+    done_reads = completed(classification["read_attempts"])
+    done_writes = completed(classification["write_attempts"])
+    missing_reads = bracket_rows(expected_reads - done_reads)
+    missing_writes = bracket_rows(expected_writes - done_writes)
+    extra_reads = bracket_rows(done_reads - expected_reads)
+    extra_writes = bracket_rows(done_writes - expected_writes)
     bracket_coverage = {
         "expected_reads": sum(expected_reads.values()),
         "expected_writes": sum(expected_writes.values()),
         "missing_reads": missing_reads,
         "missing_writes": missing_writes,
+        "extra_reads": extra_reads,
+        "extra_writes": extra_writes,
         "unplanned_regions": unknown_brackets,
         "complete": bool(expected_reads or expected_writes) and not (
-            missing_reads or missing_writes or unknown_brackets),
+            missing_reads or missing_writes or extra_reads or extra_writes
+            or unknown_brackets),
     }
     write_error_locations = [locate_write_error(plan, error)
                              for error in classification["capture_errors"]
