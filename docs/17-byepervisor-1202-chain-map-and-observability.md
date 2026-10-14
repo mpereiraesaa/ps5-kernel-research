@@ -1235,9 +1235,9 @@ the manifest has no gaps, `clean=false`, and `close_reason=eof`.
 `trigger_call_reached_db_delivery_or_later_unproven` boundary with
 matching attempt tokens and no FC1 issues. Ping replied afterward, and
 the owner reported that the console remained usable and questioned a
-hard power cycle. It was left running; no post-run ELF was loaded. Current
-gate/IST4/scratch state is **unverified** until a later baseline read or
-power cycle (`16` §“Prearmed-v8 live run”).
+hard power cycle. It was left running; no post-run ELF was loaded before
+recovery. Gate/IST4/scratch state was **unverified at capture**
+(`16` §“Prearmed-v8 live run”).
 
 [inference] The repeated `TRIGGER_BEGIN` endpoint means v8 did not
 observe the worker's first post-release log. Its absence cannot decide
@@ -1246,6 +1246,94 @@ worker was not scheduled before the stop, or its PC send failed. A
 same-attempt `SAMPLE_BEGIN`, frame, or independent trap trace would
 falsify that narrow unobserved boundary. The v7/v8 similarity does not
 authenticate 12.02 gadget bytes or prove exception delivery.
+
+**FW 12.02 post-v8 recovery audit, 2026-10-14.** [verified-on-console]
+After the owner hard power-cycled and restarted elfldr, the existing
+read-only `fullchain_audit.elf` SHA-256
+`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`
+returned native #DB target `+0x3188b0`, gate IST4, zero staged IST4
+slots, zero nonzero scratch bytes, and no marker on all 16 CPUs. Its
+transcript SHA-256 is
+`eb3d784c3d9b9ee78c581ae46072b85fff0eec76ed19472a7b3c208dd5c378e9`.
+The baseline is clean **after reboot**. The audit cannot decide whether
+v8 delivered #DB before the reboot; the five saved hardware-frame words
+and the copy marker were in volatile scratch. This corrects the earlier
+"current state unverified" note while retaining the v8 delivery boundary.
+
+**Prearmed-v9 capture candidate, built offline; no console run.**
+[verified-in-tree] The separate local
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:269-309,785-800`
+now requires the observer to complete a `0x500` selected-slot read, check
+all five canaries and the zero marker, send `FC1 SAMPLE_READY`, and set a
+release/ack flag before main can call `fullchain_icebp`. On an error or
+timeout, main stops the observer and restores gate, IST4, and scratch
+instead of triggering. The first targeted read still has
+`SAMPLE_BEGIN`/`SAMPLE_DONE` brackets. Source SHA-256
+`a26c70b7e74f6f707b15b8b4233d9ef80799bca7864b525a45442395077b655e`;
+ELF SHA-256
+`f6a50525af1dd8f3c561e2114e7b22c2b9a00352ee6dc44b19a8208fe6ab321d`.
+The exact v8 source/ELF remain off-tree under `historical/` with their
+recorded hashes. `tools/khook_trace_classify.py:_fc1_records` accepts v9
+only when `SAMPLE_READY` follows the linked `TRIGGER_BEGIN`, has the
+selected CPU, `1280` bytes, five matching canaries and zero marker; it
+rejects later sample brackets without that predecessor. Synthetic
+v9 success, mismatch, missing-ready and returned-read-failure cases
+passed `tests/test_khook_trace_classify.py`. The source cross-compiled
+and the public-offset/geometry check passed; no 12.02 text bytes were
+checked.
+
+**Same-boot audit correction, built offline; no console run.**
+[verified-in-tree] The v1 `fullchain_audit.c` compared the staged frame
+to a bitwise-OR canary and skipped that frame whenever IST4 was no longer
+staged (`11` #75). The current off-tree
+`engineering/payloads/byepervisor_probe_1202/fullchain_audit.c:80-108`
+uses the producer's addition formula and also recognizes the staged
+image's marker-source word, so a surviving frame can be checked after
+IST4 restoration. It reports `audit_version=2`, raw gate qwords, all
+IST4 pointers, and `staged_images` for exact same-boot comparison.
+Source SHA-256
+`9c5b881106400953acad7cd158aad8ff99f5ca58598e4bd034ad0b92d3a1a7c0`;
+ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`.
+V1 source/ELF are archived off-tree under `historical/`; the v1 ELF
+SHA-256 was `0d867697…5fefc`. The classifier rejects v1 frame-canary
+claims for prearmed v6–v9 while still accepting its native-gate and
+zero-scratch recovery checks. A synthetic v2 staged image with restored
+IST4 was classified as an unchanged frame, and a v1 `CHANGED` report
+was not promoted to evidence for a prearmed build. Cross-compilation
+succeeded. A host shim running the actual audit source returned clean
+for zero scratch/native gate, reported 16 unchanged staged images under
+16 redirected IST4 pointers, and reported a changed CPU-15 frame when
+the image remained but IST4 had been restored. These are host-memory
+scenarios, not PS5 reads; v2 has not been read on-console.
+
+[inference] A retained `SAMPLE_READY` removes v8's **unscheduled-before-
+trigger** explanation: the worker completed a fresh read on the other
+CPU before main was released. It still does not prove that `ICEBP` was
+fetched, that a later read was scheduled, or that a PC send survived an
+immediate stop. A retained changed hardware frame with plausible user
+RIP/CS/RFLAGS/RSP/SS, a copy marker, or a return would falsify the
+no-delivery reading; a repeated `SAMPLE_READY` endpoint remains
+inconclusive. No software-only PC logger can promise an observation after
+an instantaneous console stop.
+
+**Next-run gate and recovery plan (owner approval pending).** The risky
+action is the same shared #DB gate/all-CPU IST4 patch and one `ICEBP`; it
+can freeze or power off FW 12.02. Before any v9 run, verify the native
+gate, all unstaged IST4 slots, zero scratch, and PC logging on the same
+boot; the post-v8 audit above establishes only the first three at its
+time. Expected: a linked `SAMPLE_READY` followed by a targeted sample,
+changed frame/marker or clean return, then native gate/IST4/scratch
+readback. If the payload stalls but the UI works, restore/relaunch
+elfldr and use audit v2 **before power cycling**; this can preserve a
+same-boot frame/marker snapshot. Audit v2 uses
+SDK kernel reads and may itself stop if the shared #DB gate is still
+redirected; include it in the exact-run approval and recovery plan. If
+that read is unavailable or the console powers off, hard power cycle and
+repeat the audit to establish recovery, explicitly marking prior trap delivery
+unknown. Do not reinterpret a responsive UI, ping, or a post-reboot
+baseline as a trap trace. No v9 ELF has been sent, and an exact-build
+owner approval is still required.
 
 **Source-layout cross-check.** [verified-in-tree]
 `tools/fullchain_layout_check.py` reads the isolated C source and public
