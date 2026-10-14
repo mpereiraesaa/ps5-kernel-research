@@ -22,7 +22,7 @@ CONTROL_STAGES = ("B0", "B1", "R0", "B2", "R1", "Q1", "A2",
 HANDOFF_STAGES = ("R0", "R1", "Q1", "R2", "Q2")
 FRAME_BYTES = 0x28
 GETUID_ENTRY_1202 = 0x3130A0
-PIVOT_1202_CANDIDATE = 0x2AC2DE
+PIVOT_1202_CANDIDATES = {"12xx": 0x2A82DE, "13xx": 0x2AC2DE}
 ATTEMPT_BUILDS = ("prearmed-v6", "prearmed-v7")
 PATCH_BUILDS = ("prearmed-v5", *ATTEMPT_BUILDS)
 BASELINE_BUILDS = ("prearmed-v4", *PATCH_BUILDS)
@@ -341,15 +341,31 @@ def _gate_target(lo: int, hi: int) -> int:
             ((hi & 0xffffffff) << 32))
 
 
+def pivot_candidate_target(base: int, family: str) -> int:
+    if family not in PIVOT_1202_CANDIDATES:
+        raise ValueError("unknown 12.02 pivot candidate family")
+    offset = PIVOT_1202_CANDIDATES[family]
+    if not 0 <= base <= 0xffffffffffffffff - offset:
+        raise ValueError("B2 pivot text base outside 64-bit address range")
+    target = base + offset
+    if target >> 47 != 0x1ffff:
+        raise ValueError("B2 pivot target outside canonical kernel range")
+    return target
+
+
 def classify(raw: bytes, manifest: dict | None = None,
              f2_target: int | None = None,
-             b2_target: int | None = None) -> dict:
+             b2_target: int | None = None,
+             b2_candidate: str | None = None) -> dict:
     if f2_target is not None and not 0 <= f2_target <= 0xffffffffffffffff:
         raise ValueError("F2 target outside 64-bit address range")
     if b2_target is not None and not (
             0 <= b2_target <= 0xffffffffffffffff and
             b2_target >> 47 == 0x1ffff):
         raise ValueError("B2 pivot target outside canonical kernel range")
+    if b2_candidate is not None and (
+            b2_target is None or b2_candidate not in PIVOT_1202_CANDIDATES):
+        raise ValueError("B2 candidate requires a target and known family")
     seen = {}
     rejected = []
     capture_errors = []
@@ -684,6 +700,9 @@ def classify(raw: bytes, manifest: dict | None = None,
         expected_lo, expected_hi = _pivot_gate_words(b2_target)
         observed_lo, observed_hi = b2_gate if b2_gate is not None else (None, None)
         result["b2_pivot_gate_comparison"] = {
+            **({"candidate_family": b2_candidate,
+                "candidate_offset": f"0x{PIVOT_1202_CANDIDATES[b2_candidate]:x}"}
+               if b2_candidate is not None else {}),
             "expected_target": f"0x{b2_target:x}",
             "observed_target": (None if b2_gate is None else
                                 f"0x{_gate_target(observed_lo, observed_hi):x}"),
@@ -1362,13 +1381,17 @@ def main() -> None:
                              "with base+0x3130a0 without asserting delivery")
     parser.add_argument("--b2-pivot-ktext-base", type=lambda value: int(value, 0),
                         help="same-run FW 12.02 text base; compare accepted B2 "
-                             "gate with candidate pivot base+0x2ac2de")
+                             "gate with the selected candidate pivot")
+    parser.add_argument("--b2-pivot-candidate", choices=tuple(PIVOT_1202_CANDIDATES),
+                        help="12xx=0x2a82de, 13xx=0x2ac2de; requires "
+                             "--b2-pivot-ktext-base")
     args = parser.parse_args()
     raw = args.log.read_bytes()
     manifest = json.loads(args.manifest.read_text()) if args.manifest else None
     if args.mode == "kstuff-fullchain":
         if (args.f2_entry_ktext_base is not None or
-                args.b2_pivot_ktext_base is not None):
+                args.b2_pivot_ktext_base is not None or
+                args.b2_pivot_candidate is not None):
             parser.error("F2/B2 comparison requires --mode khook")
         result = classify_kstuff_fullchain(
             raw, args.audit.read_bytes() if args.audit else None,
@@ -1384,14 +1407,19 @@ def main() -> None:
                 parser.error("F2 entry text base outside 64-bit address range")
             f2_target = args.f2_entry_ktext_base + GETUID_ENTRY_1202
         b2_target = None
+        b2_candidate = None
+        if args.b2_pivot_candidate is not None and args.b2_pivot_ktext_base is None:
+            parser.error("--b2-pivot-candidate requires --b2-pivot-ktext-base")
+        if args.b2_pivot_ktext_base is not None and args.b2_pivot_candidate is None:
+            parser.error("--b2-pivot-ktext-base requires --b2-pivot-candidate")
         if args.b2_pivot_ktext_base is not None:
-            if not 0 <= args.b2_pivot_ktext_base <= (
-                    0xffffffffffffffff - PIVOT_1202_CANDIDATE):
-                parser.error("B2 pivot text base outside 64-bit address range")
-            b2_target = args.b2_pivot_ktext_base + PIVOT_1202_CANDIDATE
-            if b2_target >> 47 != 0x1ffff:
-                parser.error("B2 pivot target outside canonical kernel range")
-        result = classify(raw, manifest, f2_target, b2_target)
+            b2_candidate = args.b2_pivot_candidate
+            try:
+                b2_target = pivot_candidate_target(args.b2_pivot_ktext_base,
+                                                   b2_candidate)
+            except ValueError as exc:
+                parser.error(str(exc))
+        result = classify(raw, manifest, f2_target, b2_target, b2_candidate)
     print(json.dumps(result, indent=2))
 
 

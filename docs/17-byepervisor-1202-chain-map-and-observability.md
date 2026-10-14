@@ -471,31 +471,27 @@ valid handler return. A same-attempt DR0 readback or instruction trace
 contradicting the asserted target would falsify its link to this F2 frame.
 The flag is unavailable in the legacy `kstuff-fullchain` mode.
 
-[inference] B2's gate readback currently compares with expected words supplied
-by the same producer; that alone cannot identify the intended pivot. With
-`--b2-pivot-ktext-base` from the **same run**, the classifier independently
-encodes the candidate `ktext+0x2ac2de` as a present DPL0 interrupt gate using
-selector `0x20` and IST6, then compares both accepted B2 qwords. It reports
-`equal`, `different`, or `no_accepted_b2` plus the decoded target, selector,
-IST, type, DPL, and present bit. The selector is the live native 12.02 value
-recorded in `16`; the target offset remains a cross-firmware candidate, not
-verified 12.02 instruction bytes (`11` #23). The base is an operator
-assertion, and an address match does not prove the pivot executes or the
-first #DB was delivered. A same-attempt gate readback with different words
-would falsify equality; a 12.02 text image lacking the required pivot bytes
-would falsify the candidate's execution contract. [public-consensus] The
-descriptor encoding follows the public
+[inference] B2's gate readback compares with expected words supplied by the
+same producer; that alone cannot identify the intended pivot. Supply both
+`--b2-pivot-ktext-base` from the **same run** and an explicit
+`--b2-pivot-candidate 12xx|13xx`. [verified-in-tree]
+`tools/khook_trace_classify.py:25,344-353,699-726,1382-1422` encodes
+`12xx` as `ktext+0x2a82de` and `13xx` as `ktext+0x2ac2de`, then compares
+both accepted B2 gate qwords with a present DPL0 interrupt gate using
+selector `0x20` and IST6. The output records the selected family and offset,
+and reports `equal`, `different`, or `no_accepted_b2` plus the decoded target,
+selector, IST, type, DPL, and present bit. An omitted family or base is a
+CLI error; neither candidate is silently selected. The selector is the live
+native 12.02 value recorded in `16`; each target offset remains an
+address-only cross-firmware candidate (`11` #71). The base and selected
+family are operator assertions, not authenticated by the KH2 log. A
+same-attempt gate readback with different words would falsify descriptor
+equality; a 12.02 text image lacking the required bytes would falsify that
+gadget candidate's execution contract. [public-consensus] Descriptor
+encoding follows the public
 [`gate_encode`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L22-L33).
-The option is unavailable in the legacy `kstuff-fullchain` mode.
-
-[verified-in-tree] This B2 option currently encodes only the older
-`+0x2ac2de` candidate (`tools/khook_trace_classify.py:1365`); it must
-not be read as a check of the new `+0x2a82de` 12.xx candidate. A future
-same-run B2 comparison for the latter needs an explicitly selected
-pivot offset and a matching build manifest. [inference] Equal gate words
-would still check installation, not the pivot's 12.02 instruction bytes;
-a 12.02 text image with a different sequence would falsify that gadget
-candidate.
+The flags are unavailable in the legacy `kstuff-fullchain` mode. [inference]
+Equal gate words check installation, not pivot execution or #DB delivery.
 
 **Native format scaffold, built and host-tested offline:** the separate local
 payload workspace now contains `kh2_trace_format.c/.h` and
@@ -1410,12 +1406,15 @@ Compiling this audit ELF validates none of those contracts.
    ```
 
    [inference] Adding `--b2-pivot-ktext-base` with a same-run 12.02 text
-   base also brings the conditional descriptor comparison into this plan/log
-   join. A different accepted B2 gate makes `comparison_status=mismatch` and
-   exits nonzero; absent B2 remains a coverage gap. The supplied base and
-   candidate pivot bytes are not authenticated by that comparison. A
-   same-attempt gate readback with the encoded candidate words would falsify
-   a reported descriptor mismatch, but would not validate the gadget bytes.
+   base **and** `--b2-pivot-candidate 12xx|13xx` brings the selected
+   descriptor comparison into this plan/log join. [verified-in-tree]
+   `tools/kh2_layout_check.py:537-569` requires both flags and passes
+   the family through to the log comparison. A different accepted B2 gate
+   makes `comparison_status=mismatch` and exits nonzero; absent B2 remains
+   a coverage gap. The supplied base, family, and pivot bytes are not
+   authenticated by that comparison. A same-attempt gate readback with
+   the encoded candidate words would falsify a reported descriptor
+   mismatch, but would not validate the gadget bytes.
 
    It joins only classifier-accepted B0, three B1 parts, B2, and A2 to the
    candidate. It compares selected CPU and frame slots; B1 span bases/sizes,

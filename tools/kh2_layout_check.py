@@ -13,7 +13,8 @@ import json
 import re
 from pathlib import Path
 
-from khook_trace_classify import PIVOT_1202_CANDIDATE, RECORD, classify
+from khook_trace_classify import (PIVOT_1202_CANDIDATES, RECORD, classify,
+                                  pivot_candidate_target)
 
 LIMIT = 1 << 64
 
@@ -334,7 +335,8 @@ def expected_brackets(plan, classification):
     return reads, writes, unknown
 
 
-def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
+def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None,
+                b2_candidate=None):
     """Compare only classifier-accepted, unambiguous KH2 report fields."""
     geometry = check(plan) if geometry is None else geometry
     if not geometry["geometry_valid"]:
@@ -345,7 +347,8 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
     part_sha = {part: sha256_text(plan["b1"][part].get("image_sha"),
                                  f"b1.{part}.image_sha")
                 for part in ("image", "big", "journal")}
-    classification = classify(raw, manifest, b2_target=b2_target)
+    classification = classify(raw, manifest, b2_target=b2_target,
+                              b2_candidate=b2_candidate)
     records = {}
     for line in raw.decode("utf-8", errors="replace").splitlines():
         match = RECORD.match(line)
@@ -538,24 +541,31 @@ def main():
     parser.add_argument("--manifest", type=Path, help="optional same-run ps5log/1 manifest")
     parser.add_argument("--b2-pivot-ktext-base", type=lambda value: int(value, 0),
                         help="same-run FW 12.02 text base for conditional B2 gate comparison")
+    parser.add_argument("--b2-pivot-candidate", choices=tuple(PIVOT_1202_CANDIDATES),
+                        help="12xx=0x2a82de, 13xx=0x2ac2de; requires "
+                             "--b2-pivot-ktext-base")
     args = parser.parse_args()
     if args.manifest and not args.log:
         parser.error("--manifest requires --log")
     if args.b2_pivot_ktext_base is not None and not args.log:
         parser.error("--b2-pivot-ktext-base requires --log")
+    if args.b2_pivot_candidate is not None and args.b2_pivot_ktext_base is None:
+        parser.error("--b2-pivot-candidate requires --b2-pivot-ktext-base")
+    if args.b2_pivot_ktext_base is not None and args.b2_pivot_candidate is None:
+        parser.error("--b2-pivot-ktext-base requires --b2-pivot-candidate")
     try:
         plan = json.loads(args.plan.read_text())
         result = check(plan)
         if args.log and result["geometry_valid"]:
             manifest = json.loads(args.manifest.read_text()) if args.manifest else None
             target = None
+            candidate = None
             if args.b2_pivot_ktext_base is not None:
                 base = number(args.b2_pivot_ktext_base)
-                if base > LIMIT - 1 - PIVOT_1202_CANDIDATE:
-                    raise ValueError("B2 pivot text base overflows uint64")
-                target = base + PIVOT_1202_CANDIDATE
+                candidate = args.b2_pivot_candidate
+                target = pivot_candidate_target(base, candidate)
             result["log_comparison"] = compare_log(
-                plan, args.log.read_bytes(), manifest, result, target)
+                plan, args.log.read_bytes(), manifest, result, target, candidate)
     except (IndexError, KeyError, TypeError, ValueError) as exc:
         parser.error(f"invalid plan: {exc}")
     print(json.dumps(result, indent=2))
