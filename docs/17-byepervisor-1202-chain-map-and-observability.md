@@ -368,6 +368,14 @@ an inference that its callback stayed in flight. No console timing or
 retention test has validated the added handoff sends.
 A larger 12.02 span would emit more lines.
 No console timing or PS5 read callback was exercised in this offline check.
+[verified-in-tree] The classifier now requires each `KH2R`/`KH2W done` or
+matching returned-error `KH2E` to have a PC sequence number greater than
+its `begin` (`tools/khook_trace_classify.py:395-413,441-461,498-522`;
+`tests/test_khook_trace_classify.py:255-327`). An inverted completion is
+rejected and leaves the attempt open for raw review. [inference] This
+prevents a malformed completion from falsely clearing the last attempted
+callback; an open bracket still cannot distinguish a callback hang from a
+lost completion record or following send failure.
 [inference] A callback may have changed part of a span before returning an
 error; a same-attempt read of the entire original span would falsify a
 partial-change claim for that event. The logger's send result is not a

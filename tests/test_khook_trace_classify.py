@@ -264,9 +264,19 @@ class ClassifierTests(unittest.TestCase):
         completed = classify((begin + done).encode())
         self.assertEqual(completed["open_read_attempts"], [])
         self.assertEqual(completed["last_read_attempt"]["result"], "done")
+        inverted_done = classify((begin + done.replace("2\t2000", "1\t2000")).encode())
+        self.assertEqual(inverted_done["open_read_attempts"][0]["addr"], "0x500")
+        self.assertIn("KH2R done sequence does not follow begin",
+                      [item["reason"] for item in inverted_done["rejected"]])
         failed = classify((begin + "2\t2000\tERR\tKH2E stage=B0 cpu=3 "
                            "operation=read region=gate addr=0x500\n").encode())
         self.assertEqual(failed["read_attempts"][0]["result"], "error")
+        inverted_error = classify((begin + "1\t2000\tERR\tKH2E stage=B0 cpu=3 "
+                                   "operation=read region=gate addr=0x500\n").encode())
+        self.assertEqual(inverted_error["open_read_attempts"][0]["addr"], "0x500")
+        self.assertEqual(inverted_error["capture_errors"], [])
+        self.assertIn("KH2E sequence does not follow open bracket",
+                      [item["reason"] for item in inverted_error["rejected"]])
         orphan = classify(done.encode())
         self.assertIn("KH2R done without begin",
                       [item["reason"] for item in orphan["rejected"]])
@@ -300,11 +310,21 @@ class ClassifierTests(unittest.TestCase):
         completed = classify((prefix + begin + done).encode())
         self.assertEqual(completed["open_write_attempts"], [])
         self.assertEqual(completed["last_write_attempt"]["result"], "done")
+        inverted_done = classify((prefix + begin +
+                                  done.replace("3\t3000", "2\t3000")).encode())
+        self.assertEqual(inverted_done["open_write_attempts"][0]["addr"], "0x100")
+        self.assertIn("KH2W done sequence does not follow begin",
+                      [item["reason"] for item in inverted_done["rejected"]])
         failed = classify((prefix + begin +
                            "3\t3000\tERR\tKH2E stage=B1 cpu=3 "
                            "operation=write region=image addr=0x100\n").encode())
         self.assertEqual(failed["write_attempts"][0]["result"], "error")
         self.assertEqual(failed["open_write_attempts"], [])
+        inverted_error = classify((prefix + begin +
+                                   "2\t3000\tERR\tKH2E stage=B1 cpu=3 "
+                                   "operation=write region=image addr=0x100\n").encode())
+        self.assertEqual(inverted_error["open_write_attempts"][0]["addr"], "0x100")
+        self.assertEqual(inverted_error["capture_errors"], [])
         orphan = classify((prefix + done).encode())
         self.assertIn("KH2W done without begin",
                       [item["reason"] for item in orphan["rejected"]])

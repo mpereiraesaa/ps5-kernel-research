@@ -404,6 +404,9 @@ def classify(raw: bytes, manifest: dict | None = None,
                 elif key not in pending_reads:
                     rejected.append({"seq": int(seq),
                                      "reason": "KH2R done without begin"})
+                elif int(seq) <= pending_reads[key]["seq"]:
+                    rejected.append({"seq": int(seq),
+                                     "reason": "KH2R done sequence does not follow begin"})
                 else:
                     attempt = pending_reads.pop(key)
                     attempt.update(result="done", end_seq=int(seq))
@@ -449,6 +452,9 @@ def classify(raw: bytes, manifest: dict | None = None,
                 elif key not in pending_writes:
                     rejected.append({"seq": int(seq),
                                      "reason": "KH2W done without begin"})
+                elif int(seq) <= pending_writes[key]["seq"]:
+                    rejected.append({"seq": int(seq),
+                                     "reason": "KH2W done sequence does not follow begin"})
                 else:
                     attempt = pending_writes.pop(key)
                     attempt.update(result="done", end_seq=int(seq))
@@ -492,18 +498,25 @@ def classify(raw: bytes, manifest: dict | None = None,
                          "region": region, "addr": address}
                 if operation in ("prepare", "finish"):
                     error["code"] = int(fields["code"])
-                capture_errors.append(error)
-                if operation == "write":
-                    matching = [key for key in pending_writes
+                matching = []
+                if operation in ("read", "write"):
+                    pending = (pending_reads if operation == "read"
+                               else pending_writes)
+                    matching = [key for key in pending
                                 if key[:3] == (stage, cpu, region) and
                                 key[3] == int(address, 16)]
+                    if (len(matching) == 1 and
+                            int(seq) <= pending[matching[0]]["seq"]):
+                        rejected.append({
+                            "seq": int(seq),
+                            "reason": "KH2E sequence does not follow open bracket"})
+                        continue
+                capture_errors.append(error)
+                if operation == "write":
                     if len(matching) == 1:
                         attempt = pending_writes.pop(matching[0])
                         attempt.update(result="error", end_seq=int(seq))
                 elif operation == "read":
-                    matching = [key for key in pending_reads
-                                if key[:3] == (stage, cpu, region) and
-                                key[3] == int(address, 16)]
                     if len(matching) == 1:
                         attempt = pending_reads.pop(matching[0])
                         attempt.update(result="error", end_seq=int(seq))
