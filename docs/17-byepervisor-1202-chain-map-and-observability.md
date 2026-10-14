@@ -1918,6 +1918,25 @@ the copy marker supports reaching the continuation; return through
 the staged frame supports that candidate's pivot and return path.
 `TRIGGER_BEGIN` or an unchanged first sample alone proves neither.
 
+[inference] These observations have different boundaries. A changed
+five-word hardware frame supports exception delivery into the staged IST4
+slot, which happens before the candidate pivot executes. The copy marker
+requires the pivot to reach `pop_all_iret` and the later `rep movsb` copy;
+it is not a direct pivot check. `[K2]` is later still: the payload prints
+it only after user-mode return, observer teardown, restoration, and
+post-return reads (`pivot_compare_prearmed.c:636-665,793-830`). Missing
+either marker cannot by itself reject a candidate pivot. A same-attempt
+trace of the first landing at `F`, or a marker emitted immediately by that
+landing, would isolate pivot progress; a trace showing a different stack
+effect at the candidate address would falsify the proposed frame layout.
+[public-consensus] The 11.60 first arm uses its own debug-register
+continuation and TF/NOP trigger
+([`khook.c:390-478`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L390-L478));
+the 12.70 target uses a prestaged arm and places its store marker at the
+start of the second chain
+([`khook.c:373-491,545-555`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L373-L555)).
+Neither implementation waits for this diagnostic copy marker or `[K2]`.
+
 These live builds can panic or power off the console: an unrelated `#DB`
 can hit the shared changed gate, either projected address may execute
 different 12.02 instructions, or the continuation may be wrong. After a
