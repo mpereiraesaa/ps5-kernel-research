@@ -4,10 +4,15 @@ The faithful 11.60 two-transaction #DB chain, its 12.02 evidence gaps, and
 failure-observation requirements are inventoried in `17`. The FACS #GP route
 below is a separate trigger design with a different exception frame.
 
-**Status: ACTIVE (implementation phase)** — the route's public reference
-implementation is in hand; this doc maps it onto our 12.02 console and
-holdings. Supersedes the r0gdb-stepping dependency for the launch chain
-(the freeze saga is retired from the critical path).
+**Status (2026-10-14): port map, blocked at 12.02 exception delivery and
+continuation.** The public reference implementation is in hand, but no
+12.02 #DB return, complete chain, or #GP adaptation has been validated.
+The latest `firstcont-2a82de` result and unresolved post-reboot audit are
+in `17` §“`firstcont-2a82de` live result”. [inference] Porting the public
+chain still requires byte-verified 12.02 gadget entries and a same-attempt
+delivery/continuation witness; a completed first arm with a checked return
+would falsify this current boundary. This document preserves the earlier
+mapping and historical diagnostic record, not an approved live run plan.
 
 Reference material (public, cloned read-only in the lab third-party area —
 reference only, never run as-is on our console):

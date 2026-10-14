@@ -1,19 +1,24 @@
 # PS5 kernel research — FW 12.02
 
-## CURRENT FOCUS: the resume-window HV bug (HCALL 0x0f) — sole active route
+## Current state — FW 12.02 Byepervisor port
 
-**As of 2026-10-13, this lab is working on exactly one thing**: the
-HCALL 0x0f (`khv_startup_mp`) resume-window AP launch — a boundary
-crossing from compromised-kernel context to a root-0 (host-view) AP
-that disables nested paging on all 16 VMCBs. The route is now
-**public-working on 13.xx** (Byepervisor-Reborn, 2026-10) and we are
-porting it to 12.02 — see
-[`docs/16-byepervisor-12-02-port.md`](docs/16-byepervisor-12-02-port.md)
-(the port plan: the field/gadget mapping, our FACS #GP trigger, the
-phases). All other routes (QA-flags text read, GPUVM DMA, CR4 gadget
-hunting, TMR, the r0gdb-stepping launch chain) are **superseded** or
-**deprioritized** — see the NOOP catalog in
-[`docs/10-hcall-resume-window-and-noops.md`](docs/10-hcall-resume-window-and-noops.md).
+**As of 2026-10-14, no FW 12.02 #DB continuation or complete Byepervisor
+chain has returned.** The public 11.60 and 12.70 implementations supply a
+porting model, but the 12.02 pivot and required gadget bytes remain
+unverified. The latest `firstcont-2a82de` run confirmed gate/IST4 staging
+and one unchanged first observer sample; it recorded no continuation marker
+or restoration. After a reported hard power cycle, the recovery audit
+timed out, so the native gate/IST4 baseline is unverified even though the
+owner reports the console is fine. [verified-on-console] See `17`
+§“`firstcont-2a82de` live result” for the build hash, PC capture, and
+recovery record. [inference] The missing marker cannot rank a failed
+pivot against a failed continuation or a trigger that the observer missed;
+a same-attempt instruction or changed-frame witness would separate them.
+
+The resume-window HCALL 0x0f remains the research objective (`10`, `16`).
+The proposed FACS-induced #GP trigger is a separate design whose 12.02
+exception frame and return remain unvalidated (`11` #20, `16`). Earlier
+QA-flags, GPUVM, TMR, and r0gdb stepping plans are historical context.
 
 ## The route in one paragraph
 
@@ -32,13 +37,13 @@ and the FSGSBASE enable in one shot.
 | Document | Status | Contents |
 |---|---|---|
 | [`10-hcall-resume-window-and-noops.md`](docs/10-hcall-resume-window-and-noops.md) | **★ ACTIVE** | The resume-window route + the NOOP catalog |
-| [`16-byepervisor-12-02-port.md`](docs/16-byepervisor-12-02-port.md) | **★ ACTIVE (implementation)** | The Byepervisor-Reborn port plan for 12.02: field/gadget mapping, our FACS #GP trigger, the phases |
-| [`17-byepervisor-1202-chain-map-and-observability.md`](docs/17-byepervisor-1202-chain-map-and-observability.md) | Active (offline map) | Faithful 11.60 #DB-chain requirements mapped to 12.02 evidence, unresolved gadgets, and failure-observation gates |
+| [`16-byepervisor-12-02-port.md`](docs/16-byepervisor-12-02-port.md) | Port map; blocked on 12.02 delivery | Field/gadget mapping, proposed FACS #GP trigger, and historical diagnostic outcomes |
+| [`17-byepervisor-1202-chain-map-and-observability.md`](docs/17-byepervisor-1202-chain-map-and-observability.md) | Current evidence boundary | 11.60/12.70 #DB-chain requirements, 12.02 diagnostic results, unresolved gadgets, and recovery records |
 | [`11-debunked-theories-and-corrections.md`](docs/11-debunked-theories-and-corrections.md) | Active (register) | Every theory we got wrong, and why — so we don't repeat mistakes |
 | [`12-acpi-static-anchor-corrections.md`](docs/12-acpi-static-anchor-corrections.md) | Active (register) | Resume-route anchors we mis-derived (FACS address, `+0x18e` breakpoint, string-pointer scan; superseded mechanism in `15`) |
-| [`13-ring0-freeze-instrumentation.md`](docs/13-ring0-freeze-instrumentation.md) | Active (instrumentation) | The freeze capture set (F5 + klog), the 3 remaining hypotheses, and the falsifiable test |
-| [`14-ring0-execution-alternatives.md`](docs/14-ring0-execution-alternatives.md) | Active (research) | Safer ring-0 substrates vs r0gdb, mapped onto the freeze classes |
-| [`15-facs-global-resume-trigger.md`](docs/15-facs-global-resume-trigger.md) | Active (research) | The real resume trigger (`AcpiGbl_FACS` self-corruption → #GP) and the dump-verified 12.02 `AcpiGbl_FACS` anchor (`kdata+0x2cb4c80`) |
+| [`13-ring0-freeze-instrumentation.md`](docs/13-ring0-freeze-instrumentation.md) | Historical, unrun instrumentation | The freeze capture set (F5 + klog), three hypotheses, and their falsifiers |
+| [`14-ring0-execution-alternatives.md`](docs/14-ring0-execution-alternatives.md) | Historical alternatives | Ring-0 substrates vs r0gdb, mapped onto the freeze classes |
+| [`15-facs-global-resume-trigger.md`](docs/15-facs-global-resume-trigger.md) | Proposed, untested on 12.02 | Public FACS self-corruption → #GP route and the dump-derived 12.02 `AcpiGbl_FACS` anchor (`kdata+0x2cb4c80`) |
 | [`09-live-kernel-state-and-fsgsbase.md`](docs/09-live-kernel-state-and-fsgsbase.md) | Active (reference) | Live kernel state (EFER/CR0/CR4), FSGSBASE analysis, HV lineage |
 | [`07-evidence.md`](docs/07-evidence.md) | Active (log) | Chronological evidence log (PRs #37-#49) |
 | [`08-phaseb-inventory.md`](docs/08-phaseb-inventory.md) | **SUPERSEDED** | Phase B text-read inventory (QA flags, GPUVM — no longer the route) |
@@ -61,7 +66,7 @@ the external build deps: freebsd-headers, yasm, the payload SDK).
 Builds produce `payload-elfldr-sdk.elf`; the sha is recorded per
 build and the `tools/` ladder re-validates each new build. See
 [`r0gdb/README.md`](r0gdb/README.md) for lineage, the build flow, and
-the pending signal-handling deadlock fix.
+the unresolved session freeze.
 
 ## Tools (regression gates)
 
@@ -75,9 +80,9 @@ hanging the console on a bad assumption.
 | Tool | Status | Purpose |
 |---|---|---|
 | [`tools/stub_verify.py`](tools/stub_verify.py) | **Validated green on-console (2026-10-12)** | Level 1: userland-only full protocol check (the regression gate) |
-| [`tools/stub_verify2.py`](tools/stub_verify2.py) | Hardened; first live ring-0 run pending | Level 2: gated ring-0 EFER read + validated IDT/TSS restore (kernel-text `store_rax_rdi` only, pinned 12.02 deltas) |
-| [`tools/stub_verify3.py`](tools/stub_verify3.py) | Ported; first live run pending | Level 3: level-2 pattern + CR0 read + sanity check |
-| [`tools/r0gdb_session.py`](tools/r0gdb_session.py) | v5.1, ported; pending live validation | The production ring-0 session client (computed-port discovery, staged return frame, SMEP-safe restore) |
+| [`tools/stub_verify2.py`](tools/stub_verify2.py) | Historical; session freeze unresolved | Level 2: gated ring-0 EFER read + IDT/TSS restore attempt |
+| [`tools/stub_verify3.py`](tools/stub_verify3.py) | Historical; no validated live completion | Level 3: level-2 pattern + CR0 read + sanity check |
+| [`tools/r0gdb_session.py`](tools/r0gdb_session.py) | Historical client; no stable session | Ring-0 session client (computed-port discovery, staged return frame, SMEP-safe restore) |
 | [`tools/khook_marker_layout.py`](tools/khook_marker_layout.py) | Offline source check | Computes four proposed journal-marker intervals and relocated save slots from the pinned public 11.60 `khook` source; no 12.02 instruction validation |
 | [`tools/khook_trace_classify.py`](tools/khook_trace_classify.py) | Offline trace check | Classifies proposed KH2 frame, journal, readback, and transport evidence; an off-tree native formatter is host-tested but no 12.02 chain emits KH2 yet (`17`) |
 | [`tools/sysent_trampoline_map.py`](tools/sysent_trampoline_map.py) | Offline dump check | Resolves the 13.60 getuid `sy_call` jump, reports the 12.02 table entry, and leaves its jump target unresolved without matching text (`11` #30) |
@@ -89,12 +94,13 @@ supplied. The ring-0 restore path uses ONLY the kernel-text
 `store_rax_rdi` gadget — the old userland write-slot stepped rip at
 payload memory at CPL0, the live-confirmed SMEP #PF panic mode.
 
-Live status (2026-10-12 evening): the 12.02 pin and the staged-frame
-ring-0 entry validated green on-console; the run then froze in the
-stub's signal-handler spin deadlock during a `G` write (root-caused;
-stub fix pending) and the console died when a `timeout` wrapper killed
-the parked session — never wrap gated ring-0 scripts in a timeout.
-See docs/10 for the full post-mortem.
+Historical 2026-10-12 result: the 12.02 pin and staged-frame ring-0
+entry produced a synthetic stop, then the session froze during a `G`
+write. The signal-handler deadlock was a proposed explanation, not an
+established cause; `11` #2 records a later falsification of one GS/TLS
+variant, and `13` retains the unresolved freeze hypotheses. The console
+died when a `timeout` wrapper killed the parked session. [verified-on-console]
+See `10` and `11` for the evidence and correction.
 
 Required environment: `PS5_HOST` (console address — never hardcoded in
 this repo), `R0GDB_ELF` (path to the exact `payload-elfldr-sdk.elf`

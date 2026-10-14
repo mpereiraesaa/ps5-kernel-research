@@ -1,11 +1,11 @@
 # 13 — Ring-0 freeze: instrumentation set (drafted offline, 2026-10-13)
 
-Status: **instrumentation drafted, built, and offline-validated; no console
-run.** The ring-0 session freeze (see `10` §"GS-base freeze theory:
-FALSIFIED") still has an unexplained root cause. This document is the
-complete instrumentation set needed to (a) capture the freeze as evidence
-and (b) discriminate between the remaining mechanism classes, plus the
-falsifiable test for each.
+Status: **historical, offline-validated instrumentation; no F5/klog
+console run.** The ring-0 session freeze (see `10` §"GS-base freeze theory:
+FALSIFIED") still has an unexplained root cause. This records the capture
+set and falsifiers if interactive r0gdb work resumes. The 12.02
+Byepervisor #DB diagnostics in `17` use a different probe and do not
+classify this earlier r0gdb freeze.
 
 Read `11` (debunked theories) first: the GS→TLS theory (#2) is dead, the
 `acpi_sleep_machdep+0x18e` breakpoint (#14) is unverified, and the resume
