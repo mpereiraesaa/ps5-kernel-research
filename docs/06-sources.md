@@ -64,9 +64,11 @@ scene research artifacts and documentation.
 - ShadowMountPlus — https://github.com/drakmor/shadowMountPlus
   (auto-mounter; requires kstuff-lite ≥ 1.07; nmount unionfs
   fakelib/backports).
-- ps5debug-NG (local) — wire-compatible ps5debug successor; kernel R/W,
-  process manipulation, scans, guarded page-table aliasing; see the
-  local checkout `engineering/ps5debug-NG/`.
+- [ps5debug-NG](https://github.com/Pharaoh2k/ps5debug-NG/tree/d32d2d001dbbfd4cd2c0b7d6335b9a49d8a1cb86)
+  (local checkout `engineering/ps5debug-NG/`) — wire-compatible ps5debug
+  successor; kernel R/W, process manipulation, scans, guarded page-table
+  aliasing. The pinned public source also includes its FW 12.02 kernel
+  debug-register path (`debugger/source/kern_dbreg.c`).
 
 ## Where decrypted kernel knowledge lives
 

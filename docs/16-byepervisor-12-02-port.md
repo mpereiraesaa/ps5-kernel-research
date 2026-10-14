@@ -105,7 +105,17 @@ match is missing.
 Their constants worth recording: `KH_DR7_BP0_EXEC = 0x403`,
 `KH_USER_CS 0x43 / SS 0x3b`, `KH_RFLAGS_USER 0x202`,
 `KH_RC_DR7 = 0xa0` (the resumectx struct's DR7 slot — our 12.02
-`cpu_switch` struct layout needs the same derivation from our dump).
+`cpu_switch` consumer contract remains byte-unverified). [public-consensus]
+The pinned public ps5debug-NG
+[`kern_dbreg.c:27`](https://github.com/Pharaoh2k/ps5debug-NG/blob/d32d2d001dbbfd4cd2c0b7d6335b9a49d8a1cb86/debugger/source/kern_dbreg.c#L27)
+and [`kern_dbreg.c:104-124`](https://github.com/Pharaoh2k/ps5debug-NG/blob/d32d2d001dbbfd4cd2c0b7d6335b9a49d8a1cb86/debugger/source/kern_dbreg.c#L104-L124)
+select FW 12.02 for its kernel debug-register path and read thread PCB
+DR0 and DR7 storage at `+0x78` and `+0xa0` after loading `td_pcb` from
+thread `+0x3f8`;
+[`debug.c:945-946`](https://github.com/Pharaoh2k/ps5debug-NG/blob/d32d2d001dbbfd4cd2c0b7d6335b9a49d8a1cb86/debugger/source/debug.c#L945-L946)
+calls that reader. This corroborates
+the PCB **storage** offsets used by public tooling, not the 12.02
+`DBREG_RESUME` instruction bytes, entry registers, or live DR0/DR7 state.
 
 ## Our 12.02 trigger: the FACS self-corruption → #GP
 

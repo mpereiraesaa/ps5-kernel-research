@@ -60,7 +60,7 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 | Scratch | [verified-on-console] The earlier two-page setup at `kdata+0x2099000` was superseded by PR #97's setup-only run: `16` §“Full Kstuff-style continuation probe” records staging/readback/restoration of **16 × `0x500` = `0x5000` bytes** there. [public-consensus] `5299395/include/khook.h:30-37` reserves `0x4000` bytes and begins its big chain at `+0x3a00`. | The tested byte span is large enough for the **reference image by size alone**. The existing all-CPU slots already occupy the entire `0x5000` span, so overlaying that image would collide. A disjoint or redesigned joint layout and independent ownership evidence are still required. |
 | Test hook target | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:29` identifies `sysents`; [public-consensus] the 11.60 test uses `getuid + 0xe` (`5299395/main.c:63`). [verified-on-dump] The 12.02 table's `sysent[24].sy_call` is `ktext+0x3130a0`; the 13.60 donor's `sy_call` is a jump entry, distinct from its getuid body (`16` §“getuid table entry versus hook body”). | Only the 12.02 **table entry** is located. Its instruction bytes, body target, `+0xe` hook boundary, and safe resume address remain unknown. Do not transfer donor body offsets or use `sy_call+0xe` as the hook. |
 | Resume-window hook target and AP init vector | [public-consensus] 11.60 identifies both in its `include/offsets/11_60.h`; the public 13.60 vector is `ktext+0x269fb8` (`13_60.h:12`). | No verified 12.02 addresses. The 13.60 vector names a jump entry to a distinct body, and two donor entries pass the broad aligned-jump-to-`CLI` filter (below). Neither the debunked `acpi_sleep_machdep+0x18e`, a global text delta, nor proximity to `DBREG_RESUME` supplies the 12.02 entry (`11` #14, #18, #68). |
-| `resumectx` layout | [public-consensus] `5299395/include/khook.h:12-15` uses RBP `+0x20`, RSP `+0x28`, RIP `+0x38`, DR7 `+0xa0`. | Candidate FreeBSD lineage only (`16`, PCB table). Validate the 12.02 consumer before a DR7 arm. |
+| `resumectx` layout | [public-consensus] `5299395/include/khook.h:12-15` uses RBP `+0x20`, RSP `+0x28`, RIP `+0x38`, DR7 `+0xa0`. The pinned ps5debug-NG FW 12.02 path reads PCB DR0/DR7 storage at `+0x78`/`+0xa0` (`16` §“Gadget mapping”; `kern_dbreg.c:27,104-124`). | Public tooling corroborates those **PCB storage** offsets, not the `resumectx` consumer, the first DR0 load skipped by `DBREG_RESUME`, or hardware DR state. Validate the 12.02 consumer before a DR7 arm. |
 | Hypervisor AP/VMCB location | [public-consensus] 11.60 discovers a live 16-entry set and validates it before writes. | No 12.02 runtime location or validated population; outside the first khook proof. |
 
 [verified-on-dump] The 13.60 donor `DATA_CAVE` translates to data
@@ -243,6 +243,18 @@ the sender or transport stopped. Do not put socket I/O in the kernel chain.
 | Q2 second sampling quiesced | Worker finishes in-flight reads/logging and reports idle after main signals a syscall return. | Bounds the ownership transfer before restoration; it is not an independent kernel-return proof. |
 | D2 kernel resumed | User-mode record after the selected test syscall returns, then gate/IST restoration readback and BYE. | Full test-hook transaction completed; it does not prove the later sleep/AP phase. |
 | H1 AP phase | Separate `entered`, selected-VMCB count, write count, verify count, and `done` evidence, following the 11.60 read-before-write validation pattern. | Only a full expected set and readback can support a 12.02 AP claim. |
+
+[public-consensus] ps5debug-NG's selected 12.02 debug-register reader copies
+DR0/DR7 fields from a thread's PCB (pinned
+[`kern_dbreg.c:104-124`](https://github.com/Pharaoh2k/ps5debug-NG/blob/d32d2d001dbbfd4cd2c0b7d6335b9a49d8a1cb86/debugger/source/kern_dbreg.c#L104-L124)
+and [`debug.c:945-946`](https://github.com/Pharaoh2k/ps5debug-NG/blob/d32d2d001dbbfd4cd2c0b7d6335b9a49d8a1cb86/debugger/source/debug.c#L945-L946)).
+[inference] Such a same-attempt
+PCB snapshot could corroborate the stored context only. It cannot by itself
+advance A1R or establish hardware DR0/DR7 after the arm chain, because the
+public reader does not execute a hardware debug-register read and this map
+has not verified when the live CPU state is saved back to that PCB. A
+same-attempt hardware register read disagreeing with the PCB would falsify
+using its storage value as a live-register proxy.
 
 **Proposed KH2 host log contract, not yet emitted by a 12.02 chain.** A
 user-mode observer sends `ps5log/1` `MARK` lines beginning `KH2 stage=…
