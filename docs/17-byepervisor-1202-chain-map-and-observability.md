@@ -1372,7 +1372,10 @@ SHA-256 is
 Three subsequent pings replied and elfldr's TCP port accepted connections.
 No gate, IST4, or scratch values were obtained from this audit, so the
 post-v9 kernel state and #DB delivery remain **unverified**. No further
-ELF was loaded into that boot. Owner UI/recovery observation is pending.
+ELF was loaded into that boot. The owner reported that the UI remained
+responsive and elfldr appeared normal; this establishes neither restored
+kernel state nor a #DB verdict. A hard power cycle and post-boot audit
+were requested under the approved recovery plan; their result is pending.
 
 **Independent-reader check.** [verified-on-console] After the reboot
 audit, elfldr answered on 9021 but the ps5debug-NG command port 744
