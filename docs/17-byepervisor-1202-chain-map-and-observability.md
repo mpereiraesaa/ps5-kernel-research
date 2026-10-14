@@ -1899,6 +1899,13 @@ with a five-word canary at `F−0x28`, a return pointer at `F`, and the
 first register frame at `F+8`. Compilation and geometry do not validate the
 12.02 instruction bytes or a console return.
 
+[verified-in-tree] `tools/khook_trace_classify.py` accepts the two
+candidate build tags with v9's attempt, patch, pretrigger, and sample-ready
+ordering. It rejects a `[K1]` pivot offset that conflicts with its build
+tag. `tests/test_khook_trace_classify.py` covers both tags, unchanged first
+samples, and conflicting offsets. The classifier still treats a missing
+changed frame or marker as an unobserved boundary, not failed delivery.
+
 [inference] Run `+0x2a82de` first because the 11.60 and 12.70 local-anchor
 relation agrees on that projection; then consider `+0x2ac2de` only after
 the first run's recovery and a clean native gate/IST4/scratch baseline.

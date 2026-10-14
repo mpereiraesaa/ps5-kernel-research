@@ -1082,6 +1082,25 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(sampled9["boundary"],
                          "observer_first_targeted_read_completed_no_change_at_sample")
         self.assertFalse(sampled9["signals"]["fc1"]["issues"])
+        for build, offset in ((b"pivot-2a82de", b"2a82de"),
+                              (b"pivot-2ac2de", b"2ac2de")):
+            pivot_stdout = stdout9.replace(b"prearmed-v9", build).replace(
+                b"frames=16 attempt=", b"frames=16 pivot=+0x" + offset +
+                b" attempt=")
+            pivot_pc = pc9.replace(b"prearmed-v9", build).replace(
+                b"chain=popall-copy-popall-doreti",
+                b"chain=pivot-popall-copy-popall-doreti")
+            result = classify_kstuff_fullchain(
+                pivot_stdout, pc=pivot_pc + sample_ready + begin9 + done9)
+            self.assertEqual(result["signals"]["build"], build.decode())
+            self.assertEqual(result["boundary"],
+                             "observer_first_targeted_read_completed_no_change_at_sample")
+            self.assertFalse(result["signals"]["fc1"]["issues"])
+            bad_stdout = pivot_stdout.replace(
+                b"pivot=+0x" + offset, b"pivot=+0x2b3626")
+            self.assertEqual(classify_kstuff_fullchain(
+                bad_stdout, pc=pivot_pc + sample_ready)["boundary"],
+                "conflicting_attempt_records")
         mismatch = classify_kstuff_fullchain(
             stdout9, pc=pc9 + sample_ready.replace(
                 b"MARK", b"ERR").replace(b"frame_matched=5", b"frame_matched=4"))

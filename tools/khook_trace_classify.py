@@ -23,7 +23,13 @@ HANDOFF_STAGES = ("R0", "R1", "Q1", "R2", "Q2")
 FRAME_BYTES = 0x28
 GETUID_ENTRY_1202 = 0x3130A0
 PIVOT_1202_CANDIDATES = {"12xx": 0x2A82DE, "13xx": 0x2AC2DE}
-ATTEMPT_BUILDS = ("prearmed-v6", "prearmed-v7", "prearmed-v8", "prearmed-v9")
+PIVOT_COMPARE_BUILDS = ("pivot-2a82de", "pivot-2ac2de")
+PIVOT_COMPARE_OFFSETS = {"pivot-2a82de": "2a82de",
+                         "pivot-2ac2de": "2ac2de"}
+V9_LIKE_BUILDS = ("prearmed-v9", *PIVOT_COMPARE_BUILDS)
+SAMPLE_BRACKET_BUILDS = ("prearmed-v8", *V9_LIKE_BUILDS)
+RECENT_READ_BUILDS = ("prearmed-v7", *SAMPLE_BRACKET_BUILDS)
+ATTEMPT_BUILDS = ("prearmed-v6", *RECENT_READ_BUILDS)
 PATCH_BUILDS = ("prearmed-v5", *ATTEMPT_BUILDS)
 BASELINE_BUILDS = ("prearmed-v4", *PATCH_BUILDS)
 SAMPLED_BUILDS = ("prearmed-v2", "prearmed-v3", *BASELINE_BUILDS)
@@ -999,7 +1005,7 @@ def _fc1_records(pc_text: str) -> dict:
     sample_ready = None
     sample_ready_mismatch = False
     sample_ready_reports = [r for r in records if r["phase"] == "SAMPLE_READY"]
-    if version == "prearmed-v9":
+    if version in V9_LIKE_BUILDS:
         if len(sample_ready_reports) > 1:
             issues.append("duplicate SAMPLE_READY")
         elif len(sample_ready_reports) == 1:
@@ -1024,7 +1030,7 @@ def _fc1_records(pc_text: str) -> dict:
             else:
                 issues.append("malformed or out-of-phase SAMPLE_READY")
     elif sample_ready_reports:
-        issues.append("SAMPLE_READY without prearmed-v9 READY")
+        issues.append("SAMPLE_READY without v9-like READY")
     sample_begin = None
     sample_done = None
     sample_frame_changed = False
@@ -1033,7 +1039,7 @@ def _fc1_records(pc_text: str) -> dict:
     sample_marker = None
     sample_begins = [r for r in records if r["phase"] == "SAMPLE_BEGIN"]
     sample_dones = [r for r in records if r["phase"] == "SAMPLE_DONE"]
-    if version in ("prearmed-v8", "prearmed-v9"):
+    if version in SAMPLE_BRACKET_BUILDS:
         if len(sample_begins) > 1:
             issues.append("duplicate SAMPLE_BEGIN")
         if len(sample_dones) > 1:
@@ -1043,10 +1049,10 @@ def _fc1_records(pc_text: str) -> dict:
             fields = record["fields"]
             if (trigger_begin and record["level"] == "MARK" and
                     record["line_index"] > trigger_report["line_index"] and
-                    record["seq"] == (sample_ready["seq"] + 1 if version == "prearmed-v9"
+                    record["seq"] == (sample_ready["seq"] + 1 if version in V9_LIKE_BUILDS
                                       and sample_ready else
                                       pretrigger_report["seq"] + 1) and
-                    (version != "prearmed-v9" or sample_ready is not None) and
+                    (version not in V9_LIKE_BUILDS or sample_ready is not None) and
                     fields.get("cpu") == ready["fields"]["trigger_cpu"] and
                     fields.get("bytes") == "1280"):
                 sample_begin = record
@@ -1080,9 +1086,9 @@ def _fc1_records(pc_text: str) -> dict:
             else:
                 issues.append("malformed or out-of-phase SAMPLE_DONE")
     elif sample_begins or sample_dones:
-        issues.append("sample bracket without prearmed-v8/v9 READY")
+        issues.append("sample bracket without sample-aware READY")
     read_fail_details = []
-    if version in ("prearmed-v7", "prearmed-v8", "prearmed-v9"):
+    if version in RECENT_READ_BUILDS:
         valid_failures = []
         for record in read_fail:
             detail = _fc1_read_fail_detail(
@@ -1091,7 +1097,7 @@ def _fc1_records(pc_text: str) -> dict:
                 issues.append(f"malformed {version} READ_FAIL detail")
                 continue
             stage = detail["stage"]
-            if stage == "sample_ready" and version != "prearmed-v9":
+            if stage == "sample_ready" and version not in V9_LIKE_BUILDS:
                 issues.append(f"malformed {version} READ_FAIL detail")
                 continue
             line_index = record["line_index"]
@@ -1110,12 +1116,12 @@ def _fc1_records(pc_text: str) -> dict:
                     trigger_begin and
                     line_index > trigger_report["line_index"] and
                     record["seq"] > pretrigger_report["seq"])
-                if version in ("prearmed-v8", "prearmed-v9"):
+                if version in SAMPLE_BRACKET_BUILDS:
                     predecessor = (sample_ready if stage == "sample_ready" and
-                                   version == "prearmed-v9" else
+                                   version in V9_LIKE_BUILDS else
                                    sample_begin if stage == "targeted" else
                                    sample_done)
-                    if stage == "sample_ready" and version == "prearmed-v9":
+                    if stage == "sample_ready" and version in V9_LIKE_BUILDS:
                         predecessor = pretrigger_report
                         phase_valid = bool(phase_valid and not sample_ready_reports)
                     phase_valid = bool(
@@ -1130,23 +1136,23 @@ def _fc1_records(pc_text: str) -> dict:
         read_fail = valid_failures
     read_fail_before_gate = bool(ready and not gate_report and any(
         r["seq"] > ready["seq"] and
-        (version not in ("prearmed-v7", "prearmed-v8", "prearmed-v9") or
+        (version not in RECENT_READ_BUILDS or
          r["fields"].get("stage") in ("gate", "ist4"))
         for r in read_fail))
     read_fail_after_gate_before_pretrigger = bool(
         gate and ready and version in BASELINE_BUILDS and
         not pretrigger_report and
         any(r["seq"] > gate["seq"] and
-            (version not in ("prearmed-v7", "prearmed-v8", "prearmed-v9") or
+            (version not in RECENT_READ_BUILDS or
              r["fields"].get("stage") == "pretrigger")
             for r in read_fail)
     )
     read_fail_sampling_after_trigger = bool(
-        version in ("prearmed-v7", "prearmed-v8", "prearmed-v9") and trigger_begin and
+        version in RECENT_READ_BUILDS and trigger_begin and
         any(r["fields"].get("stage") in ("targeted", "sweep")
             for r in read_fail))
     read_fail_sample_ready = bool(
-        version == "prearmed-v9" and trigger_begin and
+        version in V9_LIKE_BUILDS and trigger_begin and
         any(r["fields"].get("stage") == "sample_ready" for r in read_fail))
 
     def valid_sample(record):
@@ -1266,15 +1272,22 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     audit_text = audit.decode("utf-8", errors="replace") if audit else ""
     fc1 = _fc1_records(pc_text)
     stdout_starts = re.findall(
-        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) build=(prearmed-v[6789])\r?$",
+        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) "
+        r"build=(prearmed-v[6789]|pivot-2a82de|pivot-2ac2de)\r?$",
         live_text)
     stdout_attempt = stdout_starts[0][0] if len(stdout_starts) == 1 else None
     stdout_build = stdout_starts[0][1] if len(stdout_starts) == 1 else None
+    pivot_line = re.search(r"(?m)^\[K1\].*\bpivot=\+0x([0-9a-fA-F]+)\b",
+                           live_text)
     attempt_mode = ("[KSTART]" in live_text or
                     any(f"build={build}" in pc_text for build in ATTEMPT_BUILDS) or
                     "FCM phase=START" in pc_text)
     attempt_conflict = (len(stdout_starts) > 1 or
                         "duplicate FCM START" in fc1["issues"] or
+                        (stdout_build in PIVOT_COMPARE_BUILDS and
+                         pivot_line is not None and
+                         pivot_line.group(1).lower() !=
+                         PIVOT_COMPARE_OFFSETS[stdout_build]) or
                         ("[KSTART]" in live_text and stdout_attempt is None) or
                         (fc1["attempt"] is not None and
                          not fc1["attempt_integrity"]) or
@@ -1311,7 +1324,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         r"marker=(MATCH|MISMATCH)(?: observer=(OK|FAIL))?\b", live_text)
     pc_stage = re.search(
         r"^\d+\t\d+\tMARK\tstaged frames=16 cpu=(\d+) "
-        r"chain=popall-copy-popall-doreti\b", pc_text, re.M)
+        r"chain=(?:pivot-)?popall-copy-popall-doreti\b", pc_text, re.M)
     pc_return = re.search(
         r"^\d+\t\d+\t(?:MARK|WARN)\treturned after INT1 cpu=(\d+) "
         r"frame=(MATCH|MISMATCH) marker=(MATCH|MISMATCH) "
@@ -1374,6 +1387,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
                 frame = "canary_unchanged"
 
     signals = {
+        "build": stdout_build or fc1["version"],
         "cpu": cpu,
         "cpu_identity_conflict": cpu_identity_conflict,
         "staged_stdout": bool(stage),
@@ -1474,7 +1488,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         boundary = "observer_read_failed_after_main_patch_phase"
     elif (pc_linked and fc1["gate_verified"]) or (
           same_attempt_verified and audit_header and
-          audit_header.group(1).lower() == "2b3626" and
+          audit_header.group(1).lower() == PIVOT_COMPARE_OFFSETS.get(
+              stdout_build or fc1["version"], "2b3626") and
           int(audit_header.group(4)) == 16):
         boundary = "gate_and_ist_staged_delivery_or_later_unproven"
     elif pc_linked and fc1["gate_done"]:
@@ -1498,7 +1513,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
             (pc_linked and cpu is not None and
              (set(fc1["frame_cpus"] + fc1["marker_cpus"]) - {cpu}))),
         "caveat": ("Audit evidence needs an explicit same-attempt assertion; "
-                   "prearmed-v6/v7/v8/v9 PC evidence needs matching attempt tokens, "
+                   "prearmed-v6/v7/v8/v9 and pivot-comparison PC evidence "
+                   "need matching attempt tokens, "
                    "while older PC logs need an explicit same-run assertion. "
                    "A changed observer or audit frame supports activity "
                    "at the staged slot; it does not establish a valid #DB frame. "
