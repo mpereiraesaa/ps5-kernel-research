@@ -2137,7 +2137,7 @@ offline stack-layout check passed for all 16 disjoint `0x500` slots;
 both store epilogues resolve
 to the second frame at slot `+0x2a0`. The updated host classifier accepts
 the distinct `firstcont-2a82de` build tag and names a positive result a
-*store* marker; 64 classifier tests pass. No console run has occurred.
+*store* marker; 64 classifier tests pass. The live result follows.
 
 The live build can panic or power off the console: the pivot and Kstuff
 entry bytes are unverified, and the shared gate may receive an unrelated
@@ -2146,3 +2146,45 @@ plan is a hard power cycle, elfldr restart, then a read-only native
 gate/IST4/zero-scratch audit before any further live ELF. The exact ELF
 hash above and this plan must be approved before a live run; record the
 actual markers and recovery state alongside the result.
+
+### `firstcont-2a82de` live result
+
+[verified-on-console] The owner approved one FW 12.02 run of the exact ELF
+SHA-256 `3ef440aa72f790376f6172096f784a13bc58270cd2406b6ce56d7033d661de13`.
+The same-boot read-only audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+reported native vector-1 target `+0x3188b0`, gate IST4, no staged IST4
+pointers, zero scratch, and no changed frames or markers. The live ELF was
+sent once. Stdout for attempt `0x181dac184f5` ended at `[K1]` after
+`[KSTART]`, naming CPU 15 and all 16 staged frames. The linked PC log
+started `2026-10-14T10:12:22.102259+00:00` and has SHA-256
+`44d146256b712bcd7d1ab088b4afb7a995d098f57e6f69cf59cf571532a4f8c5`.
+Its manifest reports 28 records, no sequence gaps, `close_reason=eof`,
+`bye=false`, and `clean=false`. The stdout and PC attempt tokens match.
+
+[verified-on-console] The PC record confirms all 16 IST4 writes,
+`GATE_DONE`, readback of the selected gate and all 16 IST4 entries,
+unchanged pretrigger canaries, `TRIGGER_BEGIN`, `SAMPLE_READY`, and one
+`SAMPLE_DONE` with the five canaries unchanged and marker zero. There is
+no recorded continuation marker, changed frame, `[K1r]`, `[K2]`, `BYE`,
+or restoration. The classifier boundary is
+`observer_first_targeted_read_completed_no_change_at_sample`, with
+incomplete PC transport. The console answered ICMP after the connection
+closed; this does not establish that the gate was restored.
+
+[inference] This first sample can precede the `ICEBP` instruction because
+the main thread waits for the worker's sample acknowledgement before
+executing it. A changed later sample, positive marker, or clean return
+would support progression; a same-run trace of the instruction and
+exception path could distinguish the unobserved cases. The zero marker
+does not falsify either the pivot or the first-continuation chain. The
+agreed recovery is a hard power cycle followed by a read-only native
+gate/IST4/zero-scratch audit before any further ELF.
+
+[verified-on-console] The owner confirmed a hard power cycle and elfldr
+restart. The read-only audit v2 ELF above was sent once on that boot, but
+its elfldr socket produced no stdout for 25 seconds and timed out. ICMP
+and port 9021 still answered afterward. The audit has no `[KA1]` or
+`[KA2]` result; **the post-reboot native baseline remains unverified**.
+No further ELF was sent. Console UI and elfldr status after the timeout
+were requested from the owner.
