@@ -1374,8 +1374,14 @@ No gate, IST4, or scratch values were obtained from this audit, so the
 post-v9 kernel state and #DB delivery remain **unverified**. No further
 ELF was loaded into that boot. The owner reported that the UI remained
 responsive and elfldr appeared normal; this establishes neither restored
-kernel state nor a #DB verdict. A hard power cycle and post-boot audit
-were requested under the approved recovery plan; their result is pending.
+kernel state nor a #DB verdict. The owner then hard power-cycled and
+restarted elfldr. The same audit v2 ELF completed after reboot: native
+#DB target `+0x3188b0`, gate IST4, all 16 IST4 slots unstaged, zero
+nonzero scratch bytes, and zero staged images/changed frames/markers.
+The post-reboot transcript SHA-256 is
+`cee030ee0e704d2f6e20e2ab5d578af75b6ade3e5362509af7355b475e4cf64e`.
+This verifies the recovered baseline only; volatile scratch lost at
+reboot cannot reconstruct whether v9 delivered #DB.
 
 **Independent-reader check.** [verified-on-console] After the reboot
 audit, elfldr answered on 9021 but the ps5debug-NG command port 744
