@@ -1,7 +1,7 @@
 # 17 — Byepervisor 12.02 chain map and failure evidence (offline)
 
-**Status:** offline mapping only. No 12.02 chain was installed or triggered for
-this document. The source of the working 11.60 sequence is
+**Status:** offline chain mapping with bounded 12.02 diagnostic runs; no
+complete 12.02 chain or return has been observed. The source of the working 11.60 sequence is
 [`5299395`](https://github.com/gzimbric/Byepervisor-Reborn/commit/5299395b15ec91f7484ded2e7631977e0df94a4d),
 especially its [`khook.c`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c)
 and [`11.60-port.md`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/docs/11.60-port.md).
@@ -1926,4 +1926,154 @@ power-cycle, restart elfldr, and read-only audit the native `#DB` gate,
 all IST4 pointers, and zero scratch before the next candidate. Record
 FW, exact ELF hash, PC/stdout manifests, actual last marker, observed
 console state, and recovery state for each run. The owner approved the
-comparison direction; no exact-build console execution has occurred.
+comparison direction; the first exact-build result follows.
+
+### `+0x2a82de` live result and recovery
+
+[verified-on-console] On FW 12.02, the owner approved the exact
+`+0x2a82de` ELF SHA-256
+`9841712fcb542cc8289befd26f62d524d1705690cc0aad2d1212c04eed9e1e7c`
+for one `ICEBP`, with a hard power-cycle and native audit if the run stopped.
+The same-boot, read-only preflight reported the native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers, and zero nonzero scratch
+bytes (`[KA1]`/`[KA2]`, audit v2). The ELF was sent once. Stdout for attempt
+`0x23b085fa196` ended after `[KSTART]` and `[K1]` (CPU 15, 16 staged frames).
+The linked PC `ps5log/1` capture is identified by UTC start
+`2026-10-14T09:16:32.059397` and SHA-256
+`b77c90c85004444592a46eb5c24f87255062304a2875895c66e13d7754b114e2`;
+its matching JSON manifest reports 28 records, no sequence gaps,
+`close_reason=eof`, `bye=false`, and `clean=false`. Both transports carry
+the same attempt token.
+
+[verified-on-console] PC records confirm all 16 IST4 writes through slot 15,
+`GATE_DONE`, a readback matching the candidate gate and all 16 IST4 entries,
+unchanged pretrigger canaries, then `TRIGGER_BEGIN`, `SAMPLE_READY`, and one
+`SAMPLE_DONE` with all five canaries unchanged and marker zero. There is no
+later frame change, marker, `QUIESCED`, `[K2]`, return, or restoration record.
+The classifier boundary is
+`observer_first_targeted_read_completed_no_change_at_sample`, with incomplete
+PC transport. The console answered ICMP after the stop; this did not
+establish restoration. The owner then confirmed a hard power cycle and that
+elfldr was ready. The read-only recovery audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+was sent once on the new boot. It reported native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers across all 16 CPUs,
+`scratch_nonzero=0`, `changed_hw_frames=0`, `marked=0`, and
+`staged_images=0`. Recovery baseline is clean; this post-reboot audit
+cannot establish what happened after the earlier first sample. No second
+pivot candidate was sent.
+
+[inference] The unchanged first sample does not show whether `ICEBP` had
+executed yet: in the source, the main thread waits for `sample_ack`, calls
+`fullchain_icebp`, and only then restores the gate/IST4. A later observer
+frame, a marker, or a return would support progress beyond this sample;
+an instruction trace or a durable post-trigger marker could distinguish a
+stop before the instruction from a stop during #DB delivery. The captured
+evidence does not validate or falsify the `+0x2a82de` instruction semantics.
+
+### `+0x2ac2de` live result and recovery
+
+[verified-on-console] After the `+0x2a82de` hard power cycle and clean
+native audit, the owner separately approved one FW 12.02 run of the
+`+0x2ac2de` ELF SHA-256
+`f2fb7bdc24656447fc63527580d732053ffd90ff41d577770dd8dc66be594771`
+with the same recovery plan. It was sent once. Stdout for attempt
+`0x7ff06c11f3` ended after `[KSTART]` and `[K1]` (CPU 15, 16 staged
+frames). The linked PC `ps5log/1` capture is identified by UTC start
+`2026-10-14T09:22:11.952050` and SHA-256
+`4f1f3c5f9fe7e610ebddd180b27a461593632c05ff2c89f966a2af4a9f23e5d7`;
+its matching JSON manifest reports 28 records, no sequence gaps,
+`close_reason=eof`, `bye=false`, and `clean=false`. Both transports carry
+the same attempt token.
+
+[verified-on-console] The PC capture confirms all 16 IST4 writes,
+`GATE_DONE`, candidate gate and IST4 readback, unchanged pretrigger
+canaries, `TRIGGER_BEGIN`, `SAMPLE_READY`, and one `SAMPLE_DONE` with all
+five canaries unchanged and marker zero. No later frame change, marker,
+`QUIESCED`, `[K2]`, return, or restoration was recorded. The classifier
+again reports `observer_first_targeted_read_completed_no_change_at_sample`
+and incomplete PC transport. The console answered ICMP afterward, which
+did not establish restoration. The owner then confirmed a hard power
+cycle and that elfldr was ready. The read-only recovery audit v2 ELF
+SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+was sent once on the new boot. It reported native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers across all 16 CPUs,
+`scratch_nonzero=0`, `changed_hw_frames=0`, `marked=0`, and
+`staged_images=0`. Recovery baseline is clean; this post-reboot audit
+cannot establish what happened after the earlier first sample. No further
+live pivot ELF was sent.
+
+[inference] Both candidate runs have the same last observed boundary.
+Because `SAMPLE_DONE` can precede the actual `ICEBP`, this comparison
+does not distinguish the two candidate instruction sequences or prove a
+`#DB` delivery. A changed frame, copy marker, return, or independent
+instruction-level evidence on either candidate would falsify the claim
+that these runs are observationally indistinguishable at the captured
+boundary. Repeating offset guesses with this same observability contract
+would not resolve whether the stop occurred before, during, or after
+exception delivery.
+
+### Independent-reader follow-up on `+0x2a82de` and recovery
+
+[verified-on-console] The owner approved a second one-`ICEBP` run of the
+same FW 12.02 `+0x2a82de` ELF SHA-256
+`9841712fcb542cc8289befd26f62d524d1705690cc0aad2d1212c04eed9e1e7c`,
+this time with ps5debug-NG already running as a separate process. The
+PC-side watcher source SHA-256 was
+`29098745393d3df5116277fa64bd29deaa9839037b2243c44bbbf0b6dd5a11b4`;
+it reads vector-1's gate and the existing `0x5000` scratch span through
+the public `CMD_KERN_BASE`/`CMD_KERN_READ` protocol, reporting only gate,
+five-word frame, and marker transitions. A synthetic wire-protocol test
+detected a staged gate and changed frame, and a two-second console baseline
+returned native gate and 16 zero frames across 54 polls. No 12.02 text
+bytes were read or retained.
+
+[verified-on-console] The independent watcher started before the ELF and
+read native gate/zero frames. The ELF was sent once. Stdout attempt
+`0xd99a06855a` ended after `[KSTART]`/`[K1]` for CPU 15. The linked
+`ps5log/1` capture started at `2026-10-14T09:33:54.948262` UTC and has
+SHA-256 `75d2cbd31b478900ba4dd1ad3ffc9feab552011125971c9bbdac46d78f3e676d`;
+its manifest reports 28 records, no gaps, unclean EOF, and no BYE. It
+again ends after `TRIGGER_BEGIN`, `SAMPLE_READY`, and an unchanged
+`SAMPLE_DONE`, with no return or restoration marker.
+
+[verified-on-console] The separate watcher ran for 30 seconds and completed
+778 polls (JSONL SHA-256
+`a467123f4900e27957cc817a7574baf24c6730455aeac4ecd75e30af00f65c83`).
+It saw all 16 frame locations transition from zero to the expected staged
+canaries, then the gate transition to `+0x2a82de`. It recorded no later
+frame or marker transition and ended with the gate still patched, about
+19.5 seconds after that gate transition. The watcher continued receiving
+ps5debug-NG read responses after the trigger ELF's socket closed, and the
+console answered ICMP. This directly establishes a *sampled* post-stop
+unchanged frame state in an independent process; it does not rely on the
+trigger payload's first-sample race. The owner then confirmed a hard
+power cycle and restarted elfldr. The read-only audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+was sent once on the new boot and reported native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers across all 16 CPUs,
+`scratch_nonzero=0`, `changed_hw_frames=0`, `marked=0`, and
+`staged_images=0`. The recovery baseline is clean. This new-boot audit
+cannot resolve the prior boot's trap boundary. No further live pivot
+ELF was sent.
+
+[inference] If `ICEBP` was fetched and delivered through the confirmed
+IST4 gate, hardware should overwrite the five staged canaries before the
+pivot instruction executes. The independent reader's lack of an observed
+frame change therefore disfavors a pivot-body crash **after** ordinary
+IST4 frame construction. It does not prove `ICEBP` was fetched: a stop
+before that instruction, a different exception-delivery path, a transient
+change between polls, or stale ps5debug-NG read buffers remain possible.
+A same-attempt changed frame, an instruction-level trace, or a read-freshness
+witness disagreeing with these samples would falsify or revise this
+interpretation. Reading candidate 12.02 instruction bytes through the
+ordinary kernel-read primitive is blocked by the execute-only text mapping
+(`02`); ps5debug-NG's kernel read uses that same class of pipe primitive.
+[verified-in-tree] In the public ps5debug-NG source,
+`debugger/source/kern.c:27-29` sends success and a buffer without checking
+the `kernel_copyout_fast` return value; `debugger/source/kern_rw_fast.c:94-95`
+also ignores the final pipe `read` result. The watcher observed genuine
+zero-to-canary and native-to-patched transitions before the stop, but a
+future post-stop experiment needs a changing data witness or a checked read
+path before treating repeated unchanged bytes as proof of fresh reads.
