@@ -19,6 +19,14 @@ IST6 = BASE + 0x2e8afe0 + CPU * 0x68 + 0x4c
 
 def trace():
     payloads = [
+        f"KH2C stage=MAIN_READ fw=12.02 cpu={CPU} build_sha={BUILD} "
+        f"region=gate addr=0x{GATE:x} bytes=16 state=begin",
+        f"KH2C stage=MAIN_READ fw=12.02 cpu={CPU} build_sha={BUILD} "
+        f"region=gate addr=0x{GATE:x} bytes=16 state=done",
+        f"KH2C stage=MAIN_READ fw=12.02 cpu={CPU} build_sha={BUILD} "
+        f"region=ist6 addr=0x{IST6:x} bytes=8 state=begin",
+        f"KH2C stage=MAIN_READ fw=12.02 cpu={CPU} build_sha={BUILD} "
+        f"region=ist6 addr=0x{IST6:x} bytes=8 state=done",
         f"KH2C stage=MAIN_BASELINE fw=12.02 cpu={CPU} build_sha={BUILD} "
         "gate_lo=0x1 gate_hi=0x2 ist6=0x3",
         f"KH2R stage=R0 cpu={CPU} region=gate addr=0x{GATE:x} bytes=16 state=begin",
@@ -31,7 +39,7 @@ def trace():
     lines = ["HELLO ps5log/1 title=KH2R01202 app=kh2-r0-calibration boot=0x1"]
     lines += [f"{i}\t{i*1000}\tMARK\t{payload}"
               for i, payload in enumerate(payloads, 1)]
-    lines.append("BYE seq=7 reason=done")
+    lines.append("BYE seq=11 reason=done")
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -48,7 +56,8 @@ class R0CalibrationCheck(unittest.TestCase):
         result = verified(raw)
         self.assertEqual(result["status"], "retained_calibration_complete")
         self.assertEqual(result["confirmed_prefix"],
-                         ["main baseline", "gate begin", "gate done",
+                         ["main gate begin", "main gate done", "main ist6 begin",
+                          "main ist6 done", "main baseline", "gate begin", "gate done",
                           "ist6 begin", "ist6 done", "R0"])
         self.assertEqual(result["cpu"], CPU)
         self.assertEqual(result["observer_cpu"], 3)
@@ -60,16 +69,30 @@ class R0CalibrationCheck(unittest.TestCase):
 
     def test_missing_ist_done_stops_prefix_even_with_r0_and_clean_close(self):
         lines = trace().splitlines()
-        raw = b"\n".join(line for line in lines if b"region=ist6" not in line or
-                         b"state=done" not in line) + b"\n"
+        raw = b"\n".join(line for line in lines if b"KH2R" not in line or
+                         b"region=ist6" not in line or b"state=done" not in line) + b"\n"
         result = verified(raw)
         self.assertEqual(result["status"], "invalid_or_error")
         self.assertEqual(result["next_missing"], "ist6 done")
 
+    def test_main_read_stall_boundary_and_error_cannot_pass(self):
+        lines = trace().splitlines()
+        gate_begin = b"\n".join(lines[:2]) + b"\n"
+        result = verified(gate_begin)
+        self.assertEqual(result["confirmed_prefix"], ["main gate begin"])
+        self.assertEqual(result["next_missing"], "main gate done")
+        error = gate_begin + (
+            f"2\t2000\tERR\tKH2C stage=MAIN_READ_ERROR fw=12.02 cpu={CPU} "
+            f"build_sha={BUILD} region=gate addr=0x{GATE:x} bytes=16 code=-2\n"
+        ).encode()
+        result = verified(error)
+        self.assertEqual(result["next_missing"], "main gate done")
+        self.assertTrue(any("main gate read error" in issue for issue in result["issues"]))
+
     def test_wrong_location_and_build_cannot_pass(self):
         raw = trace().replace(f"addr=0x{IST6:x}".encode(),
                               f"addr=0x{IST6+8:x}".encode())
-        self.assertEqual(verified(raw)["next_missing"], "ist6 begin")
+        self.assertEqual(verified(raw)["next_missing"], "main ist6 begin")
         wrong_build = trace().replace(f"build_sha={BUILD}".encode(),
                                       f"build_sha={'b'*64}".encode())
         self.assertTrue(verified(wrong_build)["issues"])
@@ -93,9 +116,9 @@ class R0CalibrationCheck(unittest.TestCase):
                                            "clean": True, "gaps": []},
                                      EXIT.replace(BUILD, "b" * 64), BASE, BUILD)
         self.assertEqual(stale_build_stdout["return_marker"], "missing_clean_exit")
-        error = raw.replace(b"BYE seq=7 reason=done\n",
-                            b"7\t7000\tERR\tKH2E stage=R0 cpu=2 operation=finish "
-                            b"region=pipe addr=0x0 code=-2\nBYE seq=8 reason=done\n")
+        error = raw.replace(b"BYE seq=11 reason=done\n",
+                            b"11\t11000\tERR\tKH2E stage=R0 cpu=2 operation=finish "
+                            b"region=pipe addr=0x0 code=-2\nBYE seq=12 reason=done\n")
         self.assertTrue(any("KH2E" in issue for issue in verified(error)["issues"]))
 
     def test_cli_requires_same_run_manifest_and_final_stdout(self):

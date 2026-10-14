@@ -14,8 +14,9 @@ from pathlib import Path
 
 HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
 SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
-PHASES = ("main baseline", "gate begin", "gate done", "ist6 begin",
-          "ist6 done", "R0")
+PHASES = ("main gate begin", "main gate done", "main ist6 begin",
+          "main ist6 done", "main baseline", "gate begin", "gate done",
+          "ist6 begin", "ist6 done", "R0")
 
 
 def fields(payload):
@@ -71,17 +72,45 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
             kind, text = payload.split(" ", 1)
             data = fields(text)
             if kind == "KH2C" and level == "MARK":
-                if set(data) != {"stage", "fw", "cpu", "build_sha", "gate_lo",
-                                 "gate_hi", "ist6"} or \
-                        data["stage"] != "MAIN_BASELINE" or \
+                if data.get("fw") != "12.02" or \
+                        data.get("build_sha", "").lower() != build_sha.lower():
+                    raise ValueError("main read firmware or build mismatch")
+                if data.get("stage") == "MAIN_READ":
+                    if set(data) != {"stage", "fw", "cpu", "build_sha",
+                                     "region", "addr", "bytes", "state"} or \
+                            data["region"] not in ("gate", "ist6") or \
+                            data["state"] not in ("begin", "done"):
+                        raise ValueError("invalid main read bracket")
+                    events.append({"phase": f'main {data["region"]} {data["state"]}',
+                                   "seq": seq, "cpu": decimal(data["cpu"], 0, 15),
+                                   "addr": address(data["addr"]),
+                                   "bytes": decimal(data["bytes"], 1, 16)})
+                elif data.get("stage") == "MAIN_BASELINE":
+                    if set(data) != {"stage", "fw", "cpu", "build_sha", "gate_lo",
+                                     "gate_hi", "ist6"}:
+                        raise ValueError("invalid main baseline fields")
+                    events.append({"phase": "main baseline", "seq": seq,
+                                   "cpu": decimal(data["cpu"], 0, 15),
+                                   "gate_lo": address(data["gate_lo"]),
+                                   "gate_hi": address(data["gate_hi"]),
+                                   "ist6": address(data["ist6"])})
+                else:
+                    raise ValueError("unexpected main calibration stage")
+            elif kind == "KH2C" and level == "ERR":
+                if set(data) != {"stage", "fw", "cpu", "build_sha", "region",
+                                 "addr", "bytes", "code"} or \
+                        data["stage"] != "MAIN_READ_ERROR" or \
                         data["fw"] != "12.02" or \
-                        data["build_sha"].lower() != build_sha.lower():
-                    raise ValueError("main baseline firmware or build mismatch")
-                events.append({"phase": "main baseline", "seq": seq,
-                               "cpu": decimal(data["cpu"], 0, 15),
-                               "gate_lo": address(data["gate_lo"]),
-                               "gate_hi": address(data["gate_hi"]),
-                               "ist6": address(data["ist6"])})
+                        data["build_sha"].lower() != build_sha.lower() or \
+                        data["region"] not in ("gate", "ist6"):
+                    raise ValueError("invalid main read error")
+                decimal(data["cpu"], 0, 15)
+                address(data["addr"])
+                decimal(data["bytes"], 1, 16)
+                if not re.fullmatch(r"-[1-9][0-9]*", data["code"]):
+                    raise ValueError("invalid main read error code")
+                issues.append(f"main {data['region']} read error at sequence {seq}: "
+                              f"addr={data['addr']} code={data['code']}")
             elif kind == "KH2R" and level == "MARK":
                 if set(data) != {"stage", "cpu", "region", "addr", "bytes", "state"}:
                     raise ValueError("invalid read bracket fields")
@@ -125,6 +154,10 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
         if gate + 16 > 1 << 64 or ist6 + 8 > 1 << 64:
             raise ValueError("derived gate or IST6 address overflows uint64")
         expected = [
+            {"phase": "main gate begin", "addr": gate, "bytes": 16},
+            {"phase": "main gate done", "addr": gate, "bytes": 16},
+            {"phase": "main ist6 begin", "addr": ist6, "bytes": 8},
+            {"phase": "main ist6 done", "addr": ist6, "bytes": 8},
             {"phase": "main baseline"},
             {"phase": "gate begin", "addr": gate, "bytes": 16},
             {"phase": "gate done", "addr": gate, "bytes": 16},
