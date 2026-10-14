@@ -1,9 +1,8 @@
 # 14 — Ring-0 execution: alternatives to r0gdb (offline research, 2026-10-13)
 
-Status: **offline analysis; nothing here has been run on-console.** Read
-this with `13` (freeze instrumentation) — the choice of substrate depends
-on which freeze class the instrumentation confirms, and the two documents
-share the `resume-window` requirement.
+Status: **historical offline alternatives; no alternative here was
+validated on-console.** Read with `13` if interactive r0gdb work resumes.
+The current 12.02 Byepervisor evidence boundary is in `17`.
 
 Goal being served: **stable ring-0 stepping** so the resume-window work
 (`10`, Route HCALL 0x0f) can proceed. **UPDATE (2026-10-13):** the
@@ -50,11 +49,13 @@ IDT gate and, for this proposed ROP path, a chosen TSS IST stack (like
 A0/A1/A2), but no interactive session.
 It is the concrete form of the non-interactive recommendation below.
 
-A0 is what exists and freezes. A1/A2 are **already in the tree** and are the
-first thing to try, because they remove the *packet reader* — the component
-whose blocking `read()` is the most likely freeze locus (H2 in `13`) — while
-keeping the proven ring-0 entry. A3 is the aspirational "no IDT patch at all"
-route. A4 is the destination.
+A0 is the interactive implementation that froze. A1/A2 are in the tree
+and were proposed as alternatives because they remove the packet reader,
+one candidate freeze locus (H2 in `13`), while reusing the same ring-0
+entry. [inference] This only removes H2 if H2 actually caused that run;
+an F5/klog trace locating the freeze elsewhere would falsify it. A1/A2
+have no completed 12.02 console validation. A3 remains a proposed
+"no IDT patch" route; A4 is the intended destination.
 
 ## Analysis: which alternatives eliminate which freeze mechanism
 
@@ -74,12 +75,12 @@ The freeze class is not yet known (that is `13`'s job). Per class, the fix:
   they also fix it. If the wedge is in `run_in_kernel` itself, all of
   A0/A1/A2 share it (all use `run_in_kernel`) and the fix is at that layer.
 
-**Net:** a non-interactive substrate (A1 or A2, or a purpose-built minimal
-handler derived from them) is robust across H1/H2/H3, except a shared
-`run_in_kernel` fault. That makes it the recommended path to "stable ring-0
-stepping" regardless of the freeze verdict — with the caveat that it still
-patches the IDT/TSS window, so the panic hazard and the recovery plan are
-unchanged.
+**Historical assessment:** a non-interactive substrate (A1 or A2, or a
+purpose-built handler derived from them) could avoid the packet-reader and
+cleanup paths, but may retain a shared `run_in_kernel` fault and the
+IDT/TSS patch risk. [inference] A successful same-firmware return through
+A1/A2 would support this assessment; a repeat freeze at their shared
+entry would falsify its proposed benefit. Neither was validated here.
 
 ## A3 — the "no IDT patch" route (research notes, unproven)
 
@@ -113,7 +114,7 @@ It should be pursued *only* if A1/A2 also freeze (i.e. the hazard is the
 patch window or `run_in_kernel`, not the packet reader). Offline we cannot
 advance it without kernel text.
 
-## Recommendation (ordered)
+## Historical proposed sequence (not a current run plan)
 
 1. **Run `13`'s instrumented test first** (A0 + F5/klog). It is the only way
    to know which class we are fixing; a substrate change without that data is

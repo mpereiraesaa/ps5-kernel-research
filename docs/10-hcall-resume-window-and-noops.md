@@ -538,20 +538,21 @@ What validated green before the incident [verified-on-console]:
   T05 synthetic stop with kernel rsp `0xffffff801ff4c838`. The
   hardened entry design works on-console.
 
-Then the freeze, root-caused by reading `dbg.c`/`r0gdb.c`
-[verified-in-tree]:
+Then the freeze. The source inspection below identified a possible
+deadlock, **not its observed root cause**. The later GS/TLS explanation
+was falsified (`11` #2), and the freeze remains unresolved (`13`).
+[verified-in-tree] The source has these properties:
 
 1. `r0gdb_loop` held `in_signal_handler` across the entire blocking
    packet session.
 2. each incoming byte used its own blocking `read()`; a `G` write
    required **337 consecutive single-byte reads**.
 3. installed process-wide signal handlers spun on the same flag.
-4. a signal delivered to the session-owning thread during the `G`
-   window could enter the handler, which waited on a flag held by the
-   interrupted loop. The loop could not resume until the handler
-   returned, producing the observed freeze. This causal explanation
-   is [inference]; it would be falsified if a trace showed the freeze
-   occurred outside the handler/lock wait.
+4. [inference] A signal delivered to the session-owning thread during
+   the `G` window could enter the handler and wait on a flag held by the
+   interrupted loop. A same-attempt handler/lock trace showing the freeze
+   elsewhere would falsify this mechanism. No such trace was captured for
+   this incident, so it must not be read as a diagnosis.
 
 The source repair is now present [verified-in-tree] in the canonical
 `r0gdb/` tree. The shared signal mask and lock implementation are in
