@@ -906,6 +906,14 @@ For `prearmed-v2` through `prearmed-v7` it requires the sample mode and rejects 
 record naming a CPU other than the trigger CPU; v1 records remain readable.
 For v4–v7, a frame/marker needs an earlier accepted `PRETRIGGER` record with
 all five raw canaries matching the selected CPU's staged values.
+[verified-in-tree] `tools/khook_trace_classify.py:_fc1_records` now also
+rejects a frame/marker appearing before a linked `FCM TRIGGER_BEGIN` in PC
+order. When no linked trigger record is accepted, it preserves the positive
+frame/marker report but adds `frame or marker without linked FCM trigger
+report` to the issues. [inference] Such a report can still be useful memory
+evidence, while the missing control line prevents a complete PC sequence;
+an independent same-attempt log showing the trigger send failed would
+falsify the expected producer order.
 For v5–v7, a retained `FCM TRIGGER_BEGIN` advances the classifier only after
 the full ordered patch prefix, verified gate, and pretrigger baseline. A
 missing phase record stops patch-prefix progress at the last contiguous
