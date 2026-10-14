@@ -1,8 +1,9 @@
 # 08 — Phase B capability inventory & mechanism notes
 
-**⚠ SUPERSEDED 2026-10-12**: The Phase B text-read routes (QA-flags
-chain, GPUVM DMA, CR4 gadget hunting) were deprioritized in favor of the
-HCALL 0x0f resume-window AP-launch design. The public implementation
+**⚠ SUPERSEDED 2026-10-12**: The Phase B QA-flags and CR4 gadget plans
+were deprioritized in favor of the HCALL 0x0f resume-window AP-launch
+design. GPUVM DMA was retired as a 12.02 text-read option after the
+v1/v2 outcomes and v3 source audit (`11` #81). The public implementation
 shows root-0 kernel-text access; the FW 12.02 port has not reached it
 (`17`). See [10-hcall-resume-window-and-noops.md](10-hcall-resume-window-and-noops.md)
 for the historical route and NOOP catalog.
@@ -75,38 +76,12 @@ HV defeat chain. `ps5-jar-loader` independently documents the remap-and-DMA
 kernel accessor. These implementations establish a GPUVM-mediated physical
 access technique in their supported, HV-compromised context.
 
-**FW 12.02 question** [inference]: the older implementations do not establish
-what happens while 12.02's current IOMMU configuration and CPU NPT protections
-remain enabled. The PS5 wiki infers from hypercall names that the HV manages
-the IOMMU, but does not document whether a GPU request is checked through the
-same NPT, which IOMMU translation is applied, or how the two interact.
-Falsify this narrow version-specific question against public source and
-existing evidence before considering any console experiment. Inferring a
-full text-read route from generic AMD GPUVM behavior alone was too broad.
-
-**Owner approval and safety plan**
-
-- **Approval**: the console owner explicitly approved this GPUVM text-read
-  experiment in the project conversation on 2026-10-09. This approval is
-  scoped to the bounded read experiment described here; it does not cover
-  broader GPU, DMA, or hypervisor probing.
-- **Risk**: an incorrect GPUVM entry, address, or TLB invalidation may
-  target unintended memory or hang the GPU/system. An NPT denial may fault
-  or wedge the console and require a forced power cycle. The intended copy
-  is read-only, but editing GPU page tables still changes kernel data.
-- **Bounded run**: use one unused GPUVA, map one text page, issue one read
-  into a dedicated scratch allocation, and make no writes through the GPU
-  mapping. Do not widen the mapping or repeat with guessed addresses in the
-  same run. If the console remains responsive, remove the test PTE and
-  invalidate the GPU translation before ending the session.
-- **Stop conditions**: stop on any unexpected GPU fault, missing completion,
-  loss of console responsiveness, or output inconsistent with the one-page
-  read. Do not issue follow-up GPU commands after a hang or fault.
-- **Recovery**: if the console hangs or panics, stop the payload and perform
-  the established hard power cycle. On reboot, confirm normal startup and
-  inspect the saved host-side logs before any repeat. If normal startup does
-  not return, stop and use the owner's established recovery process; do not
-  repeat the experiment until the failure is understood.
+**FW 12.02 correction** [public-consensus; verified-on-console;
+verified-in-tree; inference]: the older implementations do not
+establish access with the 12.02 HV/IOMMU active. The version-specific
+permission outcome was never observed. An approval for a bounded 2026-10-09
+experiment is historical; the local attempts and recovery are recorded in
+`07`. This route is retired from the 12.02 plan (`11` #81).
 
 ### Modern-AMD context
 
@@ -190,8 +165,8 @@ denials raise VM exits the HV handles. Guest-kernel autonomy over its
 own tables is real but policy-irrelevant (guest PTEs change VA→GPA,
 never GPA→SPA). The memory-path attack surface is therefore NPT
 contents, VMCB/NCR3 setup, or silicon — not handler code — which is
-why Phase B targets non-memory paths (hypercalls, intercepts) or
-alternate translation engines (GPUVM).
+why Phase B surveyed non-memory paths (hypercalls, intercepts) and a
+GPUVM hypothesis that was later retired (`11` #81).
 
 ### NPT covering HV-own memory (premise: present-but-denied, not holes)
 
@@ -233,8 +208,10 @@ NPT-covers-HV premise:
 - B2: via HV code execution (ROP/pivot: APICBASE class, needs entry)
 - B3: via GMET/NPT control fields through a validation gap
 
-**C. Alternate translation engine** (bypass NPT)
-- C1: GPUVM PTE injection + GPU read (IOMMU-gated? — falsify DTE first)
+**C. Alternate translation engine** (historical hypotheses)
+- C1: GPUVM PTE injection + GPU read — retired as a 12.02 text-read
+  option; public success depends on an IOMMU patch and no local text
+  DMA request was reached (`11` #81)
 - C2: other bus masters with DMA the IOMMU trusts (SP/DMA engines)
 - C3: speculative/cache side channels (Zen 2 class issues)
 
@@ -318,27 +295,16 @@ be carried over to 12.02 with the HV active. Whether Sony blocks the
 same transfer on 12.02 is unknown; no local run has reached a
 GPU-to-text DMA request.
 
-### What we need for 12.02
-
-1. `DATA_BASE_GVMSPACE` offset for 12.02 — findable in our kdata dump
-   (it's where the 4 GiB-strided aperture table lives, at the region
-   we already identified as "GPUVM-class" at kdata+0xc880f0)
-2. `VMSPACE_VM_VMID` = 0x1E4 (same across all FWs in their table)
-3. The per-FW `sizeof_gvmspace` and `gvmspace_page_dir_va` offsets
-4. Validate `/dev/gc` command and destination-buffer GPU addresses on
-   12.02 before interpreting any PM4 ioctl result
-
 ### Current 12.02 assessment
 
-This is an **unverified acquisition hypothesis**, not an available
-text-read path. The HV-IOMMU is only one unknown: v1 found CPU/GPU VA
+This is a **retired 12.02 text-read hypothesis**, not an available
+path. The HV-IOMMU is only one unknown: v1 found CPU/GPU VA
 separation, v2 stopped during a CPU-side GPUVM-table walk and required
 a hard power cycle, and v3 was blocked by source-audit defects before
 a console run (`07` §“gpuvm v1 run” through §“gate upgrade”; `11` #45).
 Neither a returned ioctl error nor a recoverable GPU fault is assured.
-A later run that independently validates both GPU buffer addresses,
-completes a DMA request, authenticates the returned text bytes, and
-reads back restored PTEs would falsify this present evidence boundary.
+No further GPUVM text-read run is planned. Authenticated 12.02 text
+bytes from a verified device path would falsify this evidence boundary.
 
 ## CVE analysis (2026-10-09): two HV bug classes confirmed in the wild
 

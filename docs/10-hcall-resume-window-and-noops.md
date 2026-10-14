@@ -137,13 +137,13 @@ verified — confirming the full write primitive.
 | Manually invoking r0gdb cleanup via rip-stepping | The prior client restore path and cleanup's nested ring-0 operations (RDMSR/WRMSR via `run_in_kernel`) were unproven; auto-cleanup is now wired in source but remains unvalidated on-console | verified-by-analysis |
 | qOffsets from the prosper0gdb stub in static-PIE builds | start_nonreloc gets an R_X86_64_RELATIVE applied, degenerating the formula to a constant | verified-on-console |
 
-### Deprioritized (viable but superseded)
+### Retired or deprioritized
 
 | What | Status | Superseded by |
 |---|---|---|
 | TMR register reading (E-TMR-2) | Technically readable via alias engine (ECAM confirmed dmap-mapped) | Orthogonal: TMR is a hardware wall under the NPT; the resume path crosses at the NPT level |
 | QA-flags chain (qa_probe/qa_check) | Built, gated, staged | Root-0 AP launch reads kernel text directly, no QA flags needed |
-| GPUVM route (gpuvm_read v3) | Built, unrun; source audit blocks current ELF (`07` §“gate upgrade”; `11` #45) | Root-0 AP launch was the proposed direct text route; it is also unproved |
+| GPUVM route (gpuvm_read v3) | Retired as a 12.02 text-read option: older public success patches the IOMMU; local v1/v2 never reached text DMA and v3 was unrun after source audit (`07` §“gate upgrade”; `11` #45, #81) | No validated GPU text-read route exists on 12.02 |
 | CR4 gadget hunting in kernel text | Needed kernel text + a mov rax,cr4 instruction | VMCB NESTED_CR3 write gives full NPT control; kernel text becomes readable from root 0 |
 | Finding cpu_stdext_feature | Was needed for FSGSBASE compat | Superseded by the NPT-level boundary crossing |
 | fsgsbase_enable CR4 write via kernel data | Boot-specific candidate values; never stable across boots | Superseded |
