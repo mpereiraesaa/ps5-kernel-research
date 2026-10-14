@@ -634,7 +634,7 @@ python3 tools/kh2_sysent_anchor_audit.py \
   --text-base-1360 0xffffffffd3b70000
 ```
 
-[verified-in-tree] `tools/kh2_sysent_anchor_audit.py:18-110` checks every
+[verified-in-tree] `tools/kh2_sysent_anchor_audit.py:19-41,82-157` checks every
 pointer against the dump-specific text base and coordinate bound,
 reports image/manifest SHA-256 values and each donor gadget's nearest
 distance, and never emits image bytes. [inference] These `sy_call`
@@ -643,6 +643,23 @@ for the missing gadgets. A verified containing-function relationship
 over a larger distance or another identified data-pointer table would
 falsify using this cutoff as a general address-coverage limit; the scan
 does not rule out those sources or prove any 12.02 bytes.
+
+[verified-on-dump] The same command scans all eight-byte-aligned qwords in
+the held 13.60 data image for text pointers within `0x4000` of the donor
+`getuid` body at `ktext+0x2a8d60`: **zero** match. Exact eight-byte
+patterns for that body pointer and its public `+0xe` hook pointer also
+occur **zero** times, including unaligned positions. The 13.60 image SHA-256
+is `29a0fd3d0ff5290897981543dcc7c71e02105477597b7d4523ded09ffdfdc318`;
+the result is `donor_getuid_body_data_refs` in the command's JSON output.
+[verified-in-tree] `tools/kh2_sysent_anchor_audit.py:44-79,124-126` defines
+the scan and bounded report, while
+`tests/test_kh2_sysent_anchor_audit.py` exercises aligned nearby and
+unaligned exact matches. [inference] This held donor data image supplies no
+direct local pointer homolog for projecting the 12.02 `getuid` body or
+its `+0xe` hook. An identified pointer encoded differently or stored in a
+different image would falsify any broader absence claim; 12.02 text bytes
+could establish the body directly. This scan does not resolve the 12.02
+table entry's jump or the hook's instruction contract (`11` #59).
 
 [verified-on-dump] A wider data-pointer scan found two 13.60 rows at
 `kernel-data.bin+0x1c6718` and `+0x1c9948`, separated by `0x3230`.

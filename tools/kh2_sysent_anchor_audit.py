@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Measure donor gadget distance from paired 13.60/12.02 sy_call entries.
+"""Audit paired sy_call anchors and 13.60 data references near getuid body.
 
 The inputs are data images held outside this notes repository and the public
 13.60 gadget-offset manifest. This reports address relationships only; a
-nearby syscall pointer would not establish a shared containing function or
-12.02 instruction bytes.
+nearby pointer would not establish a shared containing function or 12.02
+instruction bytes.
 """
 
 import argparse
@@ -20,6 +20,9 @@ SYSENT_STRIDE = 0x30
 SY_CALL_OFFSET = 8
 TABLE_1202 = 0x1AF4D0
 TABLE_1360 = 0x1B6E50
+GETUID_BODY_1360 = 0x2A8D60
+GETUID_HOOK_DELTA = 0xE
+REPORTED_HITS = 32
 
 
 def _entry_offsets(data: bytes, table: int, text_base: int,
@@ -38,13 +41,54 @@ def _entry_offsets(data: bytes, table: int, text_base: int,
     return result
 
 
+def _body_pointer_refs(data: bytes, text_base: int, body_offset: int,
+                       radius: int) -> dict:
+    body = text_base + body_offset
+    hook = body + GETUID_HOOK_DELTA
+    if not 0 <= body < 1 << 64 or not 0 <= hook < 1 << 64:
+        raise ValueError("donor body pointer outside uint64")
+    near = []
+    aligned = data[:len(data) // 8 * 8]
+    for index, (pointer,) in enumerate(struct.iter_unpack("<Q", aligned)):
+        if body - radius <= pointer <= body + radius:
+            near.append((index * 8, pointer - text_base))
+
+    def exact(value):
+        needle = struct.pack("<Q", value)
+        result, start = [], 0
+        while (found := data.find(needle, start)) >= 0:
+            result.append(found)
+            start = found + 1
+        return result
+
+    body_hits, hook_hits = exact(body), exact(hook)
+    return {
+        "body_offset": f"0x{body_offset:x}",
+        "hook_offset": f"0x{body_offset + GETUID_HOOK_DELTA:x}",
+        "window_radius": f"0x{radius:x}",
+        "aligned_near_count": len(near),
+        "aligned_near_hits": [
+            {"data_offset": f"0x{place:x}", "text_offset": f"0x{target:x}"}
+            for place, target in near[:REPORTED_HITS]
+        ],
+        "exact_body_count": len(body_hits),
+        "exact_body_offsets": [f"0x{place:x}" for place in body_hits[:REPORTED_HITS]],
+        "exact_hook_count": len(hook_hits),
+        "exact_hook_offsets": [f"0x{place:x}" for place in hook_hits[:REPORTED_HITS]],
+        "scope": "donor data qwords and exact byte patterns only; no 12.02 body projection",
+    }
+
+
 def audit(data_1202: bytes, data_1360: bytes, offsets: dict[str, str],
           text_base_1202: int, text_base_1360: int,
           max_local_distance: int = 0x4000,
           text_limit_1202: int = 0xD50000,
-          text_limit_1360: int = 0xCC0000) -> dict:
+          text_limit_1360: int = 0xCC0000,
+          donor_body_offset: int = GETUID_BODY_1360) -> dict:
     if max_local_distance < 0 or text_limit_1202 <= 0 or text_limit_1360 <= 0:
         raise ValueError("distance and text limits must be nonnegative/positive")
+    if not 0 <= donor_body_offset or donor_body_offset + GETUID_HOOK_DELTA >= text_limit_1360:
+        raise ValueError("donor getuid body outside text range")
     target = _entry_offsets(data_1202, TABLE_1202,
                             text_base_1202, text_limit_1202)
     donor = _entry_offsets(data_1360, TABLE_1360,
@@ -77,7 +121,10 @@ def audit(data_1202: bytes, data_1360: bytes, offsets: dict[str, str],
         "max_local_distance": f"0x{max_local_distance:x}",
         "local_gadget_names": local,
         "gadget_distances": rows,
-        "scope": "nearest sy_call entry only; not a function boundary, gadget offset projection, or 12.02 byte check",
+        "donor_getuid_body_data_refs": _body_pointer_refs(
+            data_1360, text_base_1360, donor_body_offset,
+            max_local_distance),
+        "scope": "sy_call proximity and donor data-pointer scan only; not a function boundary, gadget offset projection, or 12.02 byte check",
     }
 
 
