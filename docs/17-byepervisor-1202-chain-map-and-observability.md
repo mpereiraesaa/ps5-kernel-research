@@ -1,7 +1,7 @@
 # 17 — Byepervisor 12.02 chain map and failure evidence (offline)
 
-**Status:** offline mapping only. No 12.02 chain was installed or triggered for
-this document. The source of the working 11.60 sequence is
+**Status:** offline chain mapping with bounded 12.02 diagnostic runs; no
+complete 12.02 chain or return has been observed. The source of the working 11.60 sequence is
 [`5299395`](https://github.com/gzimbric/Byepervisor-Reborn/commit/5299395b15ec91f7484ded2e7631977e0df94a4d),
 especially its [`khook.c`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c)
 and [`11.60-port.md`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/docs/11.60-port.md).
@@ -1861,3 +1861,331 @@ Compiling this audit ELF validates none of those contracts.
 The current result is a **complete inventory of required semantics and
 evidence points**, with unresolved entries visible. It is not a completed
 12.02 gadget port or a prediction that the next live attempt returns.
+
+## 2026-10-14 — two-offset pivot comparison prepared offline
+
+[verified-on-console] The prearmed v7–v9 attempts all selected the Kstuff
+`ktext+0x2b3626` `add rsp,0xe8; iretq` gate target. They varied the observer,
+but never delivered an intentional `#DB` through either projected
+`add rsp,0x28; ret` candidate (`+0x2a82de` or `+0x2ac2de`). The earlier
+`+0x2ac2de` changed-gate run only wrote, read back, and restored the gate;
+its no-trigger result cannot validate that pivot (`16` §“Changed IST/#DB-gate
+setup isolation run”). Repeated `+0x2b3626` stops therefore do not compare
+candidate entry behavior.
+
+[inference] A valid `add rsp,0x28; ret` entered with `RSP=F−0x28` would
+consume the hardware frame, then fetch a return target from `F`, leaving
+`RSP=F+8`. The proposed diagnostic stages Kstuff's `pop_all_iret` at `F`
+and a register frame starting at `F+8`; that frame copies a marker, then
+a second register frame enters `doreti_iret` with the original hardware
+frame at `F−0x28`. A 12.02 instruction trace
+showing a different first instruction or stack effect at either candidate
+would falsify this contract. The two candidate offsets have no held 12.02
+instruction bytes and are not interchangeable with the `+0x2b3626`
+`add rsp,0xe8; iretq` frame.
+
+Two off-repo FW 12.02 ELFs were cross-compiled from one candidate-selecting
+source (source SHA-256
+`390290419bc30163ea5838660a95b32dad977e1345e42e9a57c8ca61d892bacb`).
+The `+0x2a82de` ELF SHA-256 is
+`9841712fcb542cc8289befd26f62d524d1705690cc0aad2d1212c04eed9e1e7c`;
+the `+0x2ac2de` ELF SHA-256 is
+`f2fb7bdc24656447fc63527580d732053ffd90ff41d577770dd8dc66be594771`.
+Both reuse the v9 prearmed observer, all-CPU IST4 staging, and copy marker;
+they replace the v9 entry and its first `iretq` frame with the
+candidate-specific `ret` landing at `F`.
+The off-console geometry check passed: 16 disjoint `0x500` slots, each
+with a five-word canary at `F−0x28`, a return pointer at `F`, and the
+first register frame at `F+8`. Compilation and geometry do not validate the
+12.02 instruction bytes or a console return.
+
+[verified-in-tree] `tools/khook_trace_classify.py` accepts the two
+candidate build tags with v9's attempt, patch, pretrigger, and sample-ready
+ordering. It rejects a `[K1]` pivot offset that conflicts with its build
+tag. `tests/test_khook_trace_classify.py` covers both tags, unchanged first
+samples, and conflicting offsets. The classifier still treats a missing
+changed frame or marker as an unobserved boundary, not failed delivery.
+
+[inference] Run `+0x2a82de` first because the 11.60 and 12.70 local-anchor
+relation agrees on that projection; then consider `+0x2ac2de` only after
+the first run's recovery and a clean native gate/IST4/scratch baseline.
+Each run must have a separate exact-build owner approval. Expected PC
+sequence: native preflight; linked observer READY; all 16 IST4 readbacks;
+changed gate readback; unchanged pretrigger canaries; `TRIGGER_BEGIN` and
+`SAMPLE_READY`; then a plausible changed hardware frame, copy marker,
+and clean return. A matching hardware frame supports `#DB` delivery;
+the copy marker supports reaching the continuation; return through
+the staged frame supports that candidate's pivot and return path.
+`TRIGGER_BEGIN` or an unchanged first sample alone proves neither.
+
+[inference] These observations have different boundaries. A changed
+five-word hardware frame supports exception delivery into the staged IST4
+slot, which happens before the candidate pivot executes. The copy marker
+requires the pivot to reach `pop_all_iret` and the later `rep movsb` copy;
+it is not a direct pivot check. `[K2]` is later still: the payload prints
+it only after user-mode return, observer teardown, restoration, and
+post-return reads (`pivot_compare_prearmed.c:636-665,793-830`). Missing
+either marker cannot by itself reject a candidate pivot. A same-attempt
+trace of the first landing at `F`, or a marker emitted immediately by that
+landing, would isolate pivot progress; a trace showing a different stack
+effect at the candidate address would falsify the proposed frame layout.
+[public-consensus] The 11.60 first arm uses its own debug-register
+continuation and TF/NOP trigger
+([`khook.c:390-478`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L390-L478));
+the 12.70 target uses a prestaged arm and places its store marker at the
+start of the second chain
+([`khook.c:373-491,545-555`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L373-L555)).
+Neither implementation waits for this diagnostic copy marker or `[K2]`.
+
+These live builds can panic or power off the console: an unrelated `#DB`
+can hit the shared changed gate, either projected address may execute
+different 12.02 instructions, or the continuation may be wrong. After a
+stopped run, do not send another ELF into an uncertain session. Hard
+power-cycle, restart elfldr, and read-only audit the native `#DB` gate,
+all IST4 pointers, and zero scratch before the next candidate. Record
+FW, exact ELF hash, PC/stdout manifests, actual last marker, observed
+console state, and recovery state for each run. The owner approved the
+comparison direction; the first exact-build result follows.
+
+### `+0x2a82de` live result and recovery
+
+[verified-on-console] On FW 12.02, the owner approved the exact
+`+0x2a82de` ELF SHA-256
+`9841712fcb542cc8289befd26f62d524d1705690cc0aad2d1212c04eed9e1e7c`
+for one `ICEBP`, with a hard power-cycle and native audit if the run stopped.
+The same-boot, read-only preflight reported the native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers, and zero nonzero scratch
+bytes (`[KA1]`/`[KA2]`, audit v2). The ELF was sent once. Stdout for attempt
+`0x23b085fa196` ended after `[KSTART]` and `[K1]` (CPU 15, 16 staged frames).
+The linked PC `ps5log/1` capture is identified by UTC start
+`2026-10-14T09:16:32.059397` and SHA-256
+`b77c90c85004444592a46eb5c24f87255062304a2875895c66e13d7754b114e2`;
+its matching JSON manifest reports 28 records, no sequence gaps,
+`close_reason=eof`, `bye=false`, and `clean=false`. Both transports carry
+the same attempt token.
+
+[verified-on-console] PC records confirm all 16 IST4 writes through slot 15,
+`GATE_DONE`, a readback matching the candidate gate and all 16 IST4 entries,
+unchanged pretrigger canaries, then `TRIGGER_BEGIN`, `SAMPLE_READY`, and one
+`SAMPLE_DONE` with all five canaries unchanged and marker zero. There is no
+later frame change, marker, `QUIESCED`, `[K2]`, return, or restoration record.
+The classifier boundary is
+`observer_first_targeted_read_completed_no_change_at_sample`, with incomplete
+PC transport. The console answered ICMP after the stop; this did not
+establish restoration. The owner then confirmed a hard power cycle and that
+elfldr was ready. The read-only recovery audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+was sent once on the new boot. It reported native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers across all 16 CPUs,
+`scratch_nonzero=0`, `changed_hw_frames=0`, `marked=0`, and
+`staged_images=0`. Recovery baseline is clean; this post-reboot audit
+cannot establish what happened after the earlier first sample. No second
+pivot candidate was sent.
+
+[inference] The unchanged first sample does not show whether `ICEBP` had
+executed yet: in the source, the main thread waits for `sample_ack`, calls
+`fullchain_icebp`, and only then restores the gate/IST4. A later observer
+frame, a marker, or a return would support progress beyond this sample;
+an instruction trace or a durable post-trigger marker could distinguish a
+stop before the instruction from a stop during #DB delivery. The captured
+evidence does not validate or falsify the `+0x2a82de` instruction semantics.
+
+### `+0x2ac2de` live result and recovery
+
+[verified-on-console] After the `+0x2a82de` hard power cycle and clean
+native audit, the owner separately approved one FW 12.02 run of the
+`+0x2ac2de` ELF SHA-256
+`f2fb7bdc24656447fc63527580d732053ffd90ff41d577770dd8dc66be594771`
+with the same recovery plan. It was sent once. Stdout for attempt
+`0x7ff06c11f3` ended after `[KSTART]` and `[K1]` (CPU 15, 16 staged
+frames). The linked PC `ps5log/1` capture is identified by UTC start
+`2026-10-14T09:22:11.952050` and SHA-256
+`4f1f3c5f9fe7e610ebddd180b27a461593632c05ff2c89f966a2af4a9f23e5d7`;
+its matching JSON manifest reports 28 records, no sequence gaps,
+`close_reason=eof`, `bye=false`, and `clean=false`. Both transports carry
+the same attempt token.
+
+[verified-on-console] The PC capture confirms all 16 IST4 writes,
+`GATE_DONE`, candidate gate and IST4 readback, unchanged pretrigger
+canaries, `TRIGGER_BEGIN`, `SAMPLE_READY`, and one `SAMPLE_DONE` with all
+five canaries unchanged and marker zero. No later frame change, marker,
+`QUIESCED`, `[K2]`, return, or restoration was recorded. The classifier
+again reports `observer_first_targeted_read_completed_no_change_at_sample`
+and incomplete PC transport. The console answered ICMP afterward, which
+did not establish restoration. The owner then confirmed a hard power
+cycle and that elfldr was ready. The read-only recovery audit v2 ELF
+SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+was sent once on the new boot. It reported native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers across all 16 CPUs,
+`scratch_nonzero=0`, `changed_hw_frames=0`, `marked=0`, and
+`staged_images=0`. Recovery baseline is clean; this post-reboot audit
+cannot establish what happened after the earlier first sample. No further
+live pivot ELF was sent.
+
+[inference] Both candidate runs have the same last observed boundary.
+Because `SAMPLE_DONE` can precede the actual `ICEBP`, this comparison
+does not distinguish the two candidate instruction sequences or prove a
+`#DB` delivery. A changed frame, copy marker, return, or independent
+instruction-level evidence on either candidate would falsify the claim
+that these runs are observationally indistinguishable at the captured
+boundary. Repeating offset guesses with this same observability contract
+would not resolve whether the stop occurred before, during, or after
+exception delivery.
+
+### Independent-reader follow-up on `+0x2a82de` and recovery
+
+[verified-on-console] The owner approved a second one-`ICEBP` run of the
+same FW 12.02 `+0x2a82de` ELF SHA-256
+`9841712fcb542cc8289befd26f62d524d1705690cc0aad2d1212c04eed9e1e7c`,
+this time with ps5debug-NG already running as a separate process. The
+PC-side watcher source SHA-256 was
+`29098745393d3df5116277fa64bd29deaa9839037b2243c44bbbf0b6dd5a11b4`;
+it reads vector-1's gate and the existing `0x5000` scratch span through
+the public `CMD_KERN_BASE`/`CMD_KERN_READ` protocol, reporting only gate,
+five-word frame, and marker transitions. A synthetic wire-protocol test
+detected a staged gate and changed frame, and a two-second console baseline
+returned native gate and 16 zero frames across 54 polls. No 12.02 text
+bytes were read or retained.
+
+[verified-on-console] The independent watcher started before the ELF and
+read native gate/zero frames. The ELF was sent once. Stdout attempt
+`0xd99a06855a` ended after `[KSTART]`/`[K1]` for CPU 15. The linked
+`ps5log/1` capture started at `2026-10-14T09:33:54.948262` UTC and has
+SHA-256 `75d2cbd31b478900ba4dd1ad3ffc9feab552011125971c9bbdac46d78f3e676d`;
+its manifest reports 28 records, no gaps, unclean EOF, and no BYE. It
+again ends after `TRIGGER_BEGIN`, `SAMPLE_READY`, and an unchanged
+`SAMPLE_DONE`, with no return or restoration marker.
+
+[verified-on-console] The separate watcher ran for 30 seconds and completed
+778 polls (JSONL SHA-256
+`a467123f4900e27957cc817a7574baf24c6730455aeac4ecd75e30af00f65c83`).
+It saw all 16 frame locations transition from zero to the expected staged
+canaries, then the gate transition to `+0x2a82de`. It recorded no later
+frame or marker transition and ended with the gate still patched, about
+19.5 seconds after that gate transition. The watcher continued receiving
+ps5debug-NG read responses after the trigger ELF's socket closed, and the
+console answered ICMP. This establishes that an independent process
+received unchanged frame bytes after the stop; the later read-freshness
+audit below limits any claim about the underlying kernel memory. It does
+not rely on the trigger payload's first-sample race. The owner then confirmed a hard
+power cycle and restarted elfldr. The read-only audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+was sent once on the new boot and reported native vector-1 target
+`+0x3188b0`, gate IST4, zero staged IST4 pointers across all 16 CPUs,
+`scratch_nonzero=0`, `changed_hw_frames=0`, `marked=0`, and
+`staged_images=0`. The recovery baseline is clean. This new-boot audit
+cannot resolve the prior boot's trap boundary. No further live pivot
+ELF was sent.
+
+[inference] If `ICEBP` was fetched and delivered through the staged
+IST4 gate, hardware should overwrite the five canaries before the pivot
+instruction executes. The watcher reported no such change, but its
+post-stop read freshness was not established. Its negative samples cannot
+distinguish a stop before `ICEBP` from #DB delivery followed by a pivot or
+continuation failure. A different exception-delivery stack or a transient
+change between polls is also possible. A checked kernel-copy result and
+a same-attempt changing data witness would test read freshness; a changed
+hardware frame or instruction-level trace would establish a later boundary.
+Reading candidate 12.02 instruction bytes through the
+ordinary kernel-read primitive is blocked by the execute-only text mapping
+(`02`); ps5debug-NG's kernel read uses that same class of pipe primitive.
+[verified-in-tree] In the public ps5debug-NG source,
+`debugger/source/kern.c:27-29` sends success and a buffer without checking
+the `kernel_copyout_fast` return value; `debugger/source/kern_rw_fast.c:94-95`
+also ignores the final pipe `read` result. The watcher observed genuine
+zero-to-canary and native-to-patched transitions before the stop, but a
+future post-stop experiment needs a changing data witness or a checked read
+path before treating repeated unchanged bytes as proof of fresh reads.
+
+## 2026-10-14 — first-continuation diagnostic prepared offline
+
+[public-consensus] The pinned 12.70 prestaged first arm places `POP_RAX`
+and `DBREG_RESUME` at its first landing, then runs `POP_RCX`, `POP_RAX`,
+`ST_RCX_RAX`, and `IRETQ` before `kh_trigger` returns
+([`khook.c:345-385,496-530`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L345-L530)).
+[inference] Accepting either 12.02 pivot as a working hypothesis does not
+validate this arm: `POP_RAX`, `POP_RCX`, `ST_RCX_RAX`, and the
+`DBREG_RESUME` entry/continuation still lack 12.02 instruction bytes
+(`16` §“Which 12.70 gadgets the reported path can exercise”). A 12.02
+text image or same-firmware instruction trace showing the required
+sequences at reviewed addresses would close or falsify those gaps.
+
+[verified-in-tree] A separate off-repo diagnostic source,
+`engineering/payloads/byepervisor_probe_1202/pivot_first_continuation.c:20-72,634-681`
+(SHA-256 `7d7354c9e68398265fc2f879d549e8a70b766a8607a1ad3e744fbd0075347991`),
+was cross-compiled for FW 12.02 `+0x2a82de`. The ELF SHA-256 is
+`3ef440aa72f790376f6172096f784a13bc58270cd2406b6ce56d7033d661de13`.
+It keeps the prior all-CPU IST4/gate staging and one-`ICEBP` wrapper.
+Per CPU, the source stages Kstuff `pop_all_iret` at the candidate pivot
+landing. Its first frame sets RDI to that CPU's own marker address and
+RAX to the marker value, then names `store_rax_rdi` at
+`ktext+0x2ac112`. A `nop_ret` padding word supports either documented
+store epilogue (`ret` or `pop rbp; ret`); both reach a second
+`pop_all_iret` frame and `doreti_iret` over the saved hardware frame.
+The source and ELF are outside this findings-only repository.
+
+[inference] A same-attempt positive marker supports pivot landing,
+`pop_all_iret` register loading, and the scalar store under this planned
+path; a return with matching marker and hardware frame additionally
+supports the second frame and user-mode return. A missing marker or
+return remains ambiguous, especially with unchecked ps5debug-NG reads.
+This diagnostic neither arms DR0/DR7 nor validates the 12.70 first arm.
+Its `store_rax_rdi`, `nop_ret`, and return entries are Kstuff table
+addresses, not byte-verified 12.02 gadgets. The compile-time bounds and
+offline stack-layout check passed for all 16 disjoint `0x500` slots;
+both store epilogues resolve
+to the second frame at slot `+0x2a0`. The updated host classifier accepts
+the distinct `firstcont-2a82de` build tag and names a positive result a
+*store* marker; 64 classifier tests pass. The live result follows.
+
+The live build can panic or power off the console: the pivot and Kstuff
+entry bytes are unverified, and the shared gate may receive an unrelated
+`#DB`. If an approved run stops without observed restoration, the recovery
+plan is a hard power cycle, elfldr restart, then a read-only native
+gate/IST4/zero-scratch audit before any further live ELF. The exact ELF
+hash above and this plan must be approved before a live run; record the
+actual markers and recovery state alongside the result.
+
+### `firstcont-2a82de` live result
+
+[verified-on-console] The owner approved one FW 12.02 run of the exact ELF
+SHA-256 `3ef440aa72f790376f6172096f784a13bc58270cd2406b6ce56d7033d661de13`.
+The same-boot read-only audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
+reported native vector-1 target `+0x3188b0`, gate IST4, no staged IST4
+pointers, zero scratch, and no changed frames or markers. The live ELF was
+sent once. Stdout for attempt `0x181dac184f5` ended at `[K1]` after
+`[KSTART]`, naming CPU 15 and all 16 staged frames. The linked PC log
+started `2026-10-14T10:12:22.102259+00:00` and has SHA-256
+`44d146256b712bcd7d1ab088b4afb7a995d098f57e6f69cf59cf571532a4f8c5`.
+Its manifest reports 28 records, no sequence gaps, `close_reason=eof`,
+`bye=false`, and `clean=false`. The stdout and PC attempt tokens match.
+
+[verified-on-console] The PC record confirms all 16 IST4 writes,
+`GATE_DONE`, readback of the selected gate and all 16 IST4 entries,
+unchanged pretrigger canaries, `TRIGGER_BEGIN`, `SAMPLE_READY`, and one
+`SAMPLE_DONE` with the five canaries unchanged and marker zero. There is
+no recorded continuation marker, changed frame, `[K1r]`, `[K2]`, `BYE`,
+or restoration. The classifier boundary is
+`observer_first_targeted_read_completed_no_change_at_sample`, with
+incomplete PC transport. The console answered ICMP after the connection
+closed; this does not establish that the gate was restored.
+
+[inference] This first sample can precede the `ICEBP` instruction because
+the main thread waits for the worker's sample acknowledgement before
+executing it. A changed later sample, positive marker, or clean return
+would support progression; a same-run trace of the instruction and
+exception path could distinguish the unobserved cases. The zero marker
+does not falsify either the pivot or the first-continuation chain. The
+agreed recovery is a hard power cycle followed by a read-only native
+gate/IST4/zero-scratch audit before any further ELF.
+
+[verified-on-console] The owner confirmed a hard power cycle and elfldr
+restart. The read-only audit v2 ELF above was sent once on that boot, but
+its elfldr socket produced no stdout for 25 seconds and timed out. ICMP
+and port 9021 still answered afterward. The audit has no `[KA1]` or
+`[KA2]` result; **the post-reboot native baseline remains unverified**.
+No further ELF was sent. Console UI and elfldr status after the timeout
+were requested from the owner; the owner reported that the console was
+fine. This reports UI health, not a completed native baseline audit.
