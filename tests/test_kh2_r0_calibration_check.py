@@ -19,6 +19,8 @@ IST6 = BASE + 0x2e8afe0 + CPU * 0x68 + 0x4c
 
 def trace():
     payloads = [
+        f"KH2C stage=MAIN_BASELINE fw=12.02 cpu={CPU} build_sha={BUILD} "
+        "gate_lo=0x1 gate_hi=0x2 ist6=0x3",
         f"KH2R stage=R0 cpu={CPU} region=gate addr=0x{GATE:x} bytes=16 state=begin",
         f"KH2R stage=R0 cpu={CPU} region=gate addr=0x{GATE:x} bytes=16 state=done",
         f"KH2R stage=R0 cpu={CPU} region=ist6 addr=0x{IST6:x} bytes=8 state=begin",
@@ -29,7 +31,7 @@ def trace():
     lines = ["HELLO ps5log/1 title=KH2R01202 app=kh2-r0-calibration boot=0x1"]
     lines += [f"{i}\t{i*1000}\tMARK\t{payload}"
               for i, payload in enumerate(payloads, 1)]
-    lines.append("BYE seq=6 reason=done")
+    lines.append("BYE seq=7 reason=done")
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -46,7 +48,8 @@ class R0CalibrationCheck(unittest.TestCase):
         result = verified(raw)
         self.assertEqual(result["status"], "retained_calibration_complete")
         self.assertEqual(result["confirmed_prefix"],
-                         ["gate begin", "gate done", "ist6 begin", "ist6 done", "R0"])
+                         ["main baseline", "gate begin", "gate done",
+                          "ist6 begin", "ist6 done", "R0"])
         self.assertEqual(result["cpu"], CPU)
         self.assertEqual(result["observer_cpu"], 3)
         self.assertEqual(inspect(raw, None, EXIT, BASE, BUILD)["status"],
@@ -70,6 +73,14 @@ class R0CalibrationCheck(unittest.TestCase):
         wrong_build = trace().replace(f"build_sha={BUILD}".encode(),
                                       f"build_sha={'b'*64}".encode())
         self.assertTrue(verified(wrong_build)["issues"])
+        wrong_main_word = trace().replace(b"gate_lo=0x1 gate_hi=0x2 ist6=0x3",
+                                          b"gate_lo=0x4 gate_hi=0x2 ist6=0x3", 1)
+        result = verified(wrong_main_word)
+        self.assertIn("worker R0 values differ from main baseline", result["issues"])
+        self.assertEqual(result["next_missing"], "R0")
+        no_main = b"\n".join(line for line in trace().splitlines()
+                             if b"KH2C stage=MAIN_BASELINE" not in line) + b"\n"
+        self.assertEqual(verified(no_main)["next_missing"], "main baseline")
 
     def test_capture_error_manifest_gap_and_missing_exit_are_distinct(self):
         raw = trace()
@@ -82,9 +93,9 @@ class R0CalibrationCheck(unittest.TestCase):
                                            "clean": True, "gaps": []},
                                      EXIT.replace(BUILD, "b" * 64), BASE, BUILD)
         self.assertEqual(stale_build_stdout["return_marker"], "missing_clean_exit")
-        error = raw.replace(b"BYE seq=6 reason=done\n",
-                            b"6\t6000\tERR\tKH2E stage=R0 cpu=2 operation=finish "
-                            b"region=pipe addr=0x0 code=-2\nBYE seq=7 reason=done\n")
+        error = raw.replace(b"BYE seq=7 reason=done\n",
+                            b"7\t7000\tERR\tKH2E stage=R0 cpu=2 operation=finish "
+                            b"region=pipe addr=0x0 code=-2\nBYE seq=8 reason=done\n")
         self.assertTrue(any("KH2E" in issue for issue in verified(error)["issues"]))
 
     def test_cli_requires_same_run_manifest_and_final_stdout(self):
