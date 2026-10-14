@@ -678,8 +678,8 @@ does not validate the argument values. [public-consensus]
 [`khook.h:30-37`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/khook.h#L30-L37),
 and [`khook.c:388-435`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/khook.c#L388-L435)
 define those positions and writes. [verified-in-tree]
-`tools/kh2_donor_gadget_pointer_audit.py:17-85` reports only derived counts,
-pages, prefix checks, and input hashes;
+`tools/kh2_donor_gadget_pointer_audit.py:18-114` reports only derived counts,
+pages, nearest non-scratch text pointers, prefix checks, and input hashes;
 `tests/test_kh2_donor_gadget_pointer_audit.py` checks the cave boundary,
 outside hits, and a broken prefix. Reproduce without adding a dump here:
 
@@ -698,6 +698,28 @@ function with paired 12.02 text bytes, would overturn the corresponding
 provenance or projection limit. This held data image does not tell us when
 the chain was staged, and the 12.02 candidate at `+0x2099000` has no
 established homologous relation to the 13.60 cave.
+
+[verified-on-dump] The closest **outside-scratch** aligned text pointers to
+the donor `DBREG_RESUME` entry (`ktext+0x2529d8`) are three data qwords at
+`+0x2080fe8`, `+0x3174560`, and `+0x3178a28`, all targeting
+`ktext+0x252a90` (`+0xb8` from the gadget). Bounded disassembly of the
+held 13.60 text image (SHA-256
+`20da45a0910c990153fbfb7c94e16356867e0bd84f7c9fbf754a45a5dd129673`)
+shows the `DBREG_RESUME` linear tail returns at `+0x252a32`, followed by
+padding and other code before `+0x252a90`. Reproduce the boundary check:
+
+```sh
+objdump -D -b binary -m i386:x86-64 \
+  --start-address=0x2529d8 --stop-address=0x252a9d \
+  /path/outside/repo/13.60-kernel-text.bin
+```
+
+[inference] The `+0xb8` pointer is a proximity false lead for the resume
+tail (`11` #63); it is not a pointer into the tail's straight-line
+instruction sequence. A proved control-flow edge from that tail to
+`+0x252a90`, or a separately identified 12.02 containing function, would
+falsify a broader exclusion. The pointer's presence outside the published
+scratch span alone does not prove that its owner is firmware-native.
 
 [verified-on-dump] A wider data-pointer scan found two 13.60 rows at
 `kernel-data.bin+0x1c6718` and `+0x1c9948`, separated by `0x3230`.

@@ -72,6 +72,9 @@ gadget pointers in held 13.60 kdata are in that donor cave, and the
 the donor's staged pointers nor the 12.02 zero run establishes a native
 12.02 gadget address or safe scratch owner. A pristine donor baseline and
 12.02 code/ownership evidence could change those conclusions.
+[verified-on-dump] The nearest donor data pointer outside this scratch span
+to `DBREG_RESUME` targets code **after** the donor tail's `ret`, so it does
+not close that entry-address gap (`11` #63; `16` §“Exact donor gadget pointers”).
 
 The local 12.02 kdata dump was taken while Kstuff ran; its patched gate and
 IST values are **not** a native baseline (`11` #19). A fresh read-only live

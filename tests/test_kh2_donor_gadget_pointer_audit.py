@@ -41,6 +41,10 @@ class DonorGadgetPointerAuditTests(unittest.TestCase):
         self.assertEqual(result["inside_published_scratch"], 5)
         self.assertEqual(result["outside_published_scratch"], 1)
         self.assertEqual(result["hits_by_page"], {"0x0": 1, "0x4000": 5})
+        self.assertEqual(result["nearest_outside_scratch"]["ST_RCX_RDX"], {
+            "distance": "0x10", "data_offsets": ["0x180"],
+            "text_offsets": ["0x50"], "location_count": 1,
+        })
 
     def test_missing_prefix_and_unaligned_pointer_do_not_pass(self):
         struct.pack_into("<Q", self.data, 0x4a30, 0)
@@ -49,6 +53,7 @@ class DonorGadgetPointerAuditTests(unittest.TestCase):
         self.assertFalse(result["big_chain_prefix_matches"])
         self.assertEqual(result["exact_aligned_hits"], 4)
         self.assertEqual(result["outside_published_scratch"], 0)
+        self.assertIsNone(result["nearest_outside_scratch"]["OUTSIDE"])
 
     def test_short_image_rejects_published_scratch_span(self):
         with self.assertRaisesRegex(ValueError, "scratch span"):
