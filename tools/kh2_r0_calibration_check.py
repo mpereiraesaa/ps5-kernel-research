@@ -17,6 +17,7 @@ SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
 PHASES = ("main start", "main gate begin", "main gate done", "main ist6 begin",
           "main ist6 done", "main baseline", "gate begin", "gate done",
           "ist6 begin", "ist6 done", "R0")
+GATE_DATA_OFFSET = 0x2e88310
 
 
 def fields(payload):
@@ -43,6 +44,37 @@ def address(value):
     if result >= 1 << 64:
         raise ValueError("hex value outside uint64")
     return result
+
+
+def base_from_gate_bracket(raw):
+    """Derive a candidate kdata base from one retained main gate begin.
+
+    The full inspect() result must still pass before using this base. The
+    derivation is not an independent measurement of KERNEL_ADDRESS_DATA_BASE.
+    """
+    candidates = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        parts = line.split("\t", 3)
+        if len(parts) != 4 or parts[2] != "MARK" or not parts[3].startswith("KH2C "):
+            continue
+        data = fields(parts[3][5:])
+        if (data.get("stage"), data.get("region"), data.get("state")) != \
+                ("MAIN_READ", "gate", "begin"):
+            continue
+        if set(data) != {"stage", "fw", "cpu", "build_sha", "attempt",
+                         "region", "addr", "bytes", "state"} or \
+                data["fw"] != "12.02" or data["bytes"] != "16":
+            raise ValueError("invalid main gate begin bracket")
+        gate = address(data["addr"])
+        if gate < GATE_DATA_OFFSET:
+            raise ValueError("main gate address below published IDT offset")
+        base = gate - GATE_DATA_OFFSET
+        if not base or base % 0x1000 or base >> 47 != 0x1ffff:
+            raise ValueError("derived kdata base is not a page-aligned kernel address")
+        candidates.append(base)
+    if len(candidates) != 1:
+        raise ValueError("expected exactly one main gate begin bracket")
+    return candidates[0]
 
 
 def inspect(raw, manifest, stdout, kdata_base, build_sha):
