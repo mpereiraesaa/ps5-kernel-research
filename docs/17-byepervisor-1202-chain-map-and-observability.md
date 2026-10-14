@@ -606,7 +606,8 @@ layout or gadget bytes, a test-hook boundary, or a return signal. A socket
 send result still needs a retained PC run file and manifest to establish
 transport integrity.
 
-**Native R0 calibration, built offline and not run:** [verified-in-tree]
+**Native R0 calibration, built offline and run once with owner approval:**
+[verified-in-tree]
 `engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:40-220`
 and `Makefile:31-34,61,137-138` now build
 `byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
@@ -636,8 +637,8 @@ kernel write or #DB trigger. [verified-in-tree] The observer pipe reader
 still changes its own kernel pipe metadata before each read and must restore
 it (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:60-105`).
 
-[inference] For any separately approved FW 12.02 calibration run, the
-expected PC evidence is `KH2C MAIN_START`, main gate begin/done, main
+[inference] The expected PC evidence for the approved FW 12.02 calibration
+was `KH2C MAIN_START`, main gate begin/done, main
 IST6 begin/done, main baseline, and `KH2R` worker gate/IST6 begin/done,
 then a single R0 record with the build tag and matching native words.
 After the worker stops, the ELF prints a pipe-restored `[KH2R0]` marker,
@@ -646,17 +647,44 @@ attempt-tagged `[KH2R0] exit rc=0 ...`
 marker. The attempt token combines a monotonic clock sample and process ID;
 it is a run-correlation aid, not a cryptographic identity or proof of
 ELF completion (`11` #58).
-A returned prepare/read/finish error or missing R0
-would narrow **adapter/worker/transport setup**, not the PR #97 post-`[K1]`
-trap boundary. A same-attempt PC log lacking these records despite a
-reported clean return would falsify this expected observation. Actual
-console observation: **none**. The separate pipe's kernel metadata writes,
-worker lifetime, and restore can still fail or wedge; the source parks on
-uncertain worker/restore state. A future console run needs explicit owner
-approval for this exact ELF and a hard power-cycle recovery plan, with
-post-boot read-only baseline inspection. The calibration does not establish
-12.02 gadget bytes, scratch ownership, a two-trap chain, or retained KH2
-frame/journal reports.
+A returned prepare/read/finish error or missing R0 would narrow
+**adapter/worker/transport setup**, not the PR #97 post-`[K1]` trap
+boundary. A same-attempt PC log lacking these records despite a reported
+clean return would falsify the expected observation. The separate pipe's
+kernel metadata writes, worker lifetime, and restore can still fail or
+wedge; the source parks on uncertain worker/restore state.
+
+**Approved console result, 2026-10-14.** [verified-on-console] The owner
+approved the exact FW 12.02 ELF SHA-256 above, confirmed elfldr was ready,
+and specified a hard power cycle followed by a read-only gate/IST baseline
+check if it parked or powered off. It was sent once. The PC retained the
+expected 11 records in order: `MAIN_START`, both main gate/IST6 read
+brackets, `MAIN_BASELINE`, both worker gate/IST6 read brackets, and `R0`.
+The manifest reports 11 records, no gaps, and a clean `BYE`; the elfldr
+response includes the same-attempt start and `exit rc=0` markers, a
+pipe-restore completion marker, and an affinity-restored marker. The
+selected CPU was 9 and observer CPU 11. Both reported the same native gate
+words (`lo=0x96898e04002088b0`, `hi=0xffffffff`) and selected IST6 value
+(`0`). The elfldr listener answered a port check after the run; no recovery
+or power cycle was needed. The off-repo PC log, manifest, and stdout captures
+have respective SHA-256 digests
+`362090e9b8c0a4fcb14cccc8ea7d0dbfd72e46619a11abeed346a748285732eb`,
+`d229d36d6339a6db0c6731dc6d4d5ea633dfd7f736469844b9420107f401c700`,
+and `a6f5a6ac55fd106c167f2e7498cc0bede8998f09a2a9ea307750441dd74244c3`.
+No raw log or console identity is committed here.
+
+[verified-on-console] The standalone checker below returned
+`retained_calibration_complete`, `transport=complete`,
+`return_marker=reported_clean`, and `issues=[]` for the retained captures.
+Its `--kdata-base` input was derived from the recorded gate address and the
+published IDT offset, then checked against the IST6 record; this run did
+not independently capture the same-boot base. [inference] The result
+supports reported worker scheduling, separate-pipe gate/IST6 reads, PC
+retention, and a clean user-mode return for this calibration. An independent
+same-attempt read disagreeing with the reported words would falsify the
+read-value claim. It does not establish 12.02 gadget bytes, scratch
+ownership, a two-trap chain, #DB delivery, or retained KH2 frame/journal
+reports.
 
 [verified-in-tree] The full `khook_trace_classify.py` requires B0/B1 before
 R0, so it rejects the standalone ELF's R0-only log (`11` #52). Use
