@@ -14,7 +14,7 @@ from pathlib import Path
 
 HEX = re.compile(r"0x[0-9a-fA-F]+\Z")
 SHA = re.compile(r"[0-9a-fA-F]{64}\Z")
-PHASES = ("main gate begin", "main gate done", "main ist6 begin",
+PHASES = ("main start", "main gate begin", "main gate done", "main ist6 begin",
           "main ist6 done", "main baseline", "gate begin", "gate done",
           "ist6 begin", "ist6 done", "R0")
 
@@ -75,29 +75,40 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
                 if data.get("fw") != "12.02" or \
                         data.get("build_sha", "").lower() != build_sha.lower():
                     raise ValueError("main read firmware or build mismatch")
-                if data.get("stage") == "MAIN_READ":
+                if data.get("stage") == "MAIN_START":
+                    if set(data) != {"stage", "fw", "cpu", "build_sha", "attempt"}:
+                        raise ValueError("invalid main start fields")
+                    attempt = address(data["attempt"])
+                    if attempt == 0:
+                        raise ValueError("zero main attempt token")
+                    events.append({"phase": "main start", "seq": seq,
+                                   "cpu": decimal(data["cpu"], 0, 15),
+                                   "attempt": attempt})
+                elif data.get("stage") == "MAIN_READ":
                     if set(data) != {"stage", "fw", "cpu", "build_sha",
-                                     "region", "addr", "bytes", "state"} or \
+                                     "attempt", "region", "addr", "bytes", "state"} or \
                             data["region"] not in ("gate", "ist6") or \
                             data["state"] not in ("begin", "done"):
                         raise ValueError("invalid main read bracket")
                     events.append({"phase": f'main {data["region"]} {data["state"]}',
                                    "seq": seq, "cpu": decimal(data["cpu"], 0, 15),
+                                   "attempt": address(data["attempt"]),
                                    "addr": address(data["addr"]),
                                    "bytes": decimal(data["bytes"], 1, 16)})
                 elif data.get("stage") == "MAIN_BASELINE":
-                    if set(data) != {"stage", "fw", "cpu", "build_sha", "gate_lo",
+                    if set(data) != {"stage", "fw", "cpu", "build_sha", "attempt", "gate_lo",
                                      "gate_hi", "ist6"}:
                         raise ValueError("invalid main baseline fields")
                     events.append({"phase": "main baseline", "seq": seq,
                                    "cpu": decimal(data["cpu"], 0, 15),
+                                   "attempt": address(data["attempt"]),
                                    "gate_lo": address(data["gate_lo"]),
                                    "gate_hi": address(data["gate_hi"]),
                                    "ist6": address(data["ist6"])})
                 else:
                     raise ValueError("unexpected main calibration stage")
             elif kind == "KH2C" and level == "ERR":
-                if set(data) != {"stage", "fw", "cpu", "build_sha", "region",
+                if set(data) != {"stage", "fw", "cpu", "build_sha", "attempt", "region",
                                  "addr", "bytes", "code"} or \
                         data["stage"] != "MAIN_READ_ERROR" or \
                         data["fw"] != "12.02" or \
@@ -105,6 +116,7 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
                         data["region"] not in ("gate", "ist6"):
                     raise ValueError("invalid main read error")
                 decimal(data["cpu"], 0, 15)
+                address(data["attempt"])
                 address(data["addr"])
                 decimal(data["bytes"], 1, 16)
                 if not re.fullmatch(r"-[1-9][0-9]*", data["code"]):
@@ -147,6 +159,8 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
             issues.append(f"KH2 record at {parts[0]}: {exc}")
 
     cpu = next((event["cpu"] for event in events), None)
+    attempt = next((event["attempt"] for event in events
+                    if event["phase"] == "main start"), None)
     expected = []
     if cpu is not None:
         gate = kdata_base + 0x2e88310
@@ -154,11 +168,16 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
         if gate + 16 > 1 << 64 or ist6 + 8 > 1 << 64:
             raise ValueError("derived gate or IST6 address overflows uint64")
         expected = [
-            {"phase": "main gate begin", "addr": gate, "bytes": 16},
-            {"phase": "main gate done", "addr": gate, "bytes": 16},
-            {"phase": "main ist6 begin", "addr": ist6, "bytes": 8},
-            {"phase": "main ist6 done", "addr": ist6, "bytes": 8},
-            {"phase": "main baseline"},
+            {"phase": "main start", "attempt": attempt},
+            {"phase": "main gate begin", "addr": gate, "bytes": 16,
+             "attempt": attempt},
+            {"phase": "main gate done", "addr": gate, "bytes": 16,
+             "attempt": attempt},
+            {"phase": "main ist6 begin", "addr": ist6, "bytes": 8,
+             "attempt": attempt},
+            {"phase": "main ist6 done", "addr": ist6, "bytes": 8,
+             "attempt": attempt},
+            {"phase": "main baseline", "attempt": attempt},
             {"phase": "gate begin", "addr": gate, "bytes": 16},
             {"phase": "gate done", "addr": gate, "bytes": 16},
             {"phase": "ist6 begin", "addr": ist6, "bytes": 8},
@@ -190,11 +209,24 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
                      else "incomplete")
         if transport != "complete":
             issues.append("manifest digest, clean close, or sequence gaps failed")
-    exit_marker = f"[KH2R0] exit rc=0 build={build_sha.lower()}; affinity restored"
+    start_marker = (f"[KH2R0] start attempt=0x{attempt:x} build={build_sha.lower()}"
+                    if attempt is not None else None)
+    exit_marker = (f"[KH2R0] exit rc=0 build={build_sha.lower()} "
+                   f"attempt=0x{attempt:x}; affinity restored"
+                   if attempt is not None else None)
+    stdout_lines = [] if stdout is None else stdout.splitlines()
+    start_positions = [index for index, line in enumerate(stdout_lines)
+                       if line == start_marker]
+    exit_positions = [index for index, line in enumerate(stdout_lines)
+                      if line == exit_marker]
     return_state = "not_supplied" if stdout is None else (
-        "reported_clean" if exit_marker in stdout.splitlines() else "missing_clean_exit")
+        "reported_clean" if len(start_positions) == len(exit_positions) == 1 and
+                            start_positions[0] < exit_positions[0] else
+        "unlinked_attempt" if any(line.startswith(
+            f"[KH2R0] exit rc=0 build={build_sha.lower()} attempt=0x")
+            for line in stdout_lines) else "missing_clean_exit")
     if stdout is not None and return_state != "reported_clean":
-        issues.append("final affinity-restored stdout marker absent")
+        issues.append("start/final stdout attempt link absent or mismatched")
     complete = prefix == len(PHASES) and not issues and transport == "complete" \
         and return_state == "reported_clean"
     return {
@@ -206,8 +238,9 @@ def inspect(raw, manifest, stdout, kdata_base, build_sha):
         "transport": transport,
         "return_marker": return_state,
         "cpu": cpu,
+        "attempt": None if attempt is None else f"0x{attempt:x}",
         "observer_cpu": next((e["observer_cpu"] for e in events if e["phase"] == "R0"), None),
-        "scope": "reported reads/worker return only; no kernel ownership or #DB proof",
+        "scope": "reported reads/worker return and attempt correlation only; no kernel ownership or #DB proof",
     }
 
 

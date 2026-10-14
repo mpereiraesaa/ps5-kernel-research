@@ -67,11 +67,11 @@ evidence that the classifier assesses (`17`).
 
 The standalone native R0 calibration ELF emits no B0/B1 stages, so the full
 KH2 classifier rejects its R0 milestone. [verified-in-tree]
-`tools/kh2_r0_calibration_check.py:48-209` provides the narrower join of
-ordered main-thread gate/IST6 begin/done brackets, its native baseline,
-worker gate/IST6 read brackets, R0 identity,
-PC manifest, and final stdout
-marker; `17` records its build tag and command. It does not classify a
+`tools/kh2_r0_calibration_check.py:48-254` provides the narrower join of
+the main start token, ordered main-thread gate/IST6 begin/done brackets,
+its native baseline, worker gate/IST6 read brackets, R0 identity,
+PC manifest, and matching stdout start/final markers; `17` records its
+build tag and command. It does not classify a
 two-trap run (`11` #52).
 
 The separate local payload workspace also has a **read-only KH2 capture
