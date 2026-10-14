@@ -527,14 +527,17 @@ transport integrity.
 
 **Native R0 calibration, built offline and not run:** [verified-in-tree]
 `engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:40-195`
-and `Makefile:31-32,60,136-137` now build
+and `Makefile:31-34,61,137-138` now build
 `byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
 pthread worker, separate-pipe reader, and `ps5log/1` sender. The built ELF
 SHA-256 is
-`30ce0004439d6210aa709655fd007afa7b5d872446d3c701010ff5b92df0300e`;
-its source-list build tag is
-`9b5f9c92d62730dbd974ba46c041071fe4a57a826c766588fd9f5e4d1fafa50d`
-(the tag is **not** the ELF hash). `make kh2-r0-calibration` completed with
+`e74cb55fb7027aba8958c3c5dc1eba3c5ad10bcadaa63c9bdbf6af2fa3be0938`;
+its source/header input-list build tag is
+`8246edeb216649ef988f25ac570c3b1ea3d8d9929c1919fb77c7b68d75b1b4e9`
+(the tag is **not** the ELF hash). The source/header list covers every
+direct local/public header named as an ELF dependency (`11` #57). The tag
+hashes the ordered per-file digests without local pathnames; it does
+not pin compiler, SDK, or build flags. `make -B kh2-r0-calibration` completed with
 `-Wall -Wextra -Werror`; the actual-adapter host runtime check passed.
 The calibration main selects two permitted CPUs, pins itself, opens the
 PC logger, and sends `KH2C MAIN_READ` begin/done brackets around the
@@ -576,7 +579,7 @@ R0, so it rejects the standalone ELF's R0-only log (`11` #52). Use
 python3 tools/kh2_r0_calibration_check.py retained-r0.log \
   --manifest retained-r0.json --stdout elfldr-r0.txt \
   --kdata-base <same-boot-kdata-base> \
-  --build-sha 9b5f9c92d62730dbd974ba46c041071fe4a57a826c766588fd9f5e4d1fafa50d
+  --build-sha 8246edeb216649ef988f25ac570c3b1ea3d8d9929c1919fb77c7b68d75b1b4e9
 ```
 
 It derives the 12.02 gate and selected IST6 addresses from the supplied

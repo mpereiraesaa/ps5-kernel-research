@@ -217,7 +217,8 @@ def main():
     parser.add_argument("--manifest", type=Path, help="same-run ps5logd JSON manifest")
     parser.add_argument("--stdout", type=Path, help="same-attempt elfldr stdout capture")
     parser.add_argument("--kdata-base", type=lambda value: int(value, 0), required=True)
-    parser.add_argument("--build-sha", required=True, help="source-list build tag")
+    parser.add_argument("--build-sha", required=True,
+                        help="source/header input-list build tag, not ELF SHA-256")
     args = parser.parse_args()
     try:
         manifest = json.loads(args.manifest.read_text()) if args.manifest else None
