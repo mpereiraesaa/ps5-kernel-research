@@ -25,8 +25,12 @@ GETUID_ENTRY_1202 = 0x3130A0
 PIVOT_1202_CANDIDATES = {"12xx": 0x2A82DE, "13xx": 0x2AC2DE}
 PIVOT_COMPARE_BUILDS = ("pivot-2a82de", "pivot-2ac2de")
 PIVOT_COMPARE_OFFSETS = {"pivot-2a82de": "2a82de",
-                         "pivot-2ac2de": "2ac2de"}
-V9_LIKE_BUILDS = ("prearmed-v9", *PIVOT_COMPARE_BUILDS)
+                         "pivot-2ac2de": "2ac2de",
+                         "firstcont-2a82de": "2a82de"}
+FIRST_CONTINUATION_BUILDS = ("firstcont-2a82de",)
+FIRST_CONTINUATION_OFFSETS = ("2b35ce", "2ac112", "2b0b26", "2b362d")
+V9_LIKE_BUILDS = ("prearmed-v9", *PIVOT_COMPARE_BUILDS,
+                  *FIRST_CONTINUATION_BUILDS)
 SAMPLE_BRACKET_BUILDS = ("prearmed-v8", *V9_LIKE_BUILDS)
 RECENT_READ_BUILDS = ("prearmed-v7", *SAMPLE_BRACKET_BUILDS)
 ATTEMPT_BUILDS = ("prearmed-v6", *RECENT_READ_BUILDS)
@@ -1273,21 +1277,32 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     fc1 = _fc1_records(pc_text)
     stdout_starts = re.findall(
         r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) "
-        r"build=(prearmed-v[6789]|pivot-2a82de|pivot-2ac2de)\r?$",
+        r"build=(prearmed-v[6789]|pivot-2a82de|pivot-2ac2de|firstcont-2a82de)\r?$",
         live_text)
     stdout_attempt = stdout_starts[0][0] if len(stdout_starts) == 1 else None
     stdout_build = stdout_starts[0][1] if len(stdout_starts) == 1 else None
     pivot_line = re.search(r"(?m)^\[K1\].*\bpivot=\+0x([0-9a-fA-F]+)\b",
                            live_text)
+    firstcont_line = re.search(
+        r"(?m)^\[K1\].*\bpop_all=\+0x([0-9a-fA-F]+) "
+        r"store_rax_rdi=\+0x([0-9a-fA-F]+) "
+        r"nop_ret=\+0x([0-9a-fA-F]+) "
+        r"doreti=\+0x([0-9a-fA-F]+)\b", live_text)
     attempt_mode = ("[KSTART]" in live_text or
                     any(f"build={build}" in pc_text for build in ATTEMPT_BUILDS) or
                     "FCM phase=START" in pc_text)
     attempt_conflict = (len(stdout_starts) > 1 or
                         "duplicate FCM START" in fc1["issues"] or
-                        (stdout_build in PIVOT_COMPARE_BUILDS and
+                        (stdout_build in PIVOT_COMPARE_OFFSETS and
                          pivot_line is not None and
                          pivot_line.group(1).lower() !=
                          PIVOT_COMPARE_OFFSETS[stdout_build]) or
+                        (stdout_build in FIRST_CONTINUATION_BUILDS and
+                         "[K1]" in live_text and
+                         (firstcont_line is None or
+                          tuple(part.lower() for part in
+                                firstcont_line.groups()) !=
+                          FIRST_CONTINUATION_OFFSETS)) or
                         ("[KSTART]" in live_text and stdout_attempt is None) or
                         (fc1["attempt"] is not None and
                          not fc1["attempt_integrity"]) or
@@ -1324,7 +1339,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         r"marker=(MATCH|MISMATCH)(?: observer=(OK|FAIL))?\b", live_text)
     pc_stage = re.search(
         r"^\d+\t\d+\tMARK\tstaged frames=16 cpu=(\d+) "
-        r"chain=(?:pivot-)?popall-copy-popall-doreti\b", pc_text, re.M)
+        r"chain=(?:pivot-)?popall-(?:copy|store)-popall-doreti\b", pc_text, re.M)
     pc_return = re.search(
         r"^\d+\t\d+\t(?:MARK|WARN)\treturned after INT1 cpu=(\d+) "
         r"frame=(MATCH|MISMATCH) marker=(MATCH|MISMATCH) "
@@ -1386,8 +1401,12 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
                   (" STAGED " in cpu_line.group(0) or staged_image)):
                 frame = "canary_unchanged"
 
+    build = stdout_build or fc1["version"]
+    marker_mechanism = ("store_rax_rdi" if build in FIRST_CONTINUATION_BUILDS
+                        else "rep_movsb")
     signals = {
-        "build": stdout_build or fc1["version"],
+        "build": build,
+        "marker_mechanism": marker_mechanism,
         "cpu": cpu,
         "cpu_identity_conflict": cpu_identity_conflict,
         "staged_stdout": bool(stage),
@@ -1456,12 +1475,16 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
           cpu in fc1["marker_cpus"]) or (
           pc_linked and fc1["sample_done"] and fc1["sample_marker_written"]) or (
           same_attempt_verified and marker == "written" and frame == "changed"):
-        boundary = "copy_marker_seen_return_or_transport_unproven"
+        boundary = ("store_marker_seen_return_or_transport_unproven"
+                    if build in FIRST_CONTINUATION_BUILDS else
+                    "copy_marker_seen_return_or_transport_unproven")
     elif (pc_linked and cpu is not None and
           cpu in fc1["frame_cpus"]) or (
           pc_linked and fc1["sample_done"] and fc1["sample_frame_changed"]) or (
           same_attempt_verified and frame == "changed"):
-        boundary = "frame_changed_copy_marker_or_later_unproven"
+        boundary = ("frame_changed_store_marker_or_later_unproven"
+                    if build in FIRST_CONTINUATION_BUILDS else
+                    "frame_changed_copy_marker_or_later_unproven")
     elif pc_linked and fc1["pretrigger_mismatch"]:
         boundary = "observer_pretrigger_mismatch_before_trigger"
     elif pc_linked and fc1["read_fail_after_gate_before_pretrigger"]:
@@ -1513,7 +1536,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
             (pc_linked and cpu is not None and
              (set(fc1["frame_cpus"] + fc1["marker_cpus"]) - {cpu}))),
         "caveat": ("Audit evidence needs an explicit same-attempt assertion; "
-                   "prearmed-v6/v7/v8/v9 and pivot-comparison PC evidence "
+                   "prearmed-v6/v7/v8/v9, pivot-comparison, and "
+                   "first-continuation PC evidence "
                    "need matching attempt tokens, "
                    "while older PC logs need an explicit same-run assertion. "
                    "A changed observer or audit frame supports activity "

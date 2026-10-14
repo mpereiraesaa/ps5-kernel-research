@@ -2065,9 +2065,10 @@ canaries, then the gate transition to `+0x2a82de`. It recorded no later
 frame or marker transition and ended with the gate still patched, about
 19.5 seconds after that gate transition. The watcher continued receiving
 ps5debug-NG read responses after the trigger ELF's socket closed, and the
-console answered ICMP. This directly establishes a *sampled* post-stop
-unchanged frame state in an independent process; it does not rely on the
-trigger payload's first-sample race. The owner then confirmed a hard
+console answered ICMP. This establishes that an independent process
+received unchanged frame bytes after the stop; the later read-freshness
+audit below limits any claim about the underlying kernel memory. It does
+not rely on the trigger payload's first-sample race. The owner then confirmed a hard
 power cycle and restarted elfldr. The read-only audit v2 ELF SHA-256
 `d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`
 was sent once on the new boot and reported native vector-1 target
@@ -2096,3 +2097,52 @@ also ignores the final pipe `read` result. The watcher observed genuine
 zero-to-canary and native-to-patched transitions before the stop, but a
 future post-stop experiment needs a changing data witness or a checked read
 path before treating repeated unchanged bytes as proof of fresh reads.
+
+## 2026-10-14 — first-continuation diagnostic prepared offline
+
+[public-consensus] The pinned 12.70 prestaged first arm places `POP_RAX`
+and `DBREG_RESUME` at its first landing, then runs `POP_RCX`, `POP_RAX`,
+`ST_RCX_RAX`, and `IRETQ` before `kh_trigger` returns
+([`khook.c:345-385,496-530`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L345-L530)).
+[inference] Accepting either 12.02 pivot as a working hypothesis does not
+validate this arm: `POP_RAX`, `POP_RCX`, `ST_RCX_RAX`, and the
+`DBREG_RESUME` entry/continuation still lack 12.02 instruction bytes
+(`16` §“Which 12.70 gadgets the reported path can exercise”). A 12.02
+text image or same-firmware instruction trace showing the required
+sequences at reviewed addresses would close or falsify those gaps.
+
+[verified-in-tree] A separate off-repo diagnostic source,
+`engineering/payloads/byepervisor_probe_1202/pivot_first_continuation.c:20-72,634-681`
+(SHA-256 `7d7354c9e68398265fc2f879d549e8a70b766a8607a1ad3e744fbd0075347991`),
+was cross-compiled for FW 12.02 `+0x2a82de`. The ELF SHA-256 is
+`3ef440aa72f790376f6172096f784a13bc58270cd2406b6ce56d7033d661de13`.
+It keeps the prior all-CPU IST4/gate staging and one-`ICEBP` wrapper.
+Per CPU, the source stages Kstuff `pop_all_iret` at the candidate pivot
+landing. Its first frame sets RDI to that CPU's own marker address and
+RAX to the marker value, then names `store_rax_rdi` at
+`ktext+0x2ac112`. A `nop_ret` padding word supports either documented
+store epilogue (`ret` or `pop rbp; ret`); both reach a second
+`pop_all_iret` frame and `doreti_iret` over the saved hardware frame.
+The source and ELF are outside this findings-only repository.
+
+[inference] A same-attempt positive marker supports pivot landing,
+`pop_all_iret` register loading, and the scalar store under this planned
+path; a return with matching marker and hardware frame additionally
+supports the second frame and user-mode return. A missing marker or
+return remains ambiguous, especially with unchecked ps5debug-NG reads.
+This diagnostic neither arms DR0/DR7 nor validates the 12.70 first arm.
+Its `store_rax_rdi`, `nop_ret`, and return entries are Kstuff table
+addresses, not byte-verified 12.02 gadgets. The compile-time bounds and
+offline stack-layout check passed for all 16 disjoint `0x500` slots;
+both store epilogues resolve
+to the second frame at slot `+0x2a0`. The updated host classifier accepts
+the distinct `firstcont-2a82de` build tag and names a positive result a
+*store* marker; 64 classifier tests pass. No console run has occurred.
+
+The live build can panic or power off the console: the pivot and Kstuff
+entry bytes are unverified, and the shared gate may receive an unrelated
+`#DB`. If an approved run stops without observed restoration, the recovery
+plan is a hard power cycle, elfldr restart, then a read-only native
+gate/IST4/zero-scratch audit before any further live ELF. The exact ELF
+hash above and this plan must be approved before a live run; record the
+actual markers and recovery state alongside the result.

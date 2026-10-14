@@ -1082,20 +1082,46 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(sampled9["boundary"],
                          "observer_first_targeted_read_completed_no_change_at_sample")
         self.assertFalse(sampled9["signals"]["fc1"]["issues"])
-        for build, offset in ((b"pivot-2a82de", b"2a82de"),
-                              (b"pivot-2ac2de", b"2ac2de")):
+        for build, offset, chain in (
+            (b"pivot-2a82de", b"2a82de", b"copy"),
+            (b"pivot-2ac2de", b"2ac2de", b"copy"),
+            (b"firstcont-2a82de", b"2a82de", b"store"),
+        ):
             pivot_stdout = stdout9.replace(b"prearmed-v9", build).replace(
                 b"frames=16 attempt=", b"frames=16 pivot=+0x" + offset +
                 b" attempt=")
+            if chain == b"store":
+                pivot_stdout = pivot_stdout.replace(
+                    b"pivot=+0x" + offset + b" attempt=",
+                    b"pivot=+0x" + offset + b" pop_all=+0x2b35ce "
+                    b"store_rax_rdi=+0x2ac112 nop_ret=+0x2b0b26 "
+                    b"doreti=+0x2b362d attempt=")
             pivot_pc = pc9.replace(b"prearmed-v9", build).replace(
                 b"chain=popall-copy-popall-doreti",
-                b"chain=pivot-popall-copy-popall-doreti")
+                b"chain=pivot-popall-" + chain + b"-popall-doreti")
             result = classify_kstuff_fullchain(
                 pivot_stdout, pc=pivot_pc + sample_ready + begin9 + done9)
             self.assertEqual(result["signals"]["build"], build.decode())
             self.assertEqual(result["boundary"],
                              "observer_first_targeted_read_completed_no_change_at_sample")
             self.assertFalse(result["signals"]["fc1"]["issues"])
+            if chain == b"store":
+                self.assertEqual(result["signals"]["marker_mechanism"],
+                                 "store_rax_rdi")
+                changed = done9.replace(
+                    b"rip=0x4a524652414d4800", b"rip=0xffffffff884c1234"
+                ).replace(b"marker=0x0", b"marker=0x4b53545546464348")
+                positive = classify_kstuff_fullchain(
+                    pivot_stdout, pc=pivot_pc + sample_ready + begin9 + changed)
+                self.assertEqual(positive["boundary"],
+                                 "store_marker_seen_return_or_transport_unproven")
+                self.assertFalse(positive["signals"]["fc1"]["issues"])
+                bad_store = pivot_stdout.replace(
+                    b"store_rax_rdi=+0x2ac112",
+                    b"store_rax_rdi=+0x2ac113")
+                self.assertEqual(classify_kstuff_fullchain(
+                    bad_store, pc=pivot_pc + sample_ready)["boundary"],
+                    "conflicting_attempt_records")
             bad_stdout = pivot_stdout.replace(
                 b"pivot=+0x" + offset, b"pivot=+0x2b3626")
             self.assertEqual(classify_kstuff_fullchain(
