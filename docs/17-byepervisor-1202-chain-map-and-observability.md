@@ -1861,3 +1861,59 @@ Compiling this audit ELF validates none of those contracts.
 The current result is a **complete inventory of required semantics and
 evidence points**, with unresolved entries visible. It is not a completed
 12.02 gadget port or a prediction that the next live attempt returns.
+
+## 2026-10-14 — two-offset pivot comparison prepared offline
+
+[verified-on-console] The prearmed v7–v9 attempts all selected the Kstuff
+`ktext+0x2b3626` `add rsp,0xe8; iretq` gate target. They varied the observer,
+but never delivered an intentional `#DB` through either projected
+`add rsp,0x28; ret` candidate (`+0x2a82de` or `+0x2ac2de`). The earlier
+`+0x2ac2de` changed-gate run only wrote, read back, and restored the gate;
+its no-trigger result cannot validate that pivot (`16` §“Changed IST/#DB-gate
+setup isolation run”). Repeated `+0x2b3626` stops therefore do not compare
+candidate entry behavior.
+
+[inference] A valid `add rsp,0x28; ret` entered with `RSP=F−0x28` would
+consume the hardware frame, then fetch a return target from `F`, leaving
+`RSP=F+8`. The proposed diagnostic stages Kstuff's `pop_all_iret` at `F`
+and a register frame starting at `F+8`; that frame enters `doreti_iret`
+with the original hardware frame at `F−0x28`. A 12.02 instruction trace
+showing a different first instruction or stack effect at either candidate
+would falsify this contract. The two candidate offsets have no held 12.02
+instruction bytes and are not interchangeable with the `+0x2b3626`
+`add rsp,0xe8; iretq` frame.
+
+Two off-repo FW 12.02 ELFs were cross-compiled from one candidate-selecting
+source (source SHA-256
+`d508e15ce250bbba1a1b4cf54bb3046b7cfc35d88d503a5d9fa037d6dbb1e8b9`).
+The `+0x2a82de` ELF SHA-256 is
+`61182de9db6fdda06c38ad1a9a75f95f66bc906cf8e6ed933a0d4baca70682fb`;
+the `+0x2ac2de` ELF SHA-256 is
+`6724da4d2d517d3e0ff004eba6639ddb3fce60e5d119795b3bb2494aeeb9c8f8`.
+Both reuse the v9 prearmed observer and all-CPU IST4 staging, but replace
+the v9 copy/marker continuation with the candidate-specific frame above.
+The off-console geometry check passed: 16 disjoint `0x500` slots, each
+with a five-word canary at `F−0x28`, a return pointer at `F`, and the
+register frame at `F+8`. Compilation and geometry do not validate the
+12.02 instruction bytes or a console return.
+
+[inference] Run `+0x2a82de` first because the 11.60 and 12.70 local-anchor
+relation agrees on that projection; then consider `+0x2ac2de` only after
+the first run's recovery and a clean native gate/IST4/scratch baseline.
+Each run must have a separate exact-build owner approval. Expected PC
+sequence: native preflight; linked observer READY; all 16 IST4 readbacks;
+changed gate readback; unchanged pretrigger canaries; `TRIGGER_BEGIN` and
+`SAMPLE_READY`; then a plausible changed hardware frame and clean return.
+A matching hardware frame supports `#DB` delivery, while return through
+the staged frame supports that candidate's pivot and continuation.
+`TRIGGER_BEGIN` or an unchanged first sample alone proves neither.
+
+These live builds can panic or power off the console: an unrelated `#DB`
+can hit the shared changed gate, either projected address may execute
+different 12.02 instructions, or the continuation may be wrong. After a
+stopped run, do not send another ELF into an uncertain session. Hard
+power-cycle, restart elfldr, and read-only audit the native `#DB` gate,
+all IST4 pointers, and zero scratch before the next candidate. Record
+FW, exact ELF hash, PC/stdout manifests, actual last marker, observed
+console state, and recovery state for each run. The owner approved the
+comparison direction; no exact-build console execution has occurred.
