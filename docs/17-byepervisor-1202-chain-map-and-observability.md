@@ -1445,6 +1445,36 @@ Compiling this audit ELF validates none of those contracts.
    therefore refuses it until exact off-repo bytes and a build identity
    exist.
 
+   [verified-in-tree] The template assigns the special landing to CPU 0
+   (`examples/kh2_layout_1202_zero_span_candidate.json`). The approved R0
+   calibration above selected CPU 9 instead. Merely editing `selected_cpu`
+   would leave its F1/F2 IST targets in CPU 0's landing.
+   `tools/kh2_layout_rebase.py:24-91` swaps the selected physical landing
+   and both arm/dispatch IST target entries with a requested CPU, rebases
+   every address field from the zero-based template, and reruns the interval
+   checker. It rejects an already rebased input, staged/build hashes that
+   would become stale, noncanonical or unaligned bases, and address overflow.
+   `tests/test_kh2_layout_rebase.py` checks all 16 selected CPUs. For an
+   offline CPU 9 candidate, set `KDATA_BASE` from a separately recorded
+   same-boot source and write the generated plan outside this repo:
+
+   ```sh
+   python3 tools/kh2_layout_rebase.py \
+     examples/kh2_layout_1202_zero_span_candidate.json \
+     --selected-cpu 9 --kdata-base "$KDATA_BASE" \
+     > /path/outside/repo/kh2-cpu9-candidate.json
+   python3 tools/kh2_layout_check.py \
+     /path/outside/repo/kh2-cpu9-candidate.json
+   ```
+
+   [inference] The approved R0 run's recorded gate address can yield a
+   same-run base by subtracting the published IDT offset, but that is not
+   an independent base measurement; a different independently measured
+   base would falsify the resulting absolute plan. The transform preserves
+   valid **geometry only**. The selected CPU, scratch ownership, staged
+   image bytes and hashes, 12.02 gadget contracts, and gate/IST readback
+   still need to match a future exact build and run.
+
    [inference] This is a placement candidate only. The dump was captured
    with Kstuff active and zero bytes cannot establish live ownership or
    safe scratch. The 15 nonselected landing chains have not been built or
