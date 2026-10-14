@@ -728,6 +728,21 @@ def _fc1_records(pc_text: str) -> dict:
     if sum(r["phase"] == "READY" for r in records) > 1:
         issues.append("duplicate READY")
         ready = None
+    if ready:
+        fields = ready["fields"]
+        try:
+            trigger_cpu = int(fields["trigger_cpu"])
+            observer_cpu = int(fields["observer_cpu"])
+        except (KeyError, ValueError):
+            trigger_cpu = observer_cpu = -1
+        if not (ready["seq"] == 1 and fields.get("fw") == "12.02" and
+                fields.get("build") in
+                ("prearmed-v1", "prearmed-v2", "prearmed-v3",
+                 "prearmed-v4", "prearmed-v5") and
+                0 <= trigger_cpu < 16 and 0 <= observer_cpu < 16 and
+                trigger_cpu != observer_cpu):
+            issues.append("invalid FC1 READY identity")
+            ready = None
     if len(gate_reports) > 1:
         issues.append("duplicate GATE_VERIFIED")
     if gate_report:

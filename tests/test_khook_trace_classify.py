@@ -463,6 +463,34 @@ class FullchainTests(unittest.TestCase):
         self.assertTrue(result["signals"]["cpu_identity_conflict"])
         self.assertEqual(result["boundary"], "conflicting_probe_cpu_records")
 
+    def test_prearmed_ready_requires_fw_version_and_distinct_valid_cpus(self):
+        mutations = (
+            (b"fw=12.02", b"fw=13.60"),
+            (b"build=prearmed-v1", b"build=unknown"),
+            (b"observer_cpu=7", b"observer_cpu=3"),
+            (b"observer_cpu=7", b"observer_cpu=16"),
+            (b"seq=1 phase=READY", b"seq=0 phase=READY"),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                pc = self.PC_STAGE + self.FC1.replace(original, replacement)
+                result = classify_kstuff_fullchain(
+                    self.LIVE_STAGE, pc=pc, pc_same_run_verified=True)
+                self.assertEqual(
+                    result["boundary"],
+                    "prepatch_staging_seen_gate_patch_or_later_unproven")
+                self.assertFalse(result["signals"]["fc1"]["ready"])
+                self.assertIn("invalid FC1 READY identity",
+                              result["signals"]["fc1"]["issues"])
+
+        invalid_trigger = self.FC1.replace(b"trigger_cpu=3", b"trigger_cpu=16")
+        invalid_trigger = invalid_trigger.replace(b"phase=GATE_VERIFIED cpu=3",
+                                                  b"phase=GATE_VERIFIED cpu=16")
+        result = classify_kstuff_fullchain(
+            b"", pc=invalid_trigger, pc_same_run_verified=True)
+        self.assertEqual(result["boundary"], "no_probe_staging_evidence")
+        self.assertFalse(result["signals"]["fc1"]["ready"])
+
     def test_prearmed_frame_and_marker_narrow_boundary(self):
         frame = (b"4\t4000\tMARK\tFC1 seq=3 phase=FRAME cpu=3 "
                  b"rip=0x123 cs=0x43 flags=0x202 rsp=0x456 ss=0x3b\n")
@@ -595,6 +623,15 @@ class FullchainTests(unittest.TestCase):
                          "gate_and_ist_staged_delivery_or_later_unproven")
         self.assertEqual(classify(patch, gate + baseline + trigger)["boundary"],
                          "trigger_call_reached_db_delivery_or_later_unproven")
+        wrong_fw = ready.replace(b"fw=12.02", b"fw=13.60")
+        rejected = classify_kstuff_fullchain(
+            self.LIVE_STAGE,
+            pc=self.PC_STAGE + wrong_fw + b"".join(patch) + gate + baseline + trigger,
+            pc_same_run_verified=True)
+        self.assertEqual(rejected["boundary"],
+                         "prepatch_staging_seen_gate_patch_or_later_unproven")
+        self.assertIn("invalid FC1 READY identity",
+                      rejected["signals"]["fc1"]["issues"])
         incomplete = classify(patch[:9], gate + baseline + trigger)
         self.assertEqual(incomplete["boundary"],
                          "pretrigger_baseline_verified_trigger_or_later_unproven")
