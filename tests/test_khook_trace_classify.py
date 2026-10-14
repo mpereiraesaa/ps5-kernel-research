@@ -647,6 +647,89 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(classify(patch, linked=False)["boundary"],
                          "prepatch_staging_seen_gate_patch_or_later_unproven")
 
+    def test_prearmed_v6_attempt_token_links_pc_without_operator_assertion(self):
+        token = "0x1234abcd"
+
+        def line(number, message):
+            return (f"{number}\t{number * 1000}\tMARK\t{message}\n").encode()
+
+        stdout = (
+            f"[KSTART] attempt={token} build=prearmed-v6\n"
+            f"[K1] fw=12.02 cpu=3 frames=16 handler=+0x2b3626 "
+            f"pop_all=+0x2b35ce rep_movsb=+0x2efdba "
+            f"doreti=+0x2b362d attempt={token}\n"
+        ).encode()
+        start = line(1, f"FCM phase=START fw=12.02 build=prearmed-v6 attempt={token}")
+        staged = line(2, "staged frames=16 cpu=3 "
+                      f"chain=popall-copy-popall-doreti attempt={token}")
+        ready = line(3, "FC1 seq=1 phase=READY fw=12.02 build=prearmed-v6 "
+                     f"attempt={token} trigger_cpu=3 observer_cpu=7")
+        patch_messages = (["FCM phase=IST4_BEGIN"] +
+                          [f"FCM phase=IST4_DONE slot={slot}" for slot in range(16)] +
+                          ["FCM phase=GATE_BEGIN", "FCM phase=GATE_DONE"])
+        patch = [line(4 + index, message +
+                      f" fw=12.02 build=prearmed-v6 cpu=3 attempt={token}")
+                 for index, message in enumerate(patch_messages)]
+        gate = line(23, "FC1 seq=2 phase=GATE_VERIFIED cpu=3 "
+                    "gate_lo=0x111 gate_hi=0x222 expected_lo=0x111 "
+                    "expected_hi=0x222 ist4_matched=16 first_bad_cpu=-1 "
+                    f"first_bad_ist=0x0 attempt={token}")
+        baseline = line(24, "FC1 seq=3 phase=PRETRIGGER cpu=3 "
+                        "frame_matched=5 marker_before=0x0 "
+                        "can0=0x4a524652414d4800 can1=0x4a524652414d4801 "
+                        "can2=0x4a524652414d4802 can3=0x4a524652414d4803 "
+                        f"can4=0x4a524652414d4804 attempt={token}")
+        trigger = line(25, "FCM phase=TRIGGER_BEGIN fw=12.02 "
+                       f"build=prearmed-v6 cpu=3 pretrigger=1 attempt={token}")
+        pc = start + staged + ready + b"".join(patch) + gate + baseline + trigger
+        result = classify_kstuff_fullchain(stdout, pc=pc)
+        self.assertEqual(result["boundary"],
+                         "trigger_call_reached_db_delivery_or_later_unproven")
+        self.assertTrue(result["signals"]["pc_attempt_linked"])
+        self.assertFalse(result["signals"]["pc_same_run_asserted"])
+        crlf = classify_kstuff_fullchain(stdout.replace(b"\n", b"\r\n"), pc=pc)
+        self.assertTrue(crlf["signals"]["pc_attempt_linked"])
+
+        wrong_start = pc.replace(start, start.replace(token.encode(), b"0x5678abcd"))
+        rejected = classify_kstuff_fullchain(stdout, pc=wrong_start,
+                                             pc_same_run_verified=True)
+        self.assertEqual(rejected["boundary"], "conflicting_attempt_records")
+        self.assertFalse(rejected["signals"]["pc_attempt_linked"])
+        wrong_patch = pc.replace(patch[8], patch[8].replace(
+            token.encode(), b"0x5678abcd"))
+        rejected = classify_kstuff_fullchain(stdout, pc=wrong_patch)
+        self.assertEqual(rejected["boundary"], "conflicting_attempt_records")
+        self.assertFalse(rejected["signals"]["fc1"]["attempt_integrity"])
+
+        wrong_ready = pc.replace(ready, ready.replace(
+            f"attempt={token} ".encode(), b""))
+        rejected = classify_kstuff_fullchain(stdout, pc=wrong_ready)
+        self.assertEqual(rejected["boundary"], "conflicting_attempt_records")
+        self.assertFalse(rejected["signals"]["fc1"]["attempt_integrity"])
+
+        reordered = classify_kstuff_fullchain(stdout, pc=staged + pc)
+        self.assertEqual(reordered["boundary"], "conflicting_attempt_records")
+        duplicate_start = classify_kstuff_fullchain(stdout, pc=start + pc)
+        self.assertEqual(duplicate_start["boundary"], "conflicting_attempt_records")
+
+        no_start = classify_kstuff_fullchain(stdout.splitlines(keepends=True)[1], pc=pc,
+                                             pc_same_run_verified=True)
+        self.assertEqual(no_start["boundary"],
+                         "prepatch_staging_seen_gate_patch_or_later_unproven")
+        self.assertFalse(no_start["signals"]["pc_attempt_linked"])
+
+        wrong_return = stdout + (
+            b"[K2] returned after INT1; cpu=3 frame=MATCH marker=MATCH "
+            b"observer=OK attempt=0x5678abcd saved_rip=0x1234\n")
+        rejected = classify_kstuff_fullchain(wrong_return, pc=pc)
+        self.assertEqual(rejected["boundary"], "conflicting_attempt_records")
+
+        pc_return = pc + line(26, "returned after INT1 cpu=3 frame=MATCH "
+                                  "marker=MATCH observer=OK restored=YES "
+                                  f"attempt={token}")
+        completed = classify_kstuff_fullchain(stdout, pc=pc_return)
+        self.assertEqual(completed["boundary"], "one_trap_return_and_checks_passed")
+
     def test_prearmed_gate_mismatch_and_nonselected_frame(self):
         bad_gate = self.FC1.replace(b"gate_lo=0x111", b"gate_lo=0x112")
         result = classify_kstuff_fullchain(
