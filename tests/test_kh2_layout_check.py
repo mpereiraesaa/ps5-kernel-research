@@ -130,7 +130,7 @@ class LayoutCheck(unittest.TestCase):
         plan = candidate()
         raw = planned_log(plan, through="B1")
         raw += ("5\t5000\tERR\tKH2E stage=B1 cpu=0 operation=write "
-                "region=image addr=0x1ba00\n"
+                "region=image addr=0x1ba00 code=-2\n"
                 "6\t6000\tERR\tKH2E stage=B2 cpu=0 operation=write "
                 f"region=ist6 addr={plan['ist_qwords'][7]}\n").encode()
         result = compare_log(plan, raw)
@@ -138,9 +138,23 @@ class LayoutCheck(unittest.TestCase):
                          "classifier_rejected_or_capture_error")
         self.assertEqual(result["write_error_locations"], [
             {"seq": 5, "stage": "B1", "region": "image", "addr": "0x1ba00",
-             "plan_match": True, "offset": "0x500", "landing_cpu": 2},
+             "plan_match": True, "code": -2, "offset": "0x500", "landing_cpu": 2},
             {"seq": 6, "stage": "B2", "region": "ist6",
              "addr": plan["ist_qwords"][7], "plan_match": True, "cpu": 7},
+        ])
+
+    def test_failed_read_maps_frame_and_retains_observer_code(self):
+        plan = candidate()
+        raw = planned_log(plan, through="B1")
+        raw += ("5\t5000\tERR\tKH2E stage=R1 cpu=0 operation=read "
+                f"region=f1 addr={plan['frame_slots'][0]} code=-4\n").encode()
+        result = compare_log(plan, raw)
+        self.assertEqual(result["comparison_status"],
+                         "classifier_rejected_or_capture_error")
+        self.assertEqual(result["read_error_locations"], [
+            {"seq": 5, "stage": "R1", "region": "f1",
+             "addr": plan["frame_slots"][0], "plan_match": True,
+             "code": -4, "frame": 1},
         ])
 
     def test_open_write_bracket_maps_landing_without_claiming_b1(self):
