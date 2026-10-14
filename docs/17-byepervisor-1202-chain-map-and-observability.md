@@ -1567,13 +1567,13 @@ to the second frame at slot `+0x2a0`. The updated host classifier accepts
 the distinct `firstcont-2a82de` build tag and names a positive result a
 *store* marker; 64 classifier tests pass. The live result follows.
 
-The live build can panic or power off the console: the pivot and Kstuff
-entry bytes are unverified, and the shared gate may receive an unrelated
-`#DB`. If an approved run stops without observed restoration, the recovery
-plan is a hard power cycle, elfldr restart, then a read-only native
-gate/IST4/zero-scratch audit before any further live ELF. The exact ELF
-hash above and this plan must be approved before a live run; record the
-actual markers and recovery state alongside the result.
+**Historical approval and recovery plan for the run below:** the live
+build could panic or power off the console because the pivot and Kstuff
+entry bytes were unverified and the shared gate could receive an
+unrelated `#DB`. The approved plan was a hard power cycle, elfldr restart,
+and read-only native gate/IST4/zero-scratch audit if restoration was not
+observed. The actual audit outcome is recorded below. This retired ELF
+is no longer an available run target.
 
 ### `firstcont-2a82de` live result
 
