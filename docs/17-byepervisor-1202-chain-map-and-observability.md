@@ -56,7 +56,7 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 
 | Required object | 12.02 evidence | Status for faithful #DB port |
 |---|---|---|
-| IDT and common TSS | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:8,10`: `kdata+0x2e88300`, `kdata+0x2e8afe0`; `16` §“Derived 12.02 data and structure offsets” records TSS stride `0x68` from `r0gdb/prosper0gdb/minchain2-build/main.c:72,395`. | Addressed; selected CPU, native gate type/IST, and saved qwords must still be read live. |
+| IDT and common TSS | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:8,10`: `kdata+0x2e88300`, `kdata+0x2e8afe0`; `16` §“Derived 12.02 data and structure offsets” records TSS stride `0x68` from `r0gdb/prosper0gdb/minchain2-build/main.c:72,395`. | Addressed; the approved R0 calibration below sampled the native gate and selected CPU 9 IST6 on one boot. Every future arm must still read and save its own current-boot gate and IST values. |
 | Scratch | [verified-on-console] The earlier two-page setup at `kdata+0x2099000` was superseded by PR #97's setup-only run: `16` §“Full Kstuff-style continuation probe” records staging/readback/restoration of **16 × `0x500` = `0x5000` bytes** there. [public-consensus] `5299395/include/khook.h:30-37` reserves `0x4000` bytes and begins its big chain at `+0x3a00`. | The tested byte span is large enough for the **reference image by size alone**. The existing all-CPU slots already occupy the entire `0x5000` span, so overlaying that image would collide. A disjoint or redesigned joint layout and independent ownership evidence are still required. |
 | Test hook target | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:29` identifies `sysents`; [public-consensus] the 11.60 test uses `getuid + 0xe` (`5299395/main.c:63`). [verified-on-dump] The 12.02 table's `sysent[24].sy_call` is `ktext+0x3130a0`; the 13.60 donor's `sy_call` is a jump entry, distinct from its getuid body (`16` §“getuid table entry versus hook body”). | Only the 12.02 **table entry** is located. Its instruction bytes, body target, `+0xe` hook boundary, and safe resume address remain unknown. Do not transfer donor body offsets or use `sy_call+0xe` as the hook. |
 | Resume-window hook target and AP init vector | [public-consensus] 11.60 identifies both in its `include/offsets/11_60.h`; the public 13.60 vector is `ktext+0x269fb8` (`13_60.h:12`). | No verified 12.02 addresses. The 13.60 vector names a jump entry to a distinct body, and two donor entries pass the broad aligned-jump-to-`CLI` filter (below). Neither the debunked `acpi_sleep_machdep+0x18e`, a global text delta, nor proximity to `DBREG_RESUME` supplies the 12.02 entry (`11` #14, #18, #68). |
@@ -606,7 +606,8 @@ layout or gadget bytes, a test-hook boundary, or a return signal. A socket
 send result still needs a retained PC run file and manifest to establish
 transport integrity.
 
-**Native R0 calibration, built offline and not run:** [verified-in-tree]
+**Native R0 calibration, built offline and run once with owner approval:**
+[verified-in-tree]
 `engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:40-220`
 and `Makefile:31-34,61,137-138` now build
 `byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
@@ -636,8 +637,8 @@ kernel write or #DB trigger. [verified-in-tree] The observer pipe reader
 still changes its own kernel pipe metadata before each read and must restore
 it (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:60-105`).
 
-[inference] For any separately approved FW 12.02 calibration run, the
-expected PC evidence is `KH2C MAIN_START`, main gate begin/done, main
+[inference] The expected PC evidence for the approved FW 12.02 calibration
+was `KH2C MAIN_START`, main gate begin/done, main
 IST6 begin/done, main baseline, and `KH2R` worker gate/IST6 begin/done,
 then a single R0 record with the build tag and matching native words.
 After the worker stops, the ELF prints a pipe-restored `[KH2R0]` marker,
@@ -646,17 +647,53 @@ attempt-tagged `[KH2R0] exit rc=0 ...`
 marker. The attempt token combines a monotonic clock sample and process ID;
 it is a run-correlation aid, not a cryptographic identity or proof of
 ELF completion (`11` #58).
-A returned prepare/read/finish error or missing R0
-would narrow **adapter/worker/transport setup**, not the PR #97 post-`[K1]`
-trap boundary. A same-attempt PC log lacking these records despite a
-reported clean return would falsify this expected observation. Actual
-console observation: **none**. The separate pipe's kernel metadata writes,
-worker lifetime, and restore can still fail or wedge; the source parks on
-uncertain worker/restore state. A future console run needs explicit owner
-approval for this exact ELF and a hard power-cycle recovery plan, with
-post-boot read-only baseline inspection. The calibration does not establish
-12.02 gadget bytes, scratch ownership, a two-trap chain, or retained KH2
-frame/journal reports.
+A returned prepare/read/finish error or missing R0 would narrow
+**adapter/worker/transport setup**, not the PR #97 post-`[K1]` trap
+boundary. A same-attempt PC log lacking these records despite a reported
+clean return would falsify the expected observation. The separate pipe's
+kernel metadata writes, worker lifetime, and restore can still fail or
+wedge; the source parks on uncertain worker/restore state.
+
+**Approved console result, 2026-10-14.** [verified-on-console] The owner
+approved the exact FW 12.02 ELF SHA-256 above, confirmed elfldr was ready,
+and specified a hard power cycle followed by a read-only gate/IST baseline
+check if it parked or powered off. It was sent once. The PC retained the
+expected 11 records in order: `MAIN_START`, both main gate/IST6 read
+brackets, `MAIN_BASELINE`, both worker gate/IST6 read brackets, and `R0`.
+The manifest reports 11 records, no gaps, and a clean `BYE`; the elfldr
+response includes the same-attempt start and `exit rc=0` markers, a
+pipe-restore completion marker, and an affinity-restored marker. The
+selected CPU was 9 and observer CPU 11. Both reported the same native gate
+words (`lo=0x96898e04002088b0`, `hi=0xffffffff`) and selected IST6 value
+(`0`). The elfldr listener answered a port check after the run; no recovery
+or power cycle was needed. The off-repo PC log, manifest, and stdout captures
+have respective SHA-256 digests
+`362090e9b8c0a4fcb14cccc8ea7d0dbfd72e46619a11abeed346a748285732eb`,
+`d229d36d6339a6db0c6731dc6d4d5ea633dfd7f736469844b9420107f401c700`,
+and `a6f5a6ac55fd106c167f2e7498cc0bede8998f09a2a9ea307750441dd74244c3`.
+No raw log or console identity is committed here.
+
+[inference] Decoding those gate words gives selector `0x20`, IST4, and a
+present DPL0 interrupt gate. The recorded gate-read address minus the
+published IDT offset yields this run's `kdata` base; applying the held
+12.02 `kdata−ktext=0xd50000` gap then places the gate target at
+`ktext+0x3188b0`, agreeing with the earlier live audit in `16`
+§“Phase 1 results”. This is a cross-boot consistency check, not a
+12.02 instruction-byte check: an independently measured same-boot base or
+gate read giving a different normalized target would falsify it.
+
+[verified-on-console] The standalone checker below returned
+`retained_calibration_complete`, `transport=complete`,
+`return_marker=reported_clean`, and `issues=[]` for the retained captures.
+Its `--kdata-base` input was derived from the recorded gate address and the
+published IDT offset, then checked against the IST6 record; this run did
+not independently capture the same-boot base. [inference] The result
+supports reported worker scheduling, separate-pipe gate/IST6 reads, PC
+retention, and a clean user-mode return for this calibration. An independent
+same-attempt read disagreeing with the reported words would falsify the
+read-value claim. It does not establish 12.02 gadget bytes, scratch
+ownership, a two-trap chain, #DB delivery, or retained KH2 frame/journal
+reports.
 
 [verified-in-tree] The full `khook_trace_classify.py` requires B0/B1 before
 R0, so it rejects the standalone ELF's R0-only log (`11` #52). Use
