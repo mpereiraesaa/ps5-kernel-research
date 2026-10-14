@@ -526,26 +526,29 @@ send result still needs a retained PC run file and manifest to establish
 transport integrity.
 
 **Native R0 calibration, built offline and not run:** [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:40-195`
+`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:40-220`
 and `Makefile:31-34,61,137-138` now build
 `byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
 pthread worker, separate-pipe reader, and `ps5log/1` sender. The built ELF
 SHA-256 is
-`e74cb55fb7027aba8958c3c5dc1eba3c5ad10bcadaa63c9bdbf6af2fa3be0938`;
+`a92f7696fb24021c1e085968e501b07642c2d1f3052e7aa54a81dceec32bc9c3`;
 its source/header input-list build tag is
-`8246edeb216649ef988f25ac570c3b1ea3d8d9929c1919fb77c7b68d75b1b4e9`
+`e7e00eb805c75a1bc42d3adf39b1321abbd8ccb384fcac3a9907c943408afc84`
 (the tag is **not** the ELF hash). The source/header list covers every
 direct local/public header named as an ELF dependency (`11` #57). The tag
 hashes the ordered per-file digests without local pathnames; it does
-not pin compiler, SDK, or build flags. `make -B kh2-r0-calibration` completed with
-`-Wall -Wextra -Werror`; the actual-adapter host runtime check passed.
+not pin compiler, SDK, or build flags. `make -B kh2-r0-calibration`
+completed with `-Wall -Wextra -Werror`; the actual-adapter host runtime
+check passed.
 The calibration main selects two permitted CPUs, pins itself, opens the
-PC logger, and sends `KH2C MAIN_READ` begin/done brackets around the
-native vector-1 gate and selected IST6 reads. A returned read error
-attempts a `KH2C MAIN_READ_ERROR` record with region, address, and code.
-After both reads, it sends a `KH2C MAIN_BASELINE`
-record with those raw words, then starts the worker for its R0
-read/send, then stops it and restores affinity. Its frame/journal fields
+PC logger, prints an attempt token to elfldr stdout, and sends a
+`KH2C MAIN_START` record with that token before the first kernel read.
+It sends `KH2C MAIN_READ` begin/done brackets around the native vector-1
+gate and selected IST6 reads. A returned read error attempts a
+`KH2C MAIN_READ_ERROR` record with region, address, and code. After both
+reads, it sends a `KH2C MAIN_BASELINE` record with those raw words, starts
+the worker for its R0 read/send, then stops it and restores affinity.
+Its frame/journal fields
 are deliberately unused placeholders for the shared plan validator;
 they are **not** a verified 12.02 layout. It calls no main-side target
 kernel write or #DB trigger. [verified-in-tree] The observer pipe reader
@@ -553,12 +556,15 @@ still changes its own kernel pipe metadata before each read and must restore
 it (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:60-105`).
 
 [inference] For any separately approved FW 12.02 calibration run, the
-expected PC evidence is `KH2C` main gate begin/done, main IST6 begin/done,
-main baseline, `KH2R` worker gate/IST6 begin/done,
-then a single R0 record with the build tag and matching native words;
-after the worker stops, the ELF
-prints a pipe-restored `[KH2R0]` marker, closes `ps5log`, restores main
-affinity, then prints a build-tagged `[KH2R0] exit rc=0 ...` marker.
+expected PC evidence is `KH2C MAIN_START`, main gate begin/done, main
+IST6 begin/done, main baseline, and `KH2R` worker gate/IST6 begin/done,
+then a single R0 record with the build tag and matching native words.
+After the worker stops, the ELF prints a pipe-restored `[KH2R0]` marker,
+closes `ps5log`, restores main affinity, then prints a build- and
+attempt-tagged `[KH2R0] exit rc=0 ...`
+marker. The attempt token combines a monotonic clock sample and process ID;
+it is a run-correlation aid, not a cryptographic identity or proof of
+ELF completion (`11` #58).
 A returned prepare/read/finish error or missing R0
 would narrow **adapter/worker/transport setup**, not the PR #97 post-`[K1]`
 trap boundary. A same-attempt PC log lacking these records despite a
@@ -579,21 +585,24 @@ R0, so it rejects the standalone ELF's R0-only log (`11` #52). Use
 python3 tools/kh2_r0_calibration_check.py retained-r0.log \
   --manifest retained-r0.json --stdout elfldr-r0.txt \
   --kdata-base <same-boot-kdata-base> \
-  --build-sha 8246edeb216649ef988f25ac570c3b1ea3d8d9929c1919fb77c7b68d75b1b4e9
+  --build-sha e7e00eb805c75a1bc42d3adf39b1321abbd8ccb384fcac3a9907c943408afc84
 ```
 
 It derives the 12.02 gate and selected IST6 addresses from the supplied
-same-boot base and reported CPU, checks the ordered main read brackets
-before the main baseline, followed by worker read brackets, and requires
-R0 to repeat the baseline gate/IST6 values exactly (`11` #54–#55).
+same-boot base and reported CPU, requires the `MAIN_START` token and ordered
+main read brackets before the main baseline, followed by worker read
+brackets, and requires R0 to repeat the baseline gate/IST6 values exactly
+(`11` #54–#55).
 It also checks the distinct observer CPU, exact build tag, PC manifest
-digest and clean close, and final stdout marker with that build tag. A missing
-main or worker gate/IST bracket leaves the last contiguous phase in
-`confirmed_prefix`; a retained begin without done localizes the last
+digest and clean close, and stdout start/final markers with the same attempt
+token. A clean stdout from another run of the same build cannot complete
+the join. A missing main or worker gate/IST bracket leaves the last
+contiguous phase in `confirmed_prefix`; a retained begin without done
+localizes the last
 attempted read but does not establish whether the read itself returned.
-An address, order, or build mismatch or capture error exits nonzero. Omitting either the PC manifest or
-the stdout capture gives `partial_evidence` even if the visible PC lines
-look complete.
+An address, order, or build mismatch or capture error exits nonzero.
+Omitting either the PC manifest or the stdout capture gives
+`partial_evidence` even if the visible PC lines look complete.
 [inference] The ELF emits its final marker immediately before returning from
 `main`; a retained marker does not independently prove the kernel pipe's
 ownership, exact bytes read, or an elfldr return. A different same-run
