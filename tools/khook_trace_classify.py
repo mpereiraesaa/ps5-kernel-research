@@ -719,6 +719,28 @@ def _fc1_records(pc_text: str) -> dict:
                         "level": parts[2], "phase": phase,
                         "fields": fields})
 
+    main_reports = []
+    for line_index, line in enumerate(pc_text.splitlines()):
+        parts = line.split("\t", 3)
+        if len(parts) == 4 and parts[3].startswith("FCM "):
+            main_reports.append({
+                "line_index": line_index,
+                "level": parts[2],
+                "fields": dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3])),
+            })
+    starts = [r for r in main_reports if r["fields"].get("phase") == "START"]
+    start = starts[0] if len(starts) == 1 else None
+    if len(starts) > 1:
+        issues.append("duplicate FCM START")
+    if start:
+        fields = start["fields"]
+        token = fields.get("attempt", "")
+        if not (start["level"] == "MARK" and fields.get("fw") == "12.02" and
+                fields.get("build") == "prearmed-v6" and
+                re.fullmatch(r"0x[0-9a-f]+", token) and int(token, 16) != 0):
+            issues.append("invalid FCM START identity")
+            start = None
+
     ready = next((r for r in records if r["phase"] == "READY"
                   and r["level"] == "MARK"), None)
     gate_reports = [r for r in records if r["phase"] == "GATE_VERIFIED"]
@@ -738,11 +760,29 @@ def _fc1_records(pc_text: str) -> dict:
         if not (ready["seq"] == 1 and fields.get("fw") == "12.02" and
                 fields.get("build") in
                 ("prearmed-v1", "prearmed-v2", "prearmed-v3",
-                 "prearmed-v4", "prearmed-v5") and
+                 "prearmed-v4", "prearmed-v5", "prearmed-v6") and
                 0 <= trigger_cpu < 16 and 0 <= observer_cpu < 16 and
-                trigger_cpu != observer_cpu):
+                trigger_cpu != observer_cpu and
+                (fields.get("build") != "prearmed-v6" or
+                 (start is not None and
+                  start["line_index"] < ready["line_index"] and
+                  fields.get("attempt") == start["fields"].get("attempt")))):
             issues.append("invalid FC1 READY identity")
             ready = None
+    if start and ready and ready["fields"].get("build") != "prearmed-v6":
+        issues.append("FCM START with legacy FC1 READY")
+        start = None
+    raw_control = []
+    for line_index, line in enumerate(pc_text.splitlines()):
+        parts = line.split("\t", 3)
+        if len(parts) == 4 and parts[3].startswith(("FC1 ", "FCM ")):
+            fields = dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3]))
+            raw_control.append((line_index, fields.get("attempt")))
+    attempt_integrity = bool(start and all(
+        index >= start["line_index"] and token == start["fields"]["attempt"]
+        for index, token in raw_control))
+    if start and not attempt_integrity:
+        issues.append("prearmed-v6 PC attempt mismatch")
     if len(gate_reports) > 1:
         issues.append("duplicate GATE_VERIFIED")
     if gate_report:
@@ -798,7 +838,7 @@ def _fc1_records(pc_text: str) -> dict:
             pass
     pretrigger_verified = bool(
         ready and gate and pretrigger_report and
-        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5") and
+        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
         pretrigger_report["level"] == "MARK" and
         pretrigger_report["seq"] > gate["seq"] and
         pretrigger_report["fields"].get("cpu") ==
@@ -809,7 +849,7 @@ def _fc1_records(pc_text: str) -> dict:
     )
     pretrigger_mismatch = bool(
         ready and gate and pretrigger_report and
-        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5") and
+        ready["fields"].get("build") in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
         pretrigger_report["level"] == "ERR" and
         pretrigger_report["seq"] > gate["seq"] and
         pretrigger_report["fields"].get("cpu") ==
@@ -822,20 +862,11 @@ def _fc1_records(pc_text: str) -> dict:
     )
     if pretrigger_report and not pretrigger_verified and not pretrigger_mismatch:
         issues.append("malformed or out-of-order PRETRIGGER")
-    main_reports = []
-    for line_index, line in enumerate(pc_text.splitlines()):
-        parts = line.split("\t", 3)
-        if len(parts) == 4 and parts[3].startswith("FCM "):
-            main_reports.append({
-                "line_index": line_index,
-                "level": parts[2],
-                "fields": dict(re.findall(r"\b(\w+)=([^\s]+)", parts[3])),
-            })
     version = ready["fields"].get("build") if ready else None
     patch_progress = -1
     patch_records = [r for r in main_reports
-                     if r["fields"].get("phase") != "TRIGGER_BEGIN"]
-    if version == "prearmed-v5":
+                     if r["fields"].get("phase") not in ("START", "TRIGGER_BEGIN")]
+    if version in ("prearmed-v5", "prearmed-v6"):
         expected_patch = ([('IST4_BEGIN', None)] +
                           [('IST4_DONE', str(cpu)) for cpu in range(16)] +
                           [('GATE_BEGIN', None), ('GATE_DONE', None)])
@@ -854,19 +885,21 @@ def _fc1_records(pc_text: str) -> dict:
                      fields.get("fw") == "12.02" and
                      fields.get("build") == version and
                      fields.get("cpu") == ready["fields"].get("trigger_cpu") and
-                     fields.get("slot") == expected_slot)
+                     fields.get("slot") == expected_slot and
+                     (version != "prearmed-v6" or
+                      fields.get("attempt") == start["fields"]["attempt"]))
             if not valid:
                 issues.append(f"out-of-order or malformed FCM patch phase at step {next_step}")
                 break
             patch_progress = next_step
     elif patch_records:
-        issues.append("FCM patch phase without prearmed-v5 READY")
+        issues.append("FCM patch phase without prearmed-v5/v6 READY")
     ist4_begin = patch_progress >= 0
     ist4_last_done = min(patch_progress - 1, 15) if patch_progress >= 1 else None
     gate_begin = patch_progress >= 17
     gate_done = patch_progress >= 18
     patch_complete = gate_done and len(patch_records) == 19
-    if (version == "prearmed-v5" and gate_done and pretrigger_report and
+    if (version in ("prearmed-v5", "prearmed-v6") and gate_done and pretrigger_report and
             pretrigger_report["line_index"] <= patch_records[18]["line_index"]):
         issues.append("FC1 pretrigger precedes FCM gate readback")
         pretrigger_verified = False
@@ -883,19 +916,21 @@ def _fc1_records(pc_text: str) -> dict:
         fields = trigger_report["fields"]
         trigger_begin = bool(
             pretrigger_verified and ready and level == "MARK" and
-            version in ("prearmed-v4", "prearmed-v5") and
+            version in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
             line_index > pretrigger_report["line_index"] and
             fields.get("phase") == "TRIGGER_BEGIN" and
             fields.get("fw") == "12.02" and
             fields.get("build") == version and
             fields.get("cpu") == ready["fields"].get("trigger_cpu") and
             fields.get("pretrigger") == "1" and
-            (version != "prearmed-v5" or patch_complete)
+            (version != "prearmed-v6" or
+             fields.get("attempt") == start["fields"]["attempt"]) and
+            (version not in ("prearmed-v5", "prearmed-v6") or patch_complete)
         )
         if not trigger_begin:
             issues.append("malformed or unlinked FCM trigger report")
     read_fail_after_gate_before_pretrigger = bool(
-        gate and ready and version in ("prearmed-v4", "prearmed-v5") and
+        gate and ready and version in ("prearmed-v4", "prearmed-v5", "prearmed-v6") and
         not pretrigger_report and
         any(r["seq"] > gate["seq"] for r in read_fail)
     )
@@ -905,7 +940,7 @@ def _fc1_records(pc_text: str) -> dict:
         sample = fields.get("sample")
         version = ready["fields"].get("build") if ready else None
         if sample is None:
-            if version in ("prearmed-v2", "prearmed-v3", "prearmed-v4", "prearmed-v5"):
+            if version in ("prearmed-v2", "prearmed-v3", "prearmed-v4", "prearmed-v5", "prearmed-v6"):
                 issues.append(f"{version} frame or marker lacks sample mode")
                 return False
             return True
@@ -925,7 +960,7 @@ def _fc1_records(pc_text: str) -> dict:
                and r["level"] == "MARK"
                and r["fields"].get("value") == "0x4b53545546464348"
                and valid_sample(r)]
-    if version in ("prearmed-v4", "prearmed-v5"):
+    if version in ("prearmed-v4", "prearmed-v5", "prearmed-v6"):
         if not pretrigger_verified or any(
             r["seq"] <= pretrigger_report["seq"] for r in frames + markers
         ):
@@ -972,6 +1007,10 @@ def _fc1_records(pc_text: str) -> dict:
             "read_fail_after_gate_before_pretrigger":
                 read_fail_after_gate_before_pretrigger,
             "read_fail": bool(read_fail),
+            "attempt": start["fields"]["attempt"] if start else None,
+            "start_line_index": start["line_index"] if start else None,
+            "attempt_integrity": attempt_integrity,
+            "version": version,
             "trigger_cpu": (int(ready["fields"]["trigger_cpu"])
                             if ready and ready["fields"].get("trigger_cpu", "").isdigit()
                             else None),
@@ -992,6 +1031,39 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     pc_text = pc.decode("utf-8", errors="replace") if pc is not None else ""
     audit_text = audit.decode("utf-8", errors="replace") if audit else ""
     fc1 = _fc1_records(pc_text)
+    stdout_starts = re.findall(
+        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) build=prearmed-v6\r?$",
+        live_text)
+    stdout_attempt = stdout_starts[0] if len(stdout_starts) == 1 else None
+    v6_mode = ("[KSTART]" in live_text or "build=prearmed-v6" in pc_text or
+               "FCM phase=START" in pc_text)
+    attempt_conflict = (len(stdout_starts) > 1 or
+                        "duplicate FCM START" in fc1["issues"] or
+                        ("[KSTART]" in live_text and stdout_attempt is None) or
+                        (fc1["attempt"] is not None and
+                         not fc1["attempt_integrity"]) or
+                        (stdout_attempt is not None and fc1["attempt"] is not None and
+                         stdout_attempt != fc1["attempt"]))
+    if v6_mode:
+        for line in live_text.splitlines():
+            if not line.startswith(("[K1]", "[K2]")):
+                continue
+            token = re.search(r"\battempt=(0x[0-9a-f]+)(?:\s|$)", line)
+            if not token or (stdout_attempt and token.group(1) != stdout_attempt):
+                attempt_conflict = True
+        for line_index, line in enumerate(pc_text.splitlines()):
+            parts = line.split("\t", 3)
+            if len(parts) != 4 or not parts[3].startswith((
+                    "staged frames=", "returned after INT1", "setup-only ")):
+                continue
+            token = re.search(r"\battempt=(0x[0-9a-f]+)(?:\s|$)", parts[3])
+            if not token or (fc1["attempt"] and (
+                    token.group(1) != fc1["attempt"] or
+                    line_index <= fc1["start_line_index"])):
+                attempt_conflict = True
+    pc_linked = (bool(stdout_attempt and fc1["attempt"] == stdout_attempt and
+                      fc1["attempt_integrity"] and not attempt_conflict)
+                 if v6_mode else pc_same_run_verified)
 
     stage = re.search(r"\[K1\] fw=12\.02 cpu=(\d+) frames=16\b", live_text)
     returned = re.search(
@@ -1013,10 +1085,10 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     restored = "[K1r] shared #DB gate and all IST4 slots restored" in live_text
 
     cpu = int(stage.group(1)) if stage else (
-        int(pc_stage.group(1)) if pc_stage and pc_same_run_verified else (
-            fc1["trigger_cpu"] if pc_same_run_verified else None))
+        int(pc_stage.group(1)) if pc_stage and pc_linked else (
+            fc1["trigger_cpu"] if pc_linked else None))
     named_cpus = ([int(stage.group(1))] if stage else [])
-    if pc_same_run_verified:
+    if pc_linked:
         if pc_stage:
             named_cpus.append(int(pc_stage.group(1)))
         if fc1["trigger_cpu"] is not None:
@@ -1053,7 +1125,12 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "cpu_identity_conflict": cpu_identity_conflict,
         "staged_stdout": bool(stage),
         "staged_pc": bool(pc_stage),
-        "pc_same_run_verified": pc_same_run_verified,
+        "pc_same_run_verified": pc_linked,
+        "pc_same_run_asserted": pc_same_run_verified,
+        "pc_attempt_linked": pc_linked and v6_mode,
+        "attempt_conflict": attempt_conflict,
+        "stdout_attempt": stdout_attempt,
+        "pc_attempt": fc1["attempt"],
         "gate_and_ist_restored_stdout": restored,
         "return_stdout": bool(returned),
         "return_pc": bool(pc_return),
@@ -1074,63 +1151,65 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
             if audit_summary and cpu is not None else []),
         "fc1": fc1,
     }
-    return_record = returned or (pc_return if pc_same_run_verified else None)
+    return_record = returned or (pc_return if pc_linked else None)
     return_frame = returned.group(2) if returned else (
-        pc_return.group(2) if pc_return and pc_same_run_verified else None)
+        pc_return.group(2) if pc_return and pc_linked else None)
     return_marker = returned.group(3) if returned else (
-        pc_return.group(3) if pc_return and pc_same_run_verified else None)
+        pc_return.group(3) if pc_return and pc_linked else None)
     signals["return_frame"] = return_frame
     signals["return_marker"] = return_marker
-    if cpu_identity_conflict:
+    if attempt_conflict:
+        boundary = "conflicting_attempt_records"
+    elif cpu_identity_conflict:
         boundary = "conflicting_probe_cpu_records"
-    elif setup_stdout or (setup_pc and pc_same_run_verified):
+    elif setup_stdout or (setup_pc and pc_linked):
         boundary = "setup_only_completed_no_db_triggered"
-    elif returned and pc_return and pc_same_run_verified and returned.groups() != pc_return.groups():
+    elif returned and pc_return and pc_linked and returned.groups() != pc_return.groups():
         boundary = "conflicting_return_records"
     elif return_record:
         boundary = ("one_trap_return_and_checks_passed" if
                     return_frame == return_marker == "MATCH" and
                     not (returned and returned.group(4) == "FAIL") and
-                    not (pc_return and pc_same_run_verified and
+                    not (pc_return and pc_linked and
                          pc_return.group(4) == "FAIL")
                     else ("returned_but_observer_failed" if
                           return_frame == return_marker == "MATCH" else
                           "returned_but_frame_or_marker_check_failed"))
     elif same_attempt_verified and marker == "written" and frame == "canary_unchanged":
         boundary = "audit_conflict_marker_without_changed_frame"
-    elif (pc_same_run_verified and cpu is not None and
+    elif (pc_linked and cpu is not None and
           cpu in fc1["marker_cpus"]) or (
           same_attempt_verified and marker == "written" and frame == "changed"):
         boundary = "copy_marker_seen_return_or_transport_unproven"
-    elif (pc_same_run_verified and cpu is not None and
+    elif (pc_linked and cpu is not None and
           cpu in fc1["frame_cpus"]) or (same_attempt_verified and frame == "changed"):
         boundary = "frame_changed_copy_marker_or_later_unproven"
-    elif pc_same_run_verified and fc1["pretrigger_mismatch"]:
+    elif pc_linked and fc1["pretrigger_mismatch"]:
         boundary = "observer_pretrigger_mismatch_before_trigger"
-    elif pc_same_run_verified and fc1["read_fail_after_gate_before_pretrigger"]:
+    elif pc_linked and fc1["read_fail_after_gate_before_pretrigger"]:
         boundary = "observer_read_failed_pretrigger"
-    elif pc_same_run_verified and fc1["trigger_begin"]:
+    elif pc_linked and fc1["trigger_begin"]:
         boundary = "trigger_call_reached_db_delivery_or_later_unproven"
-    elif pc_same_run_verified and fc1["pretrigger_verified"]:
+    elif pc_linked and fc1["pretrigger_verified"]:
         boundary = "pretrigger_baseline_verified_trigger_or_later_unproven"
-    elif pc_same_run_verified and fc1["gate_mismatch"]:
+    elif pc_linked and fc1["gate_mismatch"]:
         boundary = "observer_gate_or_ist_mismatch_after_main_readback"
-    elif pc_same_run_verified and fc1["read_fail_before_gate_report"]:
+    elif pc_linked and fc1["read_fail_before_gate_report"]:
         boundary = "observer_read_failed_after_main_patch_phase"
-    elif (pc_same_run_verified and fc1["gate_verified"]) or (
+    elif (pc_linked and fc1["gate_verified"]) or (
           same_attempt_verified and audit_header and
           audit_header.group(1).lower() == "2b3626" and
           int(audit_header.group(4)) == 16):
         boundary = "gate_and_ist_staged_delivery_or_later_unproven"
-    elif pc_same_run_verified and fc1["gate_done"]:
+    elif pc_linked and fc1["gate_done"]:
         boundary = "gate_readback_observer_or_later_unproven"
-    elif pc_same_run_verified and fc1["gate_begin"]:
+    elif pc_linked and fc1["gate_begin"]:
         boundary = "gate_write_or_readback_unproven"
-    elif pc_same_run_verified and fc1["ist4_last_done"] is not None:
+    elif pc_linked and fc1["ist4_last_done"] is not None:
         boundary = "ist4_patch_progress_gate_or_later_unproven"
-    elif pc_same_run_verified and fc1["ist4_begin"]:
+    elif pc_linked and fc1["ist4_begin"]:
         boundary = "ist4_patch_started_first_write_or_later_unproven"
-    elif stage or (pc_stage and pc_same_run_verified):
+    elif stage or (pc_stage and pc_linked):
         boundary = "prepatch_staging_seen_gate_patch_or_later_unproven"
     else:
         boundary = "no_probe_staging_evidence"
@@ -1140,10 +1219,12 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         "pc_transport": _transport(pc, manifest),
         "nonselected_cpu_activity_requires_review": bool(
             (same_attempt_verified and signals["audit_nonselected_cpus"]) or
-            (pc_same_run_verified and cpu is not None and
+            (pc_linked and cpu is not None and
              (set(fc1["frame_cpus"] + fc1["marker_cpus"]) - {cpu}))),
-        "caveat": ("Audit and PC-log evidence advance the boundary only with "
-                   "explicit same-attempt assertions. A changed audit frame "
+        "caveat": ("Audit evidence needs an explicit same-attempt assertion; "
+                   "prearmed-v6 PC evidence needs matching attempt tokens, "
+                   "while older PC logs need an explicit same-run assertion. "
+                   "A changed audit frame "
                    "supports delivery "
                    "at the staged slot; it does not establish a valid #DB frame. "
                    "Missing or post-recovery evidence cannot prove that a stage "

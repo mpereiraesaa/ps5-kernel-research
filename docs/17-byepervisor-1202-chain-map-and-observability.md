@@ -754,9 +754,12 @@ python3 tools/khook_trace_classify.py elfldr.log --mode kstuff-fullchain \
 
 `--audit-same-attempt` is an explicit operator assertion; absent a verified
 same-attempt link before recovery, audit values are shown but cannot
-advance the reported boundary. `--pc-same-run` likewise asserts that the
-PC log and elfldr output belong to the same run; its manifest checks integrity and gaps
-but does not by itself link two different output channels. A changed
+advance the reported boundary. For prearmed v1–v5, `--pc-same-run` likewise
+asserts that the PC log and elfldr output belong to the same run. For v6,
+the classifier instead requires matching stdout/PC attempt tokens and
+rejects a mismatch even if `--pc-same-run` was supplied (`11` #60).
+The manifest checks integrity and gaps but does not itself link two
+different output channels. A changed
 `[KA2]` frame with no marker bounds failure after
 the frame change and before the copy marker or its observation; a marker
 with no return bounds it after the copy and before the user return or its
@@ -786,8 +789,12 @@ available logs do not establish what caused the outage.
 
 **Isolated prearmed Kstuff variant, built offline and not run.**
 [verified-in-tree] Our separate local source
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:113-265,550-708`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:116-305,570-729`
 builds the current `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
+`8f3231b2960538645de0c661dbf75cbcf72a02238d57d72ef6a67855347f7fa7`.
+The unrun v5 source is preserved outside this repo at
+`engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v5.c`;
+its last built ELF had SHA-256
 `da900d1a52ee3cc71deba8f0b9515469e6feb6206c97969d333aa0fa3c0e3cd0`.
 The unrun v4 source is preserved outside this repo at
 `engineering/payloads/byepervisor_probe_1202/historical/fullchain_prearmed_v4.c`;
@@ -802,11 +809,12 @@ The prior unrun v2 source is preserved outside this notes repo at
 Rebuilding it at the original source path reproduced its ELF SHA-256
 `39b9ba4bd673c2771a90c49f5808327af9e77288eab85a39d4aae1f5e82e7ca5`;
 v3 corrected the copy-gadget offset (`11` #46); v4 adds a pretrigger
-observer/main handoff; v5 adds main-thread patch-phase records. None was run.
+observer/main handoff; v5 adds main-thread patch-phase records; v6 adds
+attempt-linked PC/stdout records. None was run.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
 main thread stages IST4 or changes the gate. [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:620-677`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:642-699`
 has main send `FCM IST4_BEGIN`, one `FCM IST4_DONE slot=0..15` after each
 write and readback, `FCM GATE_BEGIN`, then `FCM GATE_DONE` after the low
 gate qword write and readback. A failed PC send aborts and attempts restore.
@@ -814,7 +822,7 @@ After those records, the worker independently reads the
 full gate and all 16 IST4 values and sends `FC1 GATE_VERIFIED` with raw gate
 qwords, expected qwords, matched count, and first mismatch. The trigger waits
 for that PC send and acknowledgment. [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:212-261,677-708`
+`engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:217-266,699-729`
 then has the worker read the selected `0x500`-byte slot, compare its five
 frame canaries and zero destination marker, and send `FC1 PRETRIGGER` with
 the five raw canaries before
@@ -836,37 +844,50 @@ shutdown. A timeout or unsafe teardown parks.
 [verified-in-tree] The `FC1` local sequence begins at 1; its stages are
 `READY`, `GATE_VERIFIED`, `PRETRIGGER`, zero or more `FRAME`/`MARKER` records, and
 `QUIESCED` (or `READ_FAIL`). `READY` includes FW, a **version tag**
-`build=prearmed-v5`, and selected/observer CPU numbers. The exact ELF SHA is
-recorded above, while `ps5log/1`'s `HELLO` boot token identifies the PC
-session; the version tag is not an ELF hash. `tools/khook_trace_classify.py`
-preserves raw `FC1` fields and sequence issues. With `--pc-same-run`, a
+`build=prearmed-v6`, an attempt token, and selected/observer CPU numbers.
+The exact ELF SHA is recorded above, while `ps5log/1`'s `HELLO` boot token
+identifies the PC session; the version tag is not an ELF hash.
+[verified-in-tree] `fullchain_prearmed.c:447-462` prints `[KSTART]` and
+sends `FCM START` with the same monotonic-clock/PID token after opening
+the PC logger and before its first `kernel_copyout`. Its `[K1]`, `[K2]`,
+PC staging/completion, and all FC1/FCM records repeat that token
+(`fullchain_prearmed.c:116-305,609-759`). The classifier requires the
+single PC start to precede READY, exact token agreement across every
+control record and output channel, and token consistency on staging and
+completion records (`tools/khook_trace_classify.py:699-1010,1017-1220`).
+It rejects a cross-attempt mix as `conflicting_attempt_records`, including
+when `--pc-same-run` is passed. A matching token correlates the producer
+records; it is not collision-proof or proof that any kernel read or #DB
+completed (`11` #60). `tools/khook_trace_classify.py` preserves raw `FC1`
+fields and sequence issues. With a matching v6 token, a
 matching gate/16 IST4 record advances the observed boundary beyond PR #97's
 prepatch `[K1]`. V5 adds boundaries for the contiguous main-thread patch
 prefix: the last IST4 slot read back, gate-write entry, and gate readback.
 It retains v4's separate boundaries for a matching selected-frame
 pretrigger baseline and a linked main-thread `FCM TRIGGER_BEGIN`. A selected
-CPU's changed frame or copy marker narrows it further. Without that operator
-assertion, these records remain visible but do
-not advance a separate elfldr transcript. An `FC1` marker is only a copy
+CPU's changed frame or copy marker narrows it further. Older versions need
+the operator assertion; without a v6 token link or that legacy assertion,
+PC records remain visible but do not advance a separate elfldr transcript.
+An `FC1` marker is only a copy
 side effect, not proof of a valid return or debug-register arm. A changed
 frame is raw canary replacement and needs RIP/CS/RFLAGS/RSP/SS review.
 `tests/test_khook_trace_classify.py` covers linked and unlinked records,
 gate mismatch, frame/marker progression, nonselected CPU activity, and a
 failed observer on return using synthetic transcripts.
 [verified-in-tree] The classifier also compares the selected CPU named by
-`[K1]`, the PC staging record, and `FC1 READY` when `--pc-same-run` is
-asserted. A disagreement yields `conflicting_probe_cpu_records` before any
+`[K1]`, the PC staging record, and `FC1 READY` when the PC/stdout attempt is
+linked. A disagreement yields `conflicting_probe_cpu_records` before any
 gate/frame/marker progress claim (`tools/khook_trace_classify.py`).
 It accepts `FC1 READY` as a link only when its local sequence is 1, FW is
 12.02, its build tag names a known prearmed version, and trigger/observer
 CPUs are distinct values in 0–15. A malformed READY remains in the raw
 record list but cannot authorize a later gate, patch, or trigger boundary
 (`11` #49).
-For `prearmed-v2` through `prearmed-v5` it requires the sample mode and rejects a `targeted`
+For `prearmed-v2` through `prearmed-v6` it requires the sample mode and rejects a `targeted`
 record naming a CPU other than the trigger CPU; v1 records remain readable.
-For v4/v5, a frame/marker needs an earlier accepted `PRETRIGGER` record with
+For v4–v6, a frame/marker needs an earlier accepted `PRETRIGGER` record with
 all five raw canaries matching the selected CPU's staged values.
-For v5, a retained `FCM TRIGGER_BEGIN` advances the classifier only after
+For v5/v6, a retained `FCM TRIGGER_BEGIN` advances the classifier only after
 the full ordered patch prefix, verified gate, and pretrigger baseline. A
 missing phase record stops patch-prefix progress at the last contiguous
 readback; its absence does not prove the next write was never attempted.
