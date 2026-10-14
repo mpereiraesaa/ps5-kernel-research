@@ -1876,8 +1876,9 @@ candidate entry behavior.
 [inference] A valid `add rsp,0x28; ret` entered with `RSP=F−0x28` would
 consume the hardware frame, then fetch a return target from `F`, leaving
 `RSP=F+8`. The proposed diagnostic stages Kstuff's `pop_all_iret` at `F`
-and a register frame starting at `F+8`; that frame enters `doreti_iret`
-with the original hardware frame at `F−0x28`. A 12.02 instruction trace
+and a register frame starting at `F+8`; that frame copies a marker, then
+a second register frame enters `doreti_iret` with the original hardware
+frame at `F−0x28`. A 12.02 instruction trace
 showing a different first instruction or stack effect at either candidate
 would falsify this contract. The two candidate offsets have no held 12.02
 instruction bytes and are not interchangeable with the `+0x2b3626`
@@ -1885,16 +1886,17 @@ instruction bytes and are not interchangeable with the `+0x2b3626`
 
 Two off-repo FW 12.02 ELFs were cross-compiled from one candidate-selecting
 source (source SHA-256
-`d508e15ce250bbba1a1b4cf54bb3046b7cfc35d88d503a5d9fa037d6dbb1e8b9`).
+`390290419bc30163ea5838660a95b32dad977e1345e42e9a57c8ca61d892bacb`).
 The `+0x2a82de` ELF SHA-256 is
-`61182de9db6fdda06c38ad1a9a75f95f66bc906cf8e6ed933a0d4baca70682fb`;
+`9841712fcb542cc8289befd26f62d524d1705690cc0aad2d1212c04eed9e1e7c`;
 the `+0x2ac2de` ELF SHA-256 is
-`6724da4d2d517d3e0ff004eba6639ddb3fce60e5d119795b3bb2494aeeb9c8f8`.
-Both reuse the v9 prearmed observer and all-CPU IST4 staging, but replace
-the v9 copy/marker continuation with the candidate-specific frame above.
+`f2fb7bdc24656447fc63527580d732053ffd90ff41d577770dd8dc66be594771`.
+Both reuse the v9 prearmed observer, all-CPU IST4 staging, and copy marker;
+they replace the v9 entry and its first `iretq` frame with the
+candidate-specific `ret` landing at `F`.
 The off-console geometry check passed: 16 disjoint `0x500` slots, each
 with a five-word canary at `F−0x28`, a return pointer at `F`, and the
-register frame at `F+8`. Compilation and geometry do not validate the
+first register frame at `F+8`. Compilation and geometry do not validate the
 12.02 instruction bytes or a console return.
 
 [inference] Run `+0x2a82de` first because the 11.60 and 12.70 local-anchor
@@ -1903,9 +1905,10 @@ the first run's recovery and a clean native gate/IST4/scratch baseline.
 Each run must have a separate exact-build owner approval. Expected PC
 sequence: native preflight; linked observer READY; all 16 IST4 readbacks;
 changed gate readback; unchanged pretrigger canaries; `TRIGGER_BEGIN` and
-`SAMPLE_READY`; then a plausible changed hardware frame and clean return.
-A matching hardware frame supports `#DB` delivery, while return through
-the staged frame supports that candidate's pivot and continuation.
+`SAMPLE_READY`; then a plausible changed hardware frame, copy marker,
+and clean return. A matching hardware frame supports `#DB` delivery;
+the copy marker supports reaching the continuation; return through
+the staged frame supports that candidate's pivot and return path.
 `TRIGGER_BEGIN` or an unchanged first sample alone proves neither.
 
 These live builds can panic or power off the console: an unrelated `#DB`
