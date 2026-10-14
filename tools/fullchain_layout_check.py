@@ -159,6 +159,11 @@ def check(source: str, structs: str) -> dict:
                 values.setdefault(value, [cpu, word])
         unique_canaries = len(values) == c["CPU_COUNT"] * 5
         distinct_canaries = len(values)
+        if not unique_canaries:
+            errors.append(
+                f"canary expression produces {distinct_canaries} distinct values "
+                f"for {c['CPU_COUNT'] * 5} CPU/word slots"
+            )
 
     return {"geometry_valid": not errors, "errors": errors,
             "cpu_count": c["CPU_COUNT"], "slot_size": c["SLOT_SIZE"],
