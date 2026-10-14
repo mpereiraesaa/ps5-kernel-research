@@ -65,6 +65,13 @@ check each `ps5log_line` result; even a successful send is not proof that the
 PC persisted the line. The retained PC log and matching manifest are the
 evidence that the classifier assesses (`17`).
 
+The standalone native R0 calibration ELF emits no B0/B1 stages, so the full
+KH2 classifier rejects its R0 milestone. [verified-in-tree]
+`tools/kh2_r0_calibration_check.py:47-155` provides the narrower join of
+its gate/IST6 read brackets, R0 identity, PC manifest, and final stdout
+marker; `17` records its build tag and command. It does not classify a
+two-trap run (`11` #52).
+
 The separate local payload workspace also has a **read-only KH2 capture
 core** at `engineering/payloads/byepervisor_probe_1202/kh2_capture.c/.h`.
 It accepts kernel-data read and log-send callbacks, reads the gate/IST6,

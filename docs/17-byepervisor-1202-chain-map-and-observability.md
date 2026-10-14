@@ -526,14 +526,14 @@ send result still needs a retained PC run file and manifest to establish
 transport integrity.
 
 **Native R0 calibration, built offline and not run:** [verified-in-tree]
-`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:53-124,131-152`
+`engineering/payloads/byepervisor_probe_1202/kh2_r0_calibration.c:53-124,131-153`
 and `Makefile:31-32,60,136-137` now build
 `byepervisor_probe_1202_kh2_r0_calibration.elf` using the actual PS5 adapter,
 pthread worker, separate-pipe reader, and `ps5log/1` sender. The built ELF
 SHA-256 is
-`5cec3f6815dfccb9d26d954f48f80607df1ab46a75b3a23b7f421ae83eca59cf`;
+`7c03918b8a71eae8c006eaffb7ea4756ea51e793e2f4794d677d3c8d353c2a80`;
 its source-list build tag is
-`98089ca9e3e60a41bd612b01858367fd333681d409d8f156c8875fabaca760b2`
+`9d9b10866bb4e1e6432c728d13cb15611eb0f02201afefe90d9ce0b761834975`
 (the tag is **not** the ELF hash). `make kh2-r0-calibration` completed with
 `-Wall -Wextra -Werror`; the actual-adapter host runtime check passed.
 The calibration main selects two permitted CPUs, pins itself, reads the
@@ -548,8 +548,9 @@ it (`engineering/payloads/byepervisor_probe_1202/observer_channel.c:60-105`).
 [inference] For any separately approved FW 12.02 calibration run, the
 expected PC evidence is `KH2R` gate/IST6 begin/done, then a single R0
 record with the build tag and native words; after the worker stops, the ELF
-prints `[KH2R0]` on stdout and calls `ps5log_close`. A returned
-prepare/read/finish error or missing R0
+prints a pipe-restored `[KH2R0]` marker, closes `ps5log`, restores main
+affinity, then prints a build-tagged `[KH2R0] exit rc=0 ...` marker.
+A returned prepare/read/finish error or missing R0
 would narrow **adapter/worker/transport setup**, not the PR #97 post-`[K1]`
 trap boundary. A same-attempt PC log lacking these records despite a
 reported clean return would falsify this expected observation. Actual
@@ -560,6 +561,31 @@ approval for this exact ELF and a hard power-cycle recovery plan, with
 post-boot read-only baseline inspection. The calibration does not establish
 12.02 gadget bytes, scratch ownership, a two-trap chain, or retained KH2
 frame/journal reports.
+
+[verified-in-tree] The full `khook_trace_classify.py` requires B0/B1 before
+R0, so it rejects the standalone ELF's R0-only log (`11` #52). Use
+`tools/kh2_r0_calibration_check.py` for this build:
+
+```sh
+python3 tools/kh2_r0_calibration_check.py retained-r0.log \
+  --manifest retained-r0.json --stdout elfldr-r0.txt \
+  --kdata-base <same-boot-kdata-base> \
+  --build-sha 9d9b10866bb4e1e6432c728d13cb15611eb0f02201afefe90d9ce0b761834975
+```
+
+It derives the 12.02 gate and selected IST6 addresses from the supplied
+same-boot base and reported CPU, checks ordered begin/done read brackets,
+the distinct observer CPU and exact build tag, the PC manifest's digest and
+clean close, and the final stdout marker with that build tag. A missing
+gate/IST bracket leaves the last contiguous phase in `confirmed_prefix`;
+an address/order/build
+mismatch or capture error exits nonzero. Omitting either the PC manifest or
+the stdout capture gives `partial_evidence` even if the visible PC lines
+look complete.
+[inference] The ELF emits its final marker immediately before returning from
+`main`; a retained marker does not independently prove the kernel pipe's
+ownership, exact bytes read, or an elfldr return. A different same-run
+readback or an absent elfldr completion would falsify those stronger claims.
 
 **Single-process host rehearsal:** `kh2_integrated_host.c` uses the real
 main emitter and pthread worker against one mock memory image and one log,
