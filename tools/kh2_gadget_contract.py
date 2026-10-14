@@ -53,17 +53,24 @@ FULL_CONTRACTS = {
     "RET_TRAMP": RET_TRAMP,
     "DBREG_RESUME": DBREG,
 }
-INSN = re.compile(r"^\s*([0-9a-f]+):\s+([a-z][^\n]*)$", re.IGNORECASE)
+INSN = re.compile(r"^\s*([0-9a-f]+):\t([^\t]+)\t(.+)$", re.IGNORECASE)
+BYTE = re.compile(r"[0-9a-f]{2}\Z", re.IGNORECASE)
 
 
 def parse_instructions(output):
-    """Return anchored offsets and mnemonic/operand text, without raw bytes."""
+    """Return offsets, text, and encoded lengths without retaining raw bytes."""
     result = []
     for line in output.splitlines():
         match = INSN.match(line)
         if match:
+            encoded = match.group(2).split()
+            if not encoded or len(encoded) > 15 or not all(
+                    BYTE.fullmatch(item) for item in encoded):
+                raise ValueError("unparseable objdump instruction bytes")
             result.append((int(match.group(1), 16),
-                           " ".join(match.group(2).split())))
+                           " ".join(match.group(3).split()), len(encoded)))
+        elif re.match(r"^\s*[0-9a-f]+:\s", line, re.IGNORECASE):
+            raise ValueError("unparseable objdump instruction line")
     return result
 
 
@@ -77,7 +84,9 @@ def check_sequence(instructions, offset, expected, allow_plain_ret=False):
     anchored = bool(observed) and observed[0][0] == offset
     mismatch = (0 if not anchored else next(
         (index for index, want in enumerate(expected)
-         if index >= len(observed) or actual[index] != want), None))
+         if index >= len(observed) or actual[index] != want or
+         (index and observed[index][0] !=
+          observed[index - 1][0] + observed[index - 1][2])), None))
     return {
         "offset": hex(offset),
         "entry_anchored": anchored,
@@ -90,7 +99,7 @@ def check_sequence(instructions, offset, expected, allow_plain_ret=False):
 
 def disassemble(path, offset, length):
     command = ["objdump", "-D", "-b", "binary", "-m", "i386:x86-64",
-               "-M", "intel", "--no-show-raw-insn",
+               "-M", "intel", "--insn-width=16",
                f"--start-address={offset}", f"--stop-address={offset + length}",
                str(path)]
     try:
