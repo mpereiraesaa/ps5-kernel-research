@@ -1839,6 +1839,31 @@ on any CPU. The local audit transcript SHA-256 is
 This is the post-reboot baseline; it cannot reconstruct a frame or
 marker that may have existed before the power cycle.
 
+### Prearmed-v8 live run
+
+**Approved FW 12.02 attempt, 2026-10-14.** [verified-on-console] The
+owner approved one follow-up probe with a first targeted-read begin/done
+bracket, ELF SHA-256
+`cad6274b6c9f38b8a151363b7fb238184b8ef7145925e114394602640f656e69`.
+The expected new boundary was a retained `FC1 SAMPLE_BEGIN` before the
+first post-release `0x500` read and `SAMPLE_DONE` with raw frame/marker
+words after it. The PC log instead ended at `FCM TRIGGER_BEGIN`, after
+the same complete gate/IST4 verification and pretrigger baseline as v7.
+There was no begin, completion, changed frame, marker, read failure, or
+return. `17` §“FW 12.02 prearmed-v8 run” records both log hashes and
+the classifier result.
+
+[inference] Missing `SAMPLE_BEGIN` leaves worker scheduling, PC send,
+trap fetch/delivery, and a broader stop unresolved; it does not prove
+that the observer never ran or that #DB did not fire. A same-attempt
+worker record or direct fault trace would falsify this boundary.
+**Current recovery state:** the owner reports the console remains
+usable, and ping replies. The owner questioned a hard power cycle, so
+the console was left running. No additional ELF was loaded; the shared gate,
+IST4 pointers, and scratch have not been read back after this attempt.
+Their current values are unknown. Do not treat a working UI or ping as
+restoration evidence.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.

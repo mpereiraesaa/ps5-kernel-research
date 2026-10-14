@@ -1180,6 +1180,73 @@ retained. A same-attempt changed hardware frame, fault trace, or
 post-trigger observer record would falsify the present unobserved
 boundary. A post-reboot baseline cannot reconstruct this attempt's frame.
 
+**Prearmed-v8 first-sample bracket, built offline.** [verified-in-tree]
+The separate local `fullchain_prearmed.c:268-304` now emits one
+`FC1 SAMPLE_BEGIN` after main's `TRIGGER_BEGIN` and observer release,
+immediately before its first targeted `0x500`-byte read. On return from
+that callback it emits one `FC1 SAMPLE_DONE` with the five raw frame
+words and marker value before the existing `FRAME`/`MARKER` reports.
+Both records carry the same attempt token and selected CPU. The prior
+v7 source and ELF are preserved outside this repo under `historical/`;
+its recorded SHA-256 remains `1529aad9…61ddf`. The current v8 source
+SHA-256 is `0eb37d849a91fa3e839810e7b5767dfa4c5e9ed81d189c359426091cc3277b95`;
+the built ELF SHA-256 is
+`cad6274b6c9f38b8a151363b7fb238184b8ef7145925e114394602640f656e69`.
+`tools/fullchain_layout_check.py` passes geometry, 80 distinct canaries,
+and all six public-offset comparisons. A build-string and disassembly
+check found both sample records and the same one-`ICEBP` wrapper.
+
+[verified-in-tree] `tools/khook_trace_classify.py:_fc1_records` accepts
+v8's first bracket only after linked `TRIGGER_BEGIN`, with consecutive
+FC1 sequence numbers, matching CPU and `bytes=1280`; the completion
+must provide bounded raw words. It reports a begin without completion,
+completion with unchanged canaries/marker, changed frame, and copy
+marker as separate boundaries. It rejects malformed, duplicate,
+out-of-order, or cross-attempt records; the positive raw frame still
+needs RIP/CS/RFLAGS/RSP/SS review. The synthetic v8 contract and
+real v7 regression are checked in `tests/test_khook_trace_classify.py`.
+
+[inference] A retained begin with no completion would locate the last
+report at the targeted read entry, but could still reflect a blocked PC
+send or system stop, not necessarily a returned read error. A completed
+unchanged sample could have raced ahead of `ICEBP`; it does not refute
+later #DB delivery. A changed raw frame would be stronger entry
+evidence, subject to frame plausibility and same-attempt transport.
+The owner approved one follow-up diagnostic with this bracket and a
+recovery plan: hard power cycle after a stopped run, then the read-only
+native gate/IST4/scratch audit before another live ELF. The
+shared-gate/IST4 write and one-`ICEBP` risk remains.
+
+**FW 12.02 prearmed-v8 run, 2026-10-14.** [verified-on-console] The
+approved ELF SHA-256 above was sent once. Expected: the v7 patch,
+gate, and pretrigger prefix followed by `TRIGGER_BEGIN`, then at least
+`SAMPLE_BEGIN`; `SAMPLE_DONE` would carry the first post-release raw
+frame if the targeted read completed. Actual: elfldr printed `[KSTART]`
+and `[K1]` only (transcript SHA-256
+`f884c25dc3741fe71b841a0226fa70d8f1bb07da3cdfc342e1dd96248d9dcad3`).
+The PC log again retained 25 records through `FCM TRIGGER_BEGIN`,
+including all 16 `IST4_DONE`, matching `GATE_VERIFIED`, and unchanged
+selected `PRETRIGGER` canaries. It retained no `SAMPLE_BEGIN`,
+`SAMPLE_DONE`, frame, marker, read failure, return, or restoration. Its
+SHA-256 is
+`3bb91874c0926307698b7e6e43d6ad3e83331c9ca25c3398511b7701570bd706`;
+the manifest has no gaps, `clean=false`, and `close_reason=eof`.
+`tools/khook_trace_classify.py` keeps the same
+`trigger_call_reached_db_delivery_or_later_unproven` boundary with
+matching attempt tokens and no FC1 issues. Ping replied afterward, and
+the owner reported that the console remained usable and questioned a
+hard power cycle. It was left running; no post-run ELF was loaded. Current
+gate/IST4/scratch state is **unverified** until a later baseline read or
+power cycle (`16` §“Prearmed-v8 live run”).
+
+[inference] The repeated `TRIGGER_BEGIN` endpoint means v8 did not
+observe the worker's first post-release log. Its absence cannot decide
+whether main fetched `ICEBP`, an incidental #DB caused a stop, the
+worker was not scheduled before the stop, or its PC send failed. A
+same-attempt `SAMPLE_BEGIN`, frame, or independent trap trace would
+falsify that narrow unobserved boundary. The v7/v8 similarity does not
+authenticate 12.02 gadget bytes or prove exception delivery.
+
 **Source-layout cross-check.** [verified-in-tree]
 `tools/fullchain_layout_check.py` reads the isolated C source and public
 Kstuff `ps5-kstuff/structs.inc` rather than assuming the two register-frame

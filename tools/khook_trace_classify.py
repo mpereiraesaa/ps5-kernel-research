@@ -23,7 +23,7 @@ HANDOFF_STAGES = ("R0", "R1", "Q1", "R2", "Q2")
 FRAME_BYTES = 0x28
 GETUID_ENTRY_1202 = 0x3130A0
 PIVOT_1202_CANDIDATES = {"12xx": 0x2A82DE, "13xx": 0x2AC2DE}
-ATTEMPT_BUILDS = ("prearmed-v6", "prearmed-v7")
+ATTEMPT_BUILDS = ("prearmed-v6", "prearmed-v7", "prearmed-v8")
 PATCH_BUILDS = ("prearmed-v5", *ATTEMPT_BUILDS)
 BASELINE_BUILDS = ("prearmed-v4", *PATCH_BUILDS)
 SAMPLED_BUILDS = ("prearmed-v2", "prearmed-v3", *BASELINE_BUILDS)
@@ -995,14 +995,67 @@ def _fc1_records(pc_text: str) -> dict:
         )
         if not trigger_begin:
             issues.append("malformed or unlinked FCM trigger report")
+    sample_begin = None
+    sample_done = None
+    sample_frame_changed = False
+    sample_marker_written = False
+    sample_frame = None
+    sample_marker = None
+    sample_begins = [r for r in records if r["phase"] == "SAMPLE_BEGIN"]
+    sample_dones = [r for r in records if r["phase"] == "SAMPLE_DONE"]
+    if version == "prearmed-v8":
+        if len(sample_begins) > 1:
+            issues.append("duplicate SAMPLE_BEGIN")
+        if len(sample_dones) > 1:
+            issues.append("duplicate SAMPLE_DONE")
+        if len(sample_begins) == 1:
+            record = sample_begins[0]
+            fields = record["fields"]
+            if (trigger_begin and record["level"] == "MARK" and
+                    record["line_index"] > trigger_report["line_index"] and
+                    record["seq"] == pretrigger_report["seq"] + 1 and
+                    fields.get("cpu") == ready["fields"]["trigger_cpu"] and
+                    fields.get("bytes") == "1280"):
+                sample_begin = record
+            else:
+                issues.append("malformed or out-of-phase SAMPLE_BEGIN")
+        if len(sample_dones) == 1:
+            record = sample_dones[0]
+            fields = record["fields"]
+            try:
+                raw_frame = [int(fields[key], 0) for key in
+                             ("rip", "cs", "flags", "rsp", "ss")]
+                raw_marker = int(fields["marker"], 0)
+                valid_words = all(0 <= value < (1 << 64)
+                                  for value in raw_frame + [raw_marker])
+            except (KeyError, ValueError):
+                valid_words = False
+            if (sample_begin and valid_words and record["level"] == "MARK" and
+                    record["line_index"] > sample_begin["line_index"] and
+                    record["seq"] == sample_begin["seq"] + 1 and
+                    fields.get("cpu") == ready["fields"]["trigger_cpu"] and
+                    fields.get("bytes") == "1280"):
+                sample_done = record
+                sample_frame = raw_frame
+                sample_marker = raw_marker
+                baseline = [int(pretrigger_report["fields"][f"can{i}"], 0)
+                            for i in range(5)]
+                sample_frame_changed = raw_frame != baseline
+                sample_marker_written = raw_marker == 0x4b53545546464348
+                if raw_marker not in (0, 0x4b53545546464348):
+                    issues.append("unexpected SAMPLE_DONE marker value")
+            else:
+                issues.append("malformed or out-of-phase SAMPLE_DONE")
+    elif sample_begins or sample_dones:
+        issues.append("sample bracket without prearmed-v8 READY")
     read_fail_details = []
-    if version == "prearmed-v7":
+    if version in ("prearmed-v7", "prearmed-v8"):
         valid_failures = []
         for record in read_fail:
             detail = _fc1_read_fail_detail(
                 record, int(ready["fields"]["trigger_cpu"]))
             if detail is None:
-                issues.append("malformed prearmed-v7 READ_FAIL detail")
+                issues.append(f"malformed {version} READ_FAIL detail")
                 continue
             stage = detail["stage"]
             line_index = record["line_index"]
@@ -1021,27 +1074,34 @@ def _fc1_records(pc_text: str) -> dict:
                     trigger_begin and
                     line_index > trigger_report["line_index"] and
                     record["seq"] > pretrigger_report["seq"])
+                if version == "prearmed-v8":
+                    predecessor = (sample_begin if stage == "targeted"
+                                   else sample_done)
+                    phase_valid = bool(
+                        phase_valid and predecessor and
+                        line_index > predecessor["line_index"] and
+                        record["seq"] > predecessor["seq"])
             if not phase_valid:
-                issues.append("out-of-phase prearmed-v7 READ_FAIL detail")
+                issues.append(f"out-of-phase {version} READ_FAIL detail")
                 continue
             valid_failures.append(record)
             read_fail_details.append(detail)
         read_fail = valid_failures
     read_fail_before_gate = bool(ready and not gate_report and any(
         r["seq"] > ready["seq"] and
-        (version != "prearmed-v7" or
+        (version not in ("prearmed-v7", "prearmed-v8") or
          r["fields"].get("stage") in ("gate", "ist4"))
         for r in read_fail))
     read_fail_after_gate_before_pretrigger = bool(
         gate and ready and version in BASELINE_BUILDS and
         not pretrigger_report and
         any(r["seq"] > gate["seq"] and
-            (version != "prearmed-v7" or
+            (version not in ("prearmed-v7", "prearmed-v8") or
              r["fields"].get("stage") == "pretrigger")
             for r in read_fail)
     )
     read_fail_sampling_after_trigger = bool(
-        version == "prearmed-v7" and trigger_begin and
+        version in ("prearmed-v7", "prearmed-v8") and trigger_begin and
         any(r["fields"].get("stage") in ("targeted", "sweep")
             for r in read_fail))
 
@@ -1128,6 +1188,12 @@ def _fc1_records(pc_text: str) -> dict:
                 read_fail_sampling_after_trigger,
             "read_fail": bool(read_fail),
             "read_fail_details": read_fail_details,
+            "sample_begin": bool(sample_begin),
+            "sample_done": bool(sample_done),
+            "sample_frame": sample_frame,
+            "sample_marker": sample_marker,
+            "sample_frame_changed": sample_frame_changed,
+            "sample_marker_written": sample_marker_written,
             "attempt": start["fields"]["attempt"] if start else None,
             "start_line_index": start["line_index"] if start else None,
             "attempt_integrity": attempt_integrity,
@@ -1153,7 +1219,7 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
     audit_text = audit.decode("utf-8", errors="replace") if audit else ""
     fc1 = _fc1_records(pc_text)
     stdout_starts = re.findall(
-        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) build=(prearmed-v[67])\r?$",
+        r"(?m)^\[KSTART\] attempt=(0x[0-9a-f]+) build=(prearmed-v[678])\r?$",
         live_text)
     stdout_attempt = stdout_starts[0][0] if len(stdout_starts) == 1 else None
     stdout_build = stdout_starts[0][1] if len(stdout_starts) == 1 else None
@@ -1304,12 +1370,20 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
                           "returned_but_frame_or_marker_check_failed"))
     elif same_attempt_verified and marker == "written" and frame == "canary_unchanged":
         boundary = "audit_conflict_marker_without_changed_frame"
+    elif (pc_linked and fc1["sample_done"] and
+          fc1["sample_marker_written"] and
+          not fc1["sample_frame_changed"] and
+          cpu not in fc1["frame_cpus"]):
+        boundary = "observer_sample_conflict_marker_without_changed_frame"
     elif (pc_linked and cpu is not None and
           cpu in fc1["marker_cpus"]) or (
+          pc_linked and fc1["sample_done"] and fc1["sample_marker_written"]) or (
           same_attempt_verified and marker == "written" and frame == "changed"):
         boundary = "copy_marker_seen_return_or_transport_unproven"
     elif (pc_linked and cpu is not None and
-          cpu in fc1["frame_cpus"]) or (same_attempt_verified and frame == "changed"):
+          cpu in fc1["frame_cpus"]) or (
+          pc_linked and fc1["sample_done"] and fc1["sample_frame_changed"]) or (
+          same_attempt_verified and frame == "changed"):
         boundary = "frame_changed_copy_marker_or_later_unproven"
     elif pc_linked and fc1["pretrigger_mismatch"]:
         boundary = "observer_pretrigger_mismatch_before_trigger"
@@ -1317,6 +1391,10 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         boundary = "observer_read_failed_pretrigger"
     elif pc_linked and fc1["read_fail_sampling_after_trigger"]:
         boundary = "observer_sampling_read_failed_db_delivery_unproven"
+    elif pc_linked and fc1["sample_done"]:
+        boundary = "observer_first_targeted_read_completed_no_change_at_sample"
+    elif pc_linked and fc1["sample_begin"]:
+        boundary = "observer_first_targeted_read_begun_completion_unproven"
     elif pc_linked and fc1["trigger_begin"]:
         boundary = "trigger_call_reached_db_delivery_or_later_unproven"
     elif pc_linked and fc1["pretrigger_verified"]:
@@ -1351,10 +1429,9 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
             (pc_linked and cpu is not None and
              (set(fc1["frame_cpus"] + fc1["marker_cpus"]) - {cpu}))),
         "caveat": ("Audit evidence needs an explicit same-attempt assertion; "
-                   "prearmed-v6/v7 PC evidence needs matching attempt tokens, "
+                   "prearmed-v6/v7/v8 PC evidence needs matching attempt tokens, "
                    "while older PC logs need an explicit same-run assertion. "
-                   "A changed audit frame "
-                   "supports delivery "
+                   "A changed observer or audit frame supports activity "
                    "at the staged slot; it does not establish a valid #DB frame. "
                    "Missing or post-recovery evidence cannot prove that a stage "
                    "did not execute."),
