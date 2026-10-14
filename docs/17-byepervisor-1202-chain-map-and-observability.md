@@ -1335,6 +1335,19 @@ unknown. Do not reinterpret a responsive UI, ping, or a post-reboot
 baseline as a trap trace. No v9 ELF has been sent, and an exact-build
 owner approval is still required.
 
+**Independent-reader check.** [verified-on-console] After the reboot
+audit, elfldr answered on 9021 but the ps5debug-NG command port 744
+refused a TCP connection; no debugger command or loader ELF was sent.
+[verified-in-tree] The local ps5debug-NG installer selects a FW 12.02
+kernel-data patch at `installer/source/main.c:135-139,151-179`, and its
+`debugger/source/kern.c:16-30` kernel-read handler reports success
+without checking the `kernel_copyout_fast` result. [inference] Loading
+it solely as an observer would alter the preflight environment and a
+successful read reply alone would not validate the bytes; a separately
+preinstalled service with checked readback and an unchanged gate/IST
+baseline would falsify that limitation. The current plan therefore does
+not rely on port 744 to preserve same-boot evidence.
+
 **Source-layout cross-check.** [verified-in-tree]
 `tools/fullchain_layout_check.py` reads the isolated C source and public
 Kstuff `ps5-kstuff/structs.inc` rather than assuming the two register-frame
