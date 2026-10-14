@@ -843,20 +843,6 @@ def _fc1_records(pc_text: str) -> dict:
                 issues.append("GATE_VERIFIED level and values disagree")
     read_fail = [r for r in records if r["phase"] == "READ_FAIL"
                  and r["level"] == "ERR"]
-    read_fail_details = []
-    if ready and ready["fields"].get("build") == "prearmed-v7":
-        valid_failures = []
-        for record in read_fail:
-            detail = _fc1_read_fail_detail(
-                record, int(ready["fields"]["trigger_cpu"]))
-            if detail is None:
-                issues.append("malformed prearmed-v7 READ_FAIL detail")
-            else:
-                valid_failures.append(record)
-                read_fail_details.append(detail)
-        read_fail = valid_failures
-    read_fail_before_gate = bool(ready and not gate_report and any(
-        r["seq"] > ready["seq"] for r in read_fail))
     pretrigger_reports = [r for r in records if r["phase"] == "PRETRIGGER"]
     pretrigger_report = pretrigger_reports[0] if len(pretrigger_reports) == 1 else None
     if len(pretrigger_reports) > 1:
@@ -973,11 +959,55 @@ def _fc1_records(pc_text: str) -> dict:
         )
         if not trigger_begin:
             issues.append("malformed or unlinked FCM trigger report")
+    read_fail_details = []
+    if version == "prearmed-v7":
+        valid_failures = []
+        for record in read_fail:
+            detail = _fc1_read_fail_detail(
+                record, int(ready["fields"]["trigger_cpu"]))
+            if detail is None:
+                issues.append("malformed prearmed-v7 READ_FAIL detail")
+                continue
+            stage = detail["stage"]
+            line_index = record["line_index"]
+            if stage in ("gate", "ist4"):
+                phase_valid = bool(
+                    patch_complete and not gate_report and
+                    line_index > patch_records[18]["line_index"] and
+                    record["seq"] > ready["seq"])
+            elif stage == "pretrigger":
+                phase_valid = bool(
+                    patch_complete and gate and not pretrigger_report and
+                    line_index > gate["line_index"] and
+                    record["seq"] > gate["seq"])
+            else:
+                phase_valid = bool(
+                    trigger_begin and
+                    line_index > trigger_report["line_index"] and
+                    record["seq"] > pretrigger_report["seq"])
+            if not phase_valid:
+                issues.append("out-of-phase prearmed-v7 READ_FAIL detail")
+                continue
+            valid_failures.append(record)
+            read_fail_details.append(detail)
+        read_fail = valid_failures
+    read_fail_before_gate = bool(ready and not gate_report and any(
+        r["seq"] > ready["seq"] and
+        (version != "prearmed-v7" or
+         r["fields"].get("stage") in ("gate", "ist4"))
+        for r in read_fail))
     read_fail_after_gate_before_pretrigger = bool(
         gate and ready and version in BASELINE_BUILDS and
         not pretrigger_report and
-        any(r["seq"] > gate["seq"] for r in read_fail)
+        any(r["seq"] > gate["seq"] and
+            (version != "prearmed-v7" or
+             r["fields"].get("stage") == "pretrigger")
+            for r in read_fail)
     )
+    read_fail_sampling_after_trigger = bool(
+        version == "prearmed-v7" and trigger_begin and
+        any(r["fields"].get("stage") in ("targeted", "sweep")
+            for r in read_fail))
 
     def valid_sample(record):
         fields = record["fields"]
@@ -1050,6 +1080,8 @@ def _fc1_records(pc_text: str) -> dict:
             "read_fail_before_gate_report": read_fail_before_gate,
             "read_fail_after_gate_before_pretrigger":
                 read_fail_after_gate_before_pretrigger,
+            "read_fail_sampling_after_trigger":
+                read_fail_sampling_after_trigger,
             "read_fail": bool(read_fail),
             "read_fail_details": read_fail_details,
             "attempt": start["fields"]["attempt"] if start else None,
@@ -1239,6 +1271,8 @@ def classify_kstuff_fullchain(live: bytes, audit: bytes | None = None,
         boundary = "observer_pretrigger_mismatch_before_trigger"
     elif pc_linked and fc1["read_fail_after_gate_before_pretrigger"]:
         boundary = "observer_read_failed_pretrigger"
+    elif pc_linked and fc1["read_fail_sampling_after_trigger"]:
+        boundary = "observer_sampling_read_failed_db_delivery_unproven"
     elif pc_linked and fc1["trigger_begin"]:
         boundary = "trigger_call_reached_db_delivery_or_later_unproven"
     elif pc_linked and fc1["pretrigger_verified"]:

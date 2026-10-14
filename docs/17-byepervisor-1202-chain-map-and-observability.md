@@ -935,16 +935,25 @@ for pretrigger/targeted it is the selected CPU, and for the sweep it is
 the page. [verified-in-tree] `tools/khook_trace_classify.py:_fc1_read_fail_detail`
 checks the stage-specific index and size, canonical kernel address, and
 negative callback code. A malformed v7 failure remains in raw PC records
-but cannot advance a read-failure boundary. A valid one appears in
-`signals.fc1.read_fail_details`; the data does not independently
-authenticate that the claimed kernel address was read.
+but cannot advance a read-failure boundary. A shape-valid record appears
+in `signals.fc1.read_fail_details` only when its stage also follows the
+accepted PC phase sequence: gate/IST4 after `FCM GATE_DONE` and before
+`FC1 GATE_VERIFIED`, pretrigger after verified gate and before
+`FC1 PRETRIGGER`, or targeted/sweep after linked `FCM TRIGGER_BEGIN`.
+An out-of-phase record remains in raw PC records with an issue and cannot
+advance a boundary. The stage and address are producer reports; the data
+does not independently authenticate that the claimed kernel address was read.
 The host classifier reports these separately as
 `observer_read_failed_after_main_patch_phase` and
 `observer_gate_or_ist_mismatch_after_main_readback` when linked to the same
 run. Both mean the main thread reached the observer handoff after its own
-patch readback; neither proves `ICEBP` executed. A later `READ_FAIL` during
-scratch sampling is retained as a signal without erasing a preceding
-positive gate/frame/marker record. The classifier flags a copy marker with
+patch readback; neither proves `ICEBP` executed. A linked v7 targeted/sweep
+failure after `TRIGGER_BEGIN` reports
+`observer_sampling_read_failed_db_delivery_unproven` when no stronger frame,
+marker, or return record exists. The observer can begin sampling after main
+releases its phase and before main executes `ICEBP`, so this boundary does
+not prove #DB fired. A preceding positive frame/marker record still takes
+priority. The classifier flags a copy marker with
 no corresponding frame report for raw review. [inference] The targeted
 `0x500` read is not guaranteed to be atomic across a page boundary, and the
 later sweep reads five pages sequentially. A sample can therefore combine a

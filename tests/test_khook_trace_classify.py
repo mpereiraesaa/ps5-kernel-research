@@ -779,6 +779,80 @@ class FullchainTests(unittest.TestCase):
         self.assertIn("invalid FC1 READY identity",
                       bad_ready["signals"]["fc1"]["issues"])
 
+        wrong_phase = classify_kstuff_fullchain(
+            stdout, pc=pc.replace(b"stage=gate index=-1", b"stage=pretrigger index=3")
+            .replace(b"bytes=16", b"bytes=1280"))
+        self.assertEqual(wrong_phase["boundary"],
+                         "gate_readback_observer_or_later_unproven")
+        self.assertEqual(wrong_phase["signals"]["fc1"]["read_fail_details"], [])
+        self.assertIn("out-of-phase prearmed-v7 READ_FAIL detail",
+                      wrong_phase["signals"]["fc1"]["issues"])
+
+        gate = line(23, "MARK", "FC1 seq=2 phase=GATE_VERIFIED cpu=3 "
+                    "gate_lo=0x111 gate_hi=0x222 expected_lo=0x111 "
+                    "expected_hi=0x222 ist4_matched=16 first_bad_cpu=-1 "
+                    f"first_bad_ist=0x0 attempt={token}")
+        pretrigger_failure = line(
+            24, "ERR", "FC1 seq=3 phase=READ_FAIL stage=pretrigger index=3 "
+            "addr=0xffffffff884c0010 bytes=1280 rc=-4 "
+            f"attempt={token}")
+        pretrigger_result = classify_kstuff_fullchain(
+            stdout, pc=start + staged + ready + patch + gate + pretrigger_failure)
+        self.assertEqual(pretrigger_result["boundary"],
+                         "observer_read_failed_pretrigger")
+        self.assertEqual(pretrigger_result["signals"]["fc1"][
+            "read_fail_details"][0]["stage"], "pretrigger")
+
+        premature_sample = classify_kstuff_fullchain(
+            stdout, pc=start + staged + ready + patch + gate +
+            pretrigger_failure.replace(b"stage=pretrigger", b"stage=targeted"))
+        self.assertEqual(premature_sample["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+        self.assertIn("out-of-phase prearmed-v7 READ_FAIL detail",
+                      premature_sample["signals"]["fc1"]["issues"])
+
+        baseline = line(24, "MARK", "FC1 seq=3 phase=PRETRIGGER cpu=3 "
+                        "frame_matched=5 marker_before=0x0 "
+                        "can0=0x4a524652414d4800 can1=0x4a524652414d4801 "
+                        "can2=0x4a524652414d4802 can3=0x4a524652414d4803 "
+                        f"can4=0x4a524652414d4804 attempt={token}")
+        trigger = line(25, "MARK", "FCM phase=TRIGGER_BEGIN fw=12.02 "
+                       f"build=prearmed-v7 cpu=3 pretrigger=1 attempt={token}")
+        sample_failure = line(
+            26, "ERR", "FC1 seq=4 phase=READ_FAIL stage=targeted index=3 "
+            "addr=0xffffffff884c0010 bytes=1280 rc=-4 "
+            f"attempt={token}")
+        pc_triggered = start + staged + ready + patch + gate + baseline + trigger
+        sampled = classify_kstuff_fullchain(stdout, pc=pc_triggered + sample_failure)
+        self.assertEqual(sampled["boundary"],
+                         "observer_sampling_read_failed_db_delivery_unproven")
+        self.assertTrue(sampled["signals"]["fc1"][
+            "read_fail_sampling_after_trigger"])
+        self.assertEqual(sampled["signals"]["fc1"][
+            "read_fail_details"][0]["stage"], "targeted")
+        sweep_failure = line(
+            26, "ERR", "FC1 seq=4 phase=READ_FAIL stage=sweep index=0 "
+            "addr=0xffffffff884c0010 bytes=4096 rc=-4 "
+            f"attempt={token}")
+        swept = classify_kstuff_fullchain(stdout, pc=pc_triggered + sweep_failure)
+        self.assertEqual(swept["boundary"],
+                         "observer_sampling_read_failed_db_delivery_unproven")
+        self.assertEqual(swept["signals"]["fc1"][
+            "read_fail_details"][0]["stage"], "sweep")
+        early_seq = classify_kstuff_fullchain(
+            stdout, pc=pc_triggered + sample_failure.replace(
+                b"seq=4", b"seq=2"))
+        self.assertEqual(early_seq["boundary"],
+                         "trigger_call_reached_db_delivery_or_later_unproven")
+        self.assertIn("out-of-phase prearmed-v7 READ_FAIL detail",
+                      early_seq["signals"]["fc1"]["issues"])
+        missing_trigger = classify_kstuff_fullchain(
+            stdout, pc=pc_triggered.replace(trigger, b"") + sample_failure)
+        self.assertEqual(missing_trigger["boundary"],
+                         "pretrigger_baseline_verified_trigger_or_later_unproven")
+        self.assertIn("out-of-phase prearmed-v7 READ_FAIL detail",
+                      missing_trigger["signals"]["fc1"]["issues"])
+
     def test_prearmed_v7_read_failure_site_contract(self):
         for stage, index, size in (
             ("gate", -1, 16), ("ist4", 15, 8),
