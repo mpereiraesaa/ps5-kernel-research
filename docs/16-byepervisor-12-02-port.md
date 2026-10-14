@@ -1857,12 +1857,22 @@ the classifier result.
 trap fetch/delivery, and a broader stop unresolved; it does not prove
 that the observer never ran or that #DB did not fire. A same-attempt
 worker record or direct fault trace would falsify this boundary.
-**Current recovery state:** the owner reports the console remains
-usable, and ping replies. The owner questioned a hard power cycle, so
-the console was left running. No additional ELF was loaded; the shared gate,
-IST4 pointers, and scratch have not been read back after this attempt.
-Their current values are unknown. Do not treat a working UI or ping as
-restoration evidence.
+**Recovery state at capture:** the owner reported a usable console, and
+ping replied. No additional ELF was loaded before recovery; the shared
+gate, IST4 pointers, and scratch were unknown at that point. The owner
+subsequently hard power-cycled and restarted elfldr. [verified-on-console]
+The existing read-only `fullchain_audit.elf` (SHA-256
+`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`)
+then completed: native #DB target `+0x3188b0`, IST4 gate, zero staged
+IST4 slots, zero nonzero scratch bytes, and no marker on all 16 CPUs.
+The transcript SHA-256 is
+`eb3d784c3d9b9ee78c581ae46072b85fff0eec76ed19472a7b3c208dd5c378e9`.
+This verifies the **post-reboot** baseline. It cannot reconstruct whether
+v8 entered #DB or changed a frame before the reboot. [inference] A
+same-boot audit after a responsive UI/elfldr restart could retain that
+evidence; a same-boot audit with no frame or marker would falsify the
+prediction that v8 left one in the staged slot, subject to whether its
+scratch still exists. No such v8 audit was captured.
 
 ### Frame staging isolation run
 

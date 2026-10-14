@@ -501,6 +501,39 @@ class FullchainTests(unittest.TestCase):
         self.assertEqual(result["boundary"],
                          "prepatch_staging_seen_gate_patch_or_later_unproven")
 
+    def test_prearmed_audit_requires_addition_canaries_and_inspects_image(self):
+        live = (b"[KSTART] attempt=0x1234 build=prearmed-v9\n"
+                b"[K1] fw=12.02 cpu=3 frames=16 attempt=0x1234\n")
+        old = classify_kstuff_fullchain(
+            live, self.AUDIT_CHANGED, same_attempt_verified=True)
+        self.assertEqual(old["signals"]["audit_version"], 1)
+        self.assertFalse(old["signals"]["audit_canary_contract_valid"])
+        self.assertIsNone(old["signals"]["audit_frame"])
+        self.assertEqual(old["boundary"],
+                         "gate_and_ist_staged_delivery_or_later_unproven")
+
+        new = self.AUDIT_CHANGED.replace(
+            b"scratch_nonzero=100\n", b"scratch_nonzero=100 audit_version=2\n")
+        new = new.replace(b"STAGED marker=NO", b"STAGED marker=NO image=YES")
+        new = new.replace(b"marked=0\n", b"marked=0 staged_images=1\n")
+        changed = classify_kstuff_fullchain(live, new, same_attempt_verified=True)
+        self.assertEqual(changed["signals"]["audit_version"], 2)
+        self.assertEqual(changed["signals"]["audit_frame"], "changed")
+        self.assertEqual(changed["signals"]["audit_staged_images"], 1)
+        self.assertEqual(changed["boundary"],
+                         "frame_changed_copy_marker_or_later_unproven")
+
+        restored_pointer = new.replace(b" STAGED marker=NO", b" marker=NO")
+        restored_pointer = restored_pointer.replace(
+            b"[KA2] cpu=3 hw_frame=CHANGED rip=0x1234 cs=0x43 "
+            b"flags=0x202 rsp=0x5678 ss=0x3b\n", b"")
+        restored_pointer = restored_pointer.replace(
+            b"staged=16 changed_hw_frames=1",
+            b"staged=0 changed_hw_frames=0")
+        intact = classify_kstuff_fullchain(
+            live, restored_pointer, same_attempt_verified=True)
+        self.assertEqual(intact["signals"]["audit_frame"], "canary_unchanged")
+
     def test_nonselected_cpu_activity_is_surfaced(self):
         audit = self.AUDIT_CHANGED.replace(
             b"[KA2] staged=16 changed_hw_frames=1 marked=0\n",
@@ -1024,6 +1057,44 @@ class FullchainTests(unittest.TestCase):
         failed = classify_kstuff_fullchain(stdout, pc=pc + begin + read_fail)
         self.assertEqual(failed["boundary"],
                          "observer_sampling_read_failed_db_delivery_unproven")
+
+        # v9 must retain an independently completed selected-slot read
+        # before the main thread is allowed to call ICEBP.
+        stdout9 = stdout.replace(b"prearmed-v8", b"prearmed-v9")
+        pc9 = pc.replace(b"prearmed-v8", b"prearmed-v9")
+        sample_ready = line(26, "MARK", "FC1 seq=4 phase=SAMPLE_READY cpu=3 "
+                            "bytes=1280 frame_matched=5 marker_before=0x0 "
+                            f"attempt={token}")
+        begin9 = begin.replace(b"26\t26000", b"27\t27000").replace(
+            b"seq=4", b"seq=5")
+        done9 = done.replace(b"27\t27000", b"28\t28000").replace(
+            b"seq=5", b"seq=6")
+        no_ready = classify_kstuff_fullchain(stdout9, pc=pc9 + begin9)
+        self.assertFalse(no_ready["signals"]["fc1"]["sample_begin"])
+        self.assertIn("malformed or out-of-phase SAMPLE_BEGIN",
+                      no_ready["signals"]["fc1"]["issues"])
+        armed = classify_kstuff_fullchain(stdout9, pc=pc9 + sample_ready)
+        self.assertEqual(armed["boundary"],
+                         "observer_sample_ready_icebp_or_later_unproven")
+        self.assertTrue(armed["signals"]["fc1"]["sample_ready"])
+        sampled9 = classify_kstuff_fullchain(
+            stdout9, pc=pc9 + sample_ready + begin9 + done9)
+        self.assertEqual(sampled9["boundary"],
+                         "observer_first_targeted_read_completed_no_change_at_sample")
+        self.assertFalse(sampled9["signals"]["fc1"]["issues"])
+        mismatch = classify_kstuff_fullchain(
+            stdout9, pc=pc9 + sample_ready.replace(
+                b"MARK", b"ERR").replace(b"frame_matched=5", b"frame_matched=4"))
+        self.assertEqual(mismatch["boundary"],
+                         "observer_sample_ready_mismatch_before_icebp")
+        ready_fail = line(26, "ERR", "FC1 seq=4 phase=READ_FAIL "
+                          "stage=sample_ready index=3 "
+                          "addr=0xffffffff884c0010 bytes=1280 rc=-4 "
+                          f"attempt={token}")
+        failed9 = classify_kstuff_fullchain(stdout9, pc=pc9 + ready_fail)
+        self.assertEqual(failed9["boundary"],
+                         "observer_sample_ready_read_failed_before_icebp")
+        self.assertTrue(failed9["signals"]["fc1"]["read_fail_sample_ready"])
 
     def test_prearmed_v7_read_failure_site_contract(self):
         for stage, index, size in (
