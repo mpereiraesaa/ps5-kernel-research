@@ -173,8 +173,10 @@ def check(plan):
             "scope": "interval geometry only; no FW 12.02 byte or runtime proof"}
 
 
-def locate_write_error(plan, error):
+def locate_write_error(plan, error, *, access="write"):
     """Map a reported I/O address and optional byte count to the plan."""
+    if access not in ("read", "write"):
+        raise ValueError("access must be read or write")
     address = number(error["addr"])
     length = number(error["bytes"]) if "bytes" in error else 1
     stage, region = error["stage"], error["region"]
@@ -202,8 +204,9 @@ def locate_write_error(plan, error):
                 location["word"] = (address - base) // 8
     elif stage in ("B0", "B2", "A2", "D2", "R0", "R1", "R2") and region == "ist6":
         for cpu, item in enumerate(plan["ist_qwords"]):
-            if address == number(item) and length <= 8 and (stage != "A2" or
-                                            cpu == number(plan["selected_cpu"])):
+            if address == number(item) and length <= 8 and (
+                    stage != "A2" or access == "read" or
+                    cpu == number(plan["selected_cpu"])):
                 location.update(plan_match=True, cpu=cpu)
                 break
     elif stage == "B2" and region == "context":
@@ -305,7 +308,7 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
     for location, attempt in zip(write_attempt_locations,
                                  classification["write_attempts"]):
         location.update(bytes=attempt["bytes"], result=attempt["result"])
-    read_attempt_locations = [locate_write_error(plan, attempt)
+    read_attempt_locations = [locate_write_error(plan, attempt, access="read")
                               for attempt in classification["read_attempts"]]
     for location, attempt in zip(read_attempt_locations,
                                  classification["read_attempts"]):
@@ -313,6 +316,16 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
     mismatches = []
     comparison_errors = []
     compared_fields = []
+    for kind, locations in (("KH2R", read_attempt_locations),
+                            ("KH2W", write_attempt_locations)):
+        for location in locations:
+            if not location["plan_match"]:
+                mismatches.append({
+                    "field": f"{kind}.{location['stage']}.{location['region']}.addr",
+                    "expected": "address inside the corresponding plan region",
+                    "observed": location["addr"],
+                    "seq": location["seq"],
+                })
     pivot_comparison = classification.get("b2_pivot_gate_comparison")
     if pivot_comparison and pivot_comparison["status"] == "different":
         mismatches.append({

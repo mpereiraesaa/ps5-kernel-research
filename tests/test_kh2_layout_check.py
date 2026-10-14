@@ -202,6 +202,7 @@ class LayoutCheck(unittest.TestCase):
         self.assertEqual(locate_write_error(plan, error)["cpu"], 0)
         error["addr"] = plan["ist_qwords"][7]
         self.assertFalse(locate_write_error(plan, error)["plan_match"])
+        self.assertEqual(locate_write_error(plan, error, access="read")["cpu"], 7)
         error.update(region="armed", addr=plan["journal_qwords"][4])
         self.assertTrue(locate_write_error(plan, error)["plan_match"])
         error.update(stage="D2", region="image", addr="0x1ba00")
@@ -214,6 +215,34 @@ class LayoutCheck(unittest.TestCase):
         self.assertFalse(locate_write_error(plan, error)["plan_match"])
         plan["scratch"] = {"base": "0x30000", "size": "0x100"}
         self.assertEqual(locate_write_error(plan, error)["offset"], "0x0")
+
+    def test_retained_bracket_outside_plan_fails_log_join(self):
+        plan = candidate()
+        def bracket(address):
+            return (f"7\t7000\tMARK\tKH2R stage=B2 cpu=0 region=gate "
+                    f"addr={address} bytes=16 state=begin\n"
+                    f"8\t8000\tMARK\tKH2R stage=B2 cpu=0 region=gate "
+                    f"addr={address} bytes=16 state=done\n").encode()
+
+        correct = compare_log(plan, planned_log(plan) +
+                              bracket(plan["gate"]["base"]))
+        self.assertEqual(correct["comparison_status"], "observed_fields_match")
+        self.assertEqual(correct["read_attempt_locations"][0]["plan_match"], True)
+
+        wrong = compare_log(plan, planned_log(plan) + bracket("0x2e88410"))
+        self.assertEqual(wrong["comparison_status"], "mismatch")
+        self.assertEqual(wrong["mismatches"][0]["field"], "KH2R.B2.gate.addr")
+        self.assertFalse(wrong["read_attempt_locations"][0]["plan_match"])
+
+        wrong_write = (
+            b"7\t7000\tMARK\tKH2W stage=B2 cpu=0 region=gate "
+            b"addr=0x2e88410 bytes=8 state=begin\n"
+            b"8\t8000\tMARK\tKH2W stage=B2 cpu=0 region=gate "
+            b"addr=0x2e88410 bytes=8 state=done\n"
+        )
+        wrong = compare_log(plan, planned_log(plan) + wrong_write)
+        self.assertEqual(wrong["comparison_status"], "mismatch")
+        self.assertEqual(wrong["mismatches"][0]["field"], "KH2W.B2.gate.addr")
 
     def test_ambiguous_sequence_cannot_be_joined_to_plan(self):
         plan = candidate()

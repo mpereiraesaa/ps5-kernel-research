@@ -1172,9 +1172,17 @@ Compiling this audit ELF validates none of those contracts.
    nonzero. The PR #97 `[K1]` console marker is from a different log format
    and cannot be joined as a KH2 B0/B1/B2/A2 report. The join checks what a
    retained producer *reported*, not independent memory ownership or code
-   execution; an unobserved stage remains unlocated. It does not compare the
-   gate/IST **field addresses**, because those are absent from KH2 records,
-   or independently authenticate the source build behind a reported
+   execution; an unobserved stage remains unlocated. B0/B2/A2 control
+   records omit gate/IST **field addresses**, but each retained `KH2R` or
+   `KH2W` bracket carries an address and byte count. The join now fails on
+   any bracket outside the corresponding plan region (`11` #50). A2's 16
+   read brackets may name all 16 IST6 fields; its IST6 write bracket must
+   name the selected field. The off-tree integrated host trace's 100 reads
+   and 49 writes mapped to its mock plan after this correction. [inference]
+   Missing or fabricated brackets cannot authenticate which kernel address
+   was actually accessed; an independent same-attempt read with a different
+   address would falsify the producer's claim. The join also cannot
+   independently authenticate the source build behind a reported
    `build_sha`; the plan and producer can both make the same false claim.
    A passing result still reports
    `ownership_verified: false`: it establishes disjoint geometry and agreement
