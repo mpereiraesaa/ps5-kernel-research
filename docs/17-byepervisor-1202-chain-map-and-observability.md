@@ -155,11 +155,11 @@ own firmware. There is no held 12.02 ktext image in this audit.
 
 | Required semantic / phase | 11.60 `ktext+` | 12.02 evidence and verdict |
 |---|---:|---|
-| `PIVOT_ADD_RSP28_RET` for both #DB entries | `0x2a0ede` | **Candidate** `ktext+0x2ac2de`: the `cpu_switch−0x22` relation appears in the published 13.00, 13.20, and 13.60 tables (`16`, cross-firmware local-anchor consistency). 12.02 bytes and stack consumption remain missing. Kstuff's `add rsp,0xe8; iretq` at `+0x2b3626` is a different contract. |
+| `PIVOT_ADD_RSP28_RET` for both #DB entries | `0x2a0ede` | **Competing candidates** `ktext+0x2a82de` from the 11.60/12.70 `cpu_switch−0x4022` relation and `+0x2ac2de` from the 13.xx `cpu_switch−0x22` relation (`16` §“New 11.60/12.70 bracketing audit”). Neither has 12.02 bytes or a proven stack contract. Kstuff's `add rsp,0xe8; iretq` at `+0x2b3626` is different. |
 | `IRETQ` for arm and dispatch returns | `0x2ac22d` | **Table address** `doreti_iret` at `+0x2b362d` (`12_02.h:12`); 12.02 bytes not read. |
 | `RET_TRAMP` | `0x338d2b` | **Table address** `nop_ret` at `+0x2b0b26` (`12_02.h:17-18`); [verified-on-dump] the 13.60 donor's corresponding entry at `+0x255036` is a plain `ret`, despite the symbol name. Exact 12.02 bytes not read. |
 | `POP_RAX`, `POP_RCX`, `POP_RDI` for arm/context/store | `0x338d2a`, `0x339712`, `0x289e0a` | **Unknown** individually; `pop_all_iret` is not a drop-in replacement because it consumes a different frame. |
-| `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78`: the `mov_cr3_rax_mov_ds+0xe1` relation appears in the published 13.00, 13.20, and 13.60 tables (`16`). [verified-on-dump] The 13.60 donor entry is `mov dr0,rax`; the preceding load from `[rdi+0x78]` is outside the gadget, and the arm chain supplies DR0 in RAX (`11` #23). The 12.02 entry, remaining debug-register loads, and continuation stack are unverified. `cpu_switch` alone does not prove this tail. |
+| `DBREG_RESUME` tail | `0x2a5778` | **Candidate** `+0x2acb78`: both 11.60/12.70 `cpu_switch+0x878` and 13.xx `mov_cr3_rax_mov_ds+0xe1` project here (`16`). [verified-on-dump] The 13.60 donor entry is `mov dr0,rax`; the preceding load from `[rdi+0x78]` is outside the gadget, and the arm chain supplies DR0 in RAX (`11` #23). The 12.02 entry, remaining debug-register loads, and continuation stack are unverified. |
 | `STORE_RDI8_RCX` to write `IST+8` in arm continuation | `0x3cc4af` | **Unknown** equivalent. |
 | `POP_RSP` for dispatch stub and resume tail | `0x33974d` | **Unknown**. |
 | `MOV_RAX_RSI`, `MOV_RAX_RDI`, `ST_RCX_RAX`, `ST_RCX_RDX` for register save | `0x958504`, `0xc5e5da`, `0x3620bf`, `0x8a2725` | **Unknown** as a set. `store_rax_rdi` at 12.02 `+0x2ac112` is a different register pairing; any substitution needs a new register-liveness proof. |
@@ -487,6 +487,15 @@ would falsify the candidate's execution contract. [public-consensus] The
 descriptor encoding follows the public
 [`gate_encode`](https://github.com/gzimbric/Byepervisor-Reborn/blob/5299395b15ec91f7484ded2e7631977e0df94a4d/khook.c#L22-L33).
 The option is unavailable in the legacy `kstuff-fullchain` mode.
+
+[verified-in-tree] This B2 option currently encodes only the older
+`+0x2ac2de` candidate (`tools/khook_trace_classify.py:1365`); it must
+not be read as a check of the new `+0x2a82de` 12.xx candidate. A future
+same-run B2 comparison for the latter needs an explicitly selected
+pivot offset and a matching build manifest. [inference] Equal gate words
+would still check installation, not the pivot's 12.02 instruction bytes;
+a 12.02 text image with a different sequence would falsify that gadget
+candidate.
 
 **Native format scaffold, built and host-tested offline:** the separate local
 payload workspace now contains `kh2_trace_format.c/.h` and
@@ -1298,6 +1307,15 @@ Compiling this audit ELF validates none of those contracts.
    stack-frame placement, executable runtime mapping, and trap delivery
    unproved. This checker does not discover unknown 12.02 offsets or make
    the data-only dump into a text image.
+
+   [verified-in-tree] `examples/kh2_gadget_offsets_1202_12xx_candidates.json:1-9`
+   is a separate **two-entry** manifest for the 11.60/12.70 projection:
+   pivot `+0x2a82de` and debug-register tail `+0x2acb78`. It does not
+   replace the five-entry 13.xx manifest; the competing pivot locations
+   must be checked separately against a future 12.02 text image.
+   [inference] Matching either entry's bytes would narrow the location
+   question, while failure at both would falsify both address candidates.
+   The two-entry manifest necessarily reports 19 omitted gadget names.
 
    [verified-in-tree] `tools/kh2_identical_gadget_scan.py:16-106` adds a
    candidate-finding pass for a future locally supplied 12.02 text image.

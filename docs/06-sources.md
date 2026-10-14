@@ -25,6 +25,13 @@ scene research artifacts and documentation.
   https://github.com/sleirsgoevy/ps4jb-payloads
   (`main.py`: 134 MB kdata dump via r0gdb/copyout; structural-signature
   symbol derivation for rootvnode/IDT/GDT/TSS/kernel_pmap_store).
+- Byepervisor-Reborn public port sources:
+  - [11.60 working-port commit](https://github.com/gzimbric/Byepervisor-Reborn/commit/5299395b15ec91f7484ded2e7631977e0df94a4d)
+    (`include/offsets/11_60.h`, `khook.c`, and `docs/11.60-port.md`).
+  - [12.70 candidate-port PR #12](https://github.com/PS5Dev/Byepervisor-Reborn/pull/12)
+    at head `bf4553882ef5e3116e483091e63f20f562748c5c`
+    (`include/offsets/12_70_candidate.h`, `PORT_12_70.md`). The latter
+    reports one launch-model run and marks some offsets as unexercised.
 - AMD64 Architecture Programmer's Manual, Vol. 2, §13.1.3.1 —
   https://docs.amd.com/v/u/en-US/24593_3.44_APM_Vol2
   (instruction-address breakpoints fault before the instruction executes;
