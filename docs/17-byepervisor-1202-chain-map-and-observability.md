@@ -1161,7 +1161,10 @@ The classifier reports
 `trigger_call_reached_db_delivery_or_later_unproven` and incomplete PC
 transport. A ping replied after the sender socket closed, but the
 shared-gate state remained unknown; no further ELF was loaded before
-recovery. Recovery status is recorded in `16` §“Prearmed-v7 live run”.
+recovery. The owner hard power-cycled and restarted elfldr. The approved
+read-only audit then found the native gate, zero staged IST4 slots, and
+zero nonzero scratch bytes; its hash and full recovery record are in
+`16` §“Prearmed-v7 live run”.
 
 [inference] These retained records eliminate the missing-patch-readback
 ambiguity for **this attempt**: the observer read the patched gate and

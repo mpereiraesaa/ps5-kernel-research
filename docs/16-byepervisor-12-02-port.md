@@ -1828,9 +1828,16 @@ so #DB delivery and the Kstuff continuation remain unproved. A ping
 reply after the sender closed is evidence of network response only, not
 restoration of the shared gate. A same-attempt frame or fault trace
 would falsify the current delivery boundary. No new ELF was sent into
-the uncertain post-trigger state. **Recovery:** awaiting owner hard
-power-cycle confirmation; then run the approved read-only native
-gate/IST4/scratch audit and record its result here.
+the uncertain post-trigger state. **Recovery:** [verified-on-console]
+The owner confirmed a hard power cycle and elfldr restart. The approved
+read-only audit ELF SHA-256
+`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`
+then reported native #DB target `+0x3188b0`, gate IST4, zero staged
+IST4 slots, zero nonzero scratch bytes, and no marker or changed frame
+on any CPU. The local audit transcript SHA-256 is
+`e43a80aa20e752fdeeea7e0586a0f37e9bc7ec95f8bc1f2e8dd9df5ee66d57e6`.
+This is the post-reboot baseline; it cannot reconstruct a frame or
+marker that may have existed before the power cycle.
 
 ### Frame staging isolation run
 
