@@ -1039,9 +1039,17 @@ def _fc1_records(pc_text: str) -> dict:
             r["seq"] <= pretrigger_report["seq"] for r in frames + markers
         ):
             if frames or markers:
-                issues.append("v4/v5 frame or marker without preceding verified pretrigger baseline")
+                issues.append("baseline-build frame or marker without preceding verified pretrigger baseline")
             frames = []
             markers = []
+        elif frames or markers:
+            if not trigger_begin:
+                issues.append("frame or marker without linked FCM trigger report")
+            elif any(r["line_index"] <= trigger_report["line_index"]
+                     for r in frames + markers):
+                issues.append("frame or marker precedes linked FCM trigger report")
+                frames = []
+                markers = []
     if any(r["phase"] in ("FRAME", "MARKER") and
            (not gate or r["seq"] <= gate["seq"]) for r in records):
         issues.append("frame or marker without preceding verified gate")

@@ -559,6 +559,17 @@ class FullchainTests(unittest.TestCase):
         self.assertTrue(reported["signals"]["fc1"]["trigger_begin"])
         self.assertEqual(classify(baseline + trigger + frame)["boundary"],
                          "frame_changed_copy_marker_or_later_unproven")
+        missing_trigger = classify(baseline + frame)
+        self.assertEqual(missing_trigger["boundary"],
+                         "frame_changed_copy_marker_or_later_unproven")
+        self.assertIn("frame or marker without linked FCM trigger report",
+                      missing_trigger["signals"]["fc1"]["issues"])
+        inverted = classify(baseline + frame + trigger)
+        self.assertEqual(inverted["boundary"],
+                         "trigger_call_reached_db_delivery_or_later_unproven")
+        self.assertFalse(inverted["signals"]["fc1"]["frame_cpus"])
+        self.assertIn("frame or marker precedes linked FCM trigger report",
+                      inverted["signals"]["fc1"]["issues"])
         missing_baseline = classify(trigger + frame)
         self.assertEqual(missing_baseline["boundary"],
                          "gate_and_ist_staged_delivery_or_later_unproven")
