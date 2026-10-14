@@ -2077,16 +2077,16 @@ was sent once on the new boot and reported native vector-1 target
 cannot resolve the prior boot's trap boundary. No further live pivot
 ELF was sent.
 
-[inference] If `ICEBP` was fetched and delivered through the confirmed
-IST4 gate, hardware should overwrite the five staged canaries before the
-pivot instruction executes. The independent reader's lack of an observed
-frame change therefore disfavors a pivot-body crash **after** ordinary
-IST4 frame construction. It does not prove `ICEBP` was fetched: a stop
-before that instruction, a different exception-delivery path, a transient
-change between polls, or stale ps5debug-NG read buffers remain possible.
-A same-attempt changed frame, an instruction-level trace, or a read-freshness
-witness disagreeing with these samples would falsify or revise this
-interpretation. Reading candidate 12.02 instruction bytes through the
+[inference] If `ICEBP` was fetched and delivered through the staged
+IST4 gate, hardware should overwrite the five canaries before the pivot
+instruction executes. The watcher reported no such change, but its
+post-stop read freshness was not established. Its negative samples cannot
+distinguish a stop before `ICEBP` from #DB delivery followed by a pivot or
+continuation failure. A different exception-delivery stack or a transient
+change between polls is also possible. A checked kernel-copy result and
+a same-attempt changing data witness would test read freshness; a changed
+hardware frame or instruction-level trace would establish a later boundary.
+Reading candidate 12.02 instruction bytes through the
 ordinary kernel-read primitive is blocked by the execute-only text mapping
 (`02`); ps5debug-NG's kernel read uses that same class of pipe primitive.
 [verified-in-tree] In the public ps5debug-NG source,
