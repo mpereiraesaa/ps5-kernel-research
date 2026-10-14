@@ -148,6 +148,14 @@ same-function relation beyond the window or another identified static
 pointer table would falsify that particular coverage limit; the audit
 does not assert that every kernel-data anchor has been exhausted.
 
+[verified-on-dump] The companion scan of all aligned 13.60 data qwords
+also finds no pointer within `0x4000` of the donor `getuid` body, and
+no exact body or `+0xe` hook pointer at any byte offset (`16`
+§“Data-pointer cross-check”; `11` #59). [inference] The 12.02
+`getuid` body remains unresolved by this data-pointer route; a new
+independent pointer source or 12.02 instruction bytes would change that
+assessment.
+
 [verified-on-dump] `16` §“Data-pointer cross-check” also identifies
 two plausibly homologous 13.60/12.02 static pointer rows. They map
 nearby function **entries**, but donor disassembly places the
