@@ -394,7 +394,7 @@ gadget addresses that remain unverified without 12.02 executable bytes.
 | IDT base | `kdata + 0x2e88300`; vector 13 gate is `idt + 13*16` (`+0xd0`) | [verified-in-tree] `offsets/12_02.h:8`; `minchain2-build/main.c:385` uses the 16-byte gate stride. Live IDT inspection is in this doc's rung 2. |
 | Common TSS base and stride | `kdata + 0x2e8afe0`; per-CPU stride `0x68` | [verified-in-tree] `offsets/12_02.h:10`; `minchain2-build/main.c:72,395` uses the same stride. |
 | TSS IST slot | `TSS + 0x24 + 8*(IST−1)` | [public-consensus] FreeBSD 11 [`tss.h`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/amd64/include/tss.h#L46-L55) gives IST1 at `+0x24`; `minchain2-build/main.c:73,395` independently places IST3 at `+0x34`. [verified-on-console] rung 2 measured live IST slots and gate-to-IST use. |
-| Scratch candidate | `kdata+0x2099000`, two zero-filled pages in `kernel-data-only-1202/kernel-data.bin` at `+0x2099000` | [inference] Byepervisor's 13.60 `DATA_CAVE` at text-relative `0x2d39000`, translated by the dump's `kdata−ktext=0xcc0000`, lands at the same data-relative coordinate. A zero page is only a candidate cave; it may be allocated or used at runtime. Falsifier: a live 12.02 read finds nonzero/owned data there, or a write/readback probe shows it is not safe scratch. The offline one-shot probe checks the full page is zero immediately before staging, but this alone does not establish ownership or runtime safety. |
+| Scratch candidate | `kdata+0x2099000`, two zero-filled pages in `kernel-data-only-1202/kernel-data.bin` at `+0x2099000` | [verified-on-dump] This is a 12.02 zero run, **not** the same data-relative coordinate as Byepervisor's 13.60 cave: `0x2d39000−0xcc0000 = 0x2079000` (`11` #61). [inference] Zero bytes alone do not establish ownership or cross-boot safety. Falsifier: a live 12.02 read finds nonzero/owned data there, or a write/readback probe shows it is not safe scratch. The offline one-shot probe checks the full page is zero immediately before staging; that does not establish ownership. |
 | FACS global | `kdata + 0x2cb4c80` | [verified-on-dump] `docs/15-facs-global-resume-trigger.md` §2 |
 | PCB saved fields | `RBP=0x20`, `RSP=0x28`, `RIP=0x38`, `DR7=0xa0` | [inference] FreeBSD 11 [`pcb.h`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/amd64/include/pcb.h#L51-L73) and [`cpu_switch.S`](https://github.com/freebsd/freebsd-src/blob/releng/11.0/sys/amd64/amd64/cpu_switch.S#L398-L487) provide this field order; Byepervisor independently defines the same [`KH_RC_*` offsets](https://github.com/PS5Dev/Byepervisor-Reborn/blob/main/include/khook.h#L12-L15). This assumes Sony's 12.02 `struct pcb` preserves that layout. Falsifier: 12.02 `resumectx` or generated `PCB_*` offsets differ. |
 
@@ -660,6 +660,44 @@ its `+0xe` hook. An identified pointer encoded differently or stored in a
 different image would falsify any broader absence claim; 12.02 text bytes
 could establish the body directly. This scan does not resolve the 12.02
 table entry's jump or the hook's instruction contract (`11` #59).
+
+#### Exact donor gadget pointers: staged-chain provenance
+
+[verified-on-dump] A separate scan of aligned qwords in the same held 13.60
+data image found **56 exact pointers** to the 21 public Byepervisor gadget
+addresses: 11 on data page `+0x2079000` and 45 on page `+0x207c000`, with
+zero outside the published `0x4000` scratch span. The image SHA-256 is
+`29a0fd3d0ff5290897981543dcc7c71e02105477597b7d4523ded09ffdfdc318`.
+The 13.60 header's text-relative `DATA_CAVE=0x2d39000` converts with the
+held `kdata−ktext=0xcc0000` gap to **data `+0x2079000`**; the public
+`KH_OFF_BIG_CHAIN=0x3a00` then gives data `+0x207ca00`. The five gadget
+positions at that address match `khook.c`'s first five big-chain gadget
+words at the source-prescribed strides around argument slots; the audit
+does not validate the argument values. [public-consensus]
+[`13_60.h:14`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_60.h#L14),
+[`khook.h:30-37`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/khook.h#L30-L37),
+and [`khook.c:388-435`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/khook.c#L388-L435)
+define those positions and writes. [verified-in-tree]
+`tools/kh2_donor_gadget_pointer_audit.py:17-85` reports only derived counts,
+pages, prefix checks, and input hashes;
+`tests/test_kh2_donor_gadget_pointer_audit.py` checks the cave boundary,
+outside hits, and a broken prefix. Reproduce without adding a dump here:
+
+```sh
+python3 tools/kh2_donor_gadget_pointer_audit.py \
+  --data-1360 /path/outside/repo/13.60-kernel-data.bin \
+  --offsets examples/kh2_gadget_offsets_1360.json \
+  --text-base-1360 0xffffffffd3b70000
+```
+
+[inference] These exact donor pointers are consistent with a staged
+Byepervisor chain and cannot serve as **independent firmware-native** anchors
+for 12.02 projection (`11` #62). A pristine 13.60 baseline showing the same
+values in a known native object, or an independently identified containing
+function with paired 12.02 text bytes, would overturn the corresponding
+provenance or projection limit. This held data image does not tell us when
+the chain was staged, and the 12.02 candidate at `+0x2099000` has no
+established homologous relation to the 13.60 cave.
 
 [verified-on-dump] A wider data-pointer scan found two 13.60 rows at
 `kernel-data.bin+0x1c6718` and `+0x1c9948`, separated by `0x3230`.

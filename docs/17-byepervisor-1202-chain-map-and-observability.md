@@ -63,6 +63,16 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 | `resumectx` layout | [public-consensus] `5299395/include/khook.h:12-15` uses RBP `+0x20`, RSP `+0x28`, RIP `+0x38`, DR7 `+0xa0`. | Candidate FreeBSD lineage only (`16`, PCB table). Validate the 12.02 consumer before a DR7 arm. |
 | Hypervisor AP/VMCB location | [public-consensus] 11.60 discovers a live 16-entry set and validates it before writes. | No 12.02 runtime location or validated population; outside the first khook proof. |
 
+[verified-on-dump] The 13.60 donor `DATA_CAVE` translates to data
+`+0x2079000`, whereas the independently observed 12.02 zero-run candidate
+is `+0x2099000`; the prior coordinate-equivalence statement was wrong
+(`11` #61; `16` §“Exact donor gadget pointers”). All 56 aligned exact public donor
+gadget pointers in held 13.60 kdata are in that donor cave, and the
+`+0x3a00` big-chain prefix matches `khook.c` (`11` #62). [inference] Neither
+the donor's staged pointers nor the 12.02 zero run establishes a native
+12.02 gadget address or safe scratch owner. A pristine donor baseline and
+12.02 code/ownership evidence could change those conclusions.
+
 The local 12.02 kdata dump was taken while Kstuff ran; its patched gate and
 IST values are **not** a native baseline (`11` #19). A fresh read-only live
 baseline is required for any later experiment.
