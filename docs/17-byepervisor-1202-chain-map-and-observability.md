@@ -1475,6 +1475,35 @@ Compiling this audit ELF validates none of those contracts.
    image bytes and hashes, 12.02 gadget contracts, and gate/IST readback
    still need to match a future exact build and run.
 
+   [verified-in-tree] `tools/kh2_layout_from_calibration.py:17-57` joins
+   the zero-based template to one complete R0 PC log, manifest, stdout
+   transcript, and source/header build tag. It derives the candidate base
+   from that log's single main gate-read bracket, then requires
+   `tools/kh2_r0_calibration_check.py` to accept the same capture before
+   taking its selected CPU into `kh2_layout_rebase.py`. The output pins
+   hashes of all four inputs and marks the gate-derived base as nonindependent.
+   To reproduce the approved run's CPU 9 candidate, keep its retained
+   capture paths outside this notes repo and run:
+
+   ```sh
+   python3 tools/kh2_layout_from_calibration.py \
+     examples/kh2_layout_1202_zero_span_candidate.json \
+     --log "$R0_LOG" --manifest "$R0_MANIFEST" \
+     --stdout "$R0_STDOUT" \
+     --build-sha e7e00eb805c75a1bc42d3adf39b1321abbd8ccb384fcac3a9907c943408afc84 \
+     > /path/outside/repo/kh2-r0-candidate.json
+   python3 tools/kh2_layout_check.py \
+     /path/outside/repo/kh2-r0-candidate.json
+   ```
+
+   [verified-on-console] The retained approved capture (PC-log SHA-256
+   `362090e9b8c0a4fcb14cccc8ea7d0dbfd72e46619a11abeed346a748285732eb`)
+   passes this join: CPU 9, gate-derived `kdata_base=0xffffffff972d0000`,
+   `geometry_valid=true`, `ownership_verified=false`. The output is an
+   offline candidate. [inference] A later independent base read that
+   disagrees, or a live ownership check finding occupied scratch, would
+   falsify its runtime placement; the R0 capture cannot verify either.
+
    [inference] This is a placement candidate only. The dump was captured
    with Kstuff active and zero bytes cannot establish live ownership or
    safe scratch. The 15 nonselected landing chains have not been built or
