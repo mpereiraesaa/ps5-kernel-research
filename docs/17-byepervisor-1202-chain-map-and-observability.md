@@ -953,20 +953,25 @@ layouts agree. Run it with those two paths, for example:
 ```text
 python3 tools/fullchain_layout_check.py \
   /home/manuel/personal/ing_pereira/engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c \
-  /home/manuel/personal/ing_pereira/engineering/third_party/kstuff-lite/ps5-kstuff/structs.inc \
+  /home/manuel/personal/ing_pereira/engineering/third_party/kstuff/ps5-kstuff/old/structs.inc \
   --offsets r0gdb/prosper0gdb/offsets/12_02.h --ktext-gap 0xd50000
 ```
 
 It checks eight register offsets, the `F−0x28` hardware frame, the
 `+0xe8` entry-iret landing, both pop-all frames, the copy `pop rbp; ret`
 handoff, slot bounds and overlap, and the staged/observer canary formula.
+The geometry gate now exits nonzero when that formula collides across
+CPU/word combinations (`11` #64); reporting `unique_canaries=false`
+without failing would let an ambiguous frame marker pass.
 For v4 it checks that the pretrigger comparison uses the same canary
 formula as staging and later frame reporting.
 The optional offset audit also checks IDT, TSS, and four text-relative
 Kstuff entries against the same-firmware public table. [verified-in-tree]
-The historical PR #97 source fails only the copy-entry comparison
+The historical PR #97 source's **offset audit** fails only the copy-entry comparison
 (`0x2efbba` versus `0x2efdba`); the corrected unrun v3 source passes all
-six comparisons. These are address calculations, not 12.02 byte checks.
+six comparisons. Its separate geometry result now also fails because the
+historical OR canary formula has collisions. These are source and address
+calculations, not 12.02 byte checks.
 The current prearmed source passes geometry with 16 disjoint `0x500` slots
 (`0x5000` total) and **80 distinct canary words**. The unchanged PR #97
 `fullchain_allcpu.c` has the same source geometry but only **20 distinct

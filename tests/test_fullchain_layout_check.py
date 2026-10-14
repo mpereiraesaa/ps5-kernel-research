@@ -1,14 +1,59 @@
 import unittest
 from pathlib import Path
 
-from tools.fullchain_layout_check import check_offsets
+from tools.fullchain_layout_check import check, check_offsets
 
 
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = (ROOT / "r0gdb/prosper0gdb/offsets/12_02.h").read_text()
+STRUCTS = """%define iret_rdi 0
+%define iret_rsi 8
+%define iret_rcx 24
+%define iret_rip 232
+%define iret_cs (iret_rip+8)
+%define iret_eflags (iret_rip+16)
+%define iret_rsp (iret_rip+24)
+%define iret_ss (iret_rip+32)
+"""
+GEOMETRY = """enum {
+  CPU_COUNT = 16,
+  SLOT_SIZE = 0x500,
+  SCRATCH_SIZE = CPU_COUNT * SLOT_SIZE,
+  FRAME_OFF = 0x80,
+  HW_FRAME_OFF = FRAME_OFF - 0x28,
+  IRET_FRAME_OFF = FRAME_OFF + 0xc0,
+  CHAIN1_OFF = 0x180,
+  AFTER_COPY_OFF = 0x290,
+  CHAIN2_OFF = 0x2a0,
+  MARKER_SRC_OFF = 0x400,
+  MARKER_DST_OFF = 0x408,
+  REGS_RDI = 0,
+  REGS_RSI = 8,
+  REGS_RCX = 24,
+  REGS_RIP = 232,
+  REGS_CS = 240,
+  REGS_RFLAGS = 248,
+  REGS_RSP = 256,
+  REGS_SS = 264,
+};
+uint64_t canary = 0x4a524652414d4500ULL {op} ((uint64_t)cpu << 8)
+                  {op} (uint64_t)word;
+"""
 
 
 class FullchainOffsetAuditTests(unittest.TestCase):
+    def test_canary_collision_fails_geometry_gate(self):
+        historical = check(GEOMETRY.replace("{op}", "|"), STRUCTS)
+        self.assertFalse(historical["geometry_valid"])
+        self.assertFalse(historical["unique_canaries"])
+        self.assertEqual(historical["distinct_canaries"], 20)
+        self.assertIn("20 distinct values for 80", historical["errors"][0])
+
+        corrected = check(GEOMETRY.replace("{op}", "+"), STRUCTS)
+        self.assertTrue(corrected["geometry_valid"], corrected["errors"])
+        self.assertTrue(corrected["unique_canaries"])
+        self.assertEqual(corrected["distinct_canaries"], 80)
+
     def test_public_1202_bindings_expose_copy_gadget_typo(self):
         source = """enum {
           IDT_OFF = 0x2e88300,
