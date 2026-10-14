@@ -489,6 +489,10 @@ def classify(raw: bytes, manifest: dict | None = None,
                             (operation == "prepare" and stage != "R0") or
                             (operation == "finish" and stage not in ("R0", "Q2"))):
                         raise ValueError
+                elif "code" in fields:
+                    if (not re.fullmatch(r"-?[0-9]+", fields["code"]) or
+                            int(fields["code"]) == 0):
+                        raise ValueError
             except (KeyError, ValueError):
                 rejected.append({"seq": int(seq),
                                  "reason": "malformed KH2E capture error"})
@@ -496,7 +500,7 @@ def classify(raw: bytes, manifest: dict | None = None,
                 error = {"seq": int(seq), "stage": stage,
                          "cpu": cpu, "operation": operation,
                          "region": region, "addr": address}
-                if operation in ("prepare", "finish"):
+                if "code" in fields:
                     error["code"] = int(fields["code"])
                 matching = []
                 if operation in ("read", "write"):

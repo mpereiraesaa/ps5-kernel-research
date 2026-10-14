@@ -302,7 +302,7 @@ frame, journal, and readback values. A KH2 line can still be false if its
 producer fabricated or sampled the wrong address; the classifier cannot
 authenticate a kernel event from text alone.
 The separate `ERR` line `KH2E stage=… cpu=… operation=read|hash|write
-region=… addr=…` is a separate failure report. The classifier preserves it
+region=… addr=… [code=…]` is a separate failure report. The classifier preserves it
 as `capture_errors`/`first_capture_error` but never counts it as a KH2
 milestone. A retained R1 `KH2E` with no R1 record identifies the reported
 failed read; it says nothing about whether a later trap could have fired.
@@ -313,6 +313,23 @@ callback fails. `tools/kh2_layout_check.py --log` maps such errors
 to the proposed B1 offset and landing CPU when applicable, IST6 CPU,
 gate word, context field, or armed journal word in
 `write_error_locations`; a failed write leaves that stage unverified.
+It now also maps read errors to `read_error_locations` (including the
+frame or journal field where known). [verified-in-tree]
+`tools/khook_trace_classify.py:492-504` retains an optional nonzero
+decimal callback code while accepting earlier code-less records;
+`tools/kh2_layout_check.py:184-187,424-429,513-516` carries that code
+into the mapped error. [inference] The current off-tree main and observer
+samplers report their callback's actual return code on a returned error;
+for the current adapters, main `-1` is a precondition/CPU check and `-2`
+is a failed SDK kernel copy, while observer `-2`/`-3` name its two pipe
+metadata writes and `-4` names a short or failed pipe read. A later
+adapter with different return values would falsify that interpretation.
+The code is not `errno`, a count of bytes changed, or evidence that #DB
+fired. A stalled callback or failed PC send may leave no `KH2E` at all.
+These are offline source changes. The previously approved R0 ELF remains
+SHA-256 `a92f7696fb24021c1e085968e501b07642c2d1f3052e7aa54a81dceec32bc9c3`;
+its earlier console capture cannot acquire the new error-code evidence
+retroactively. No rebuilt ELF from these edits has run on the console.
 The D2 scratch address remains raw with `plan_match=false` unless the plan
 also includes a scratch base and size. A reported address identifies the
 failed callback attempt, not the last byte written or the first instruction
@@ -497,8 +514,10 @@ least one successful pass. Its host test generated 11 native milestones
 and 30 R0/R1/R2 read brackets; with the existing B0/B1/B2/A2/D2 fixtures,
 the classifier accepted all 18 milestones and 15 paired observer reads.
 It also exercised a wrong F1 canary, failed read with `KH2E`,
-failed send (including the `KH2E` path), and premature Q1. The C source SHA-256 is
-`e938883f305114de17ab2ba9a90931413eed602d5a5c6ae64855b35d94285b72`.
+failed send (including the `KH2E` path), and premature Q1. The updated
+sampler includes a nonzero callback code in returned-read errors; its C
+source SHA-256 is
+`ebe6c41294302a83aa56c32e7451b20c13614b193075cbc1715e3110cc5589a1`.
 The sampler is **not a synchronized worker**: its Q records depend on a
 main/worker return signal and ownership transfer, which it cannot
 verify on its own. The separate worker schedule below supplies those calls
@@ -577,9 +596,12 @@ classifier. An un-restored journal was rejected at D2; changing another
 CPU's IST6 qword was rejected at A2 with `first_bad_cpu=7`. Injected
 B1/B2/A2/D2 write failures emitted retained `KH2E` without the
 corresponding success record. These are two mock
-processes, not one same-attempt console trace. The C source SHA-256 is
-`1f82a4e36d3d2eb802fbaab2063a77f8cb4be0de89bbc1c52e12a4783cb799b2`;
-it cross-compiled as a PS5 SDK object. The expected 12.02 addresses/values
+processes, not one same-attempt console trace. The updated producer reports
+the original callback code on returned read/write/hash errors when nonzero.
+Its C source SHA-256 is
+`b16f38cfcf2decdccc9ea2cd2e5fa4fb8c116469592187da4ed5eac3837ab708`;
+the updated source was host-compiled, not cross-built into a new PS5 ELF.
+The expected 12.02 addresses/values
 and mock worker states still require a real chain.
 
 [inference] The extra 15 SDK reads at A2 lengthen the interval with the

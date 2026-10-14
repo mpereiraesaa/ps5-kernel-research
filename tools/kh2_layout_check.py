@@ -183,6 +183,8 @@ def locate_write_error(plan, error, *, access="write"):
     stage, region = error["stage"], error["region"]
     location = {"seq": error["seq"], "stage": stage, "region": region,
                 "addr": error["addr"], "plan_match": False}
+    if "code" in error:
+        location["code"] = error["code"]
     if stage in ("B1", "D2") and region in plan["b1"]:
         part = plan["b1"][region]
         base, size = number(part["base"]), number(part["size"])
@@ -422,6 +424,9 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
     write_error_locations = [locate_write_error(plan, error)
                              for error in classification["capture_errors"]
                              if error["operation"] == "write"]
+    read_error_locations = [locate_write_error(plan, error, access="read")
+                            for error in classification["capture_errors"]
+                            if error["operation"] == "read"]
     write_attempt_locations = [locate_write_error(plan, attempt)
                                for attempt in classification["write_attempts"]]
     for location, attempt in zip(write_attempt_locations,
@@ -508,6 +513,7 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
         "classifier_rejected": classification["rejected"],
         "capture_errors": classification["capture_errors"],
         "write_error_locations": write_error_locations,
+        "read_error_locations": read_error_locations,
         "write_attempt_locations": write_attempt_locations,
         "open_write_locations": [item for item in write_attempt_locations
                                  if item["result"] == "open"],

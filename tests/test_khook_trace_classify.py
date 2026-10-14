@@ -128,6 +128,21 @@ def classify_records(*payloads, b2_target=None):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_callback_error_code_is_retained_without_requiring_old_logs_to_have_it(self):
+        raw = ("1\t1000\tERR\tKH2E stage=R1 cpu=3 operation=read "
+               "region=f1 addr=0x118 code=-4\n"
+               "2\t2000\tERR\tKH2E stage=B1 cpu=3 operation=write "
+               "region=image addr=0x100\n").encode()
+        result = classify(raw)
+        self.assertEqual(result["capture_errors"][0]["code"], -4)
+        self.assertNotIn("code", result["capture_errors"][1])
+        self.assertEqual(result["rejected"], [])
+        for bad_code in ("0", "oops"):
+            invalid = ("1\t1000\tERR\tKH2E stage=R1 cpu=3 operation=read "
+                       f"region=f1 addr=0x118 code={bad_code}\n").encode()
+            self.assertEqual(classify(invalid)["rejected"][0]["reason"],
+                             "malformed KH2E capture error")
+
     def test_worker_lifecycle_errors_are_not_milestones(self):
         raw = ("1\t1000\tERR\tKH2E stage=R0 cpu=3 operation=prepare "
                "region=pipe addr=0x0 code=-3\n"
