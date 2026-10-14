@@ -7,6 +7,7 @@ occurred, or whether #DB was delivered.
 """
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import re
@@ -242,6 +243,95 @@ def locate_write_error(plan, error, *, access="write"):
     return location
 
 
+def expected_brackets(plan, classification):
+    """Count the deterministic control-phase callbacks in the host producer."""
+    reads, writes, unknown = Counter(), Counter(), []
+    observed = classification["observed"]
+    selected = number(plan["selected_cpu"])
+    gate = number(plan["gate"]["base"])
+    ist = [number(value) for value in plan["ist_qwords"]]
+    frames = [number(value) for value in plan["frame_slots"]]
+    context = [number(value) for value in plan["context_qwords"]]
+    journal = [number(value) for value in plan["journal_qwords"]]
+
+    def add(counter, stage, region, base, size, times=1):
+        for _ in range(times):
+            for offset in range(0, size, 0x500):
+                counter[(stage, region, base + offset,
+                         min(0x500, size - offset))] += 1
+
+    def scratch(stage, read=False, write=False):
+        if "scratch" not in plan:
+            unknown.append(f"{stage}.scratch address/size absent from plan")
+            return
+        item = plan["scratch"]
+        _, base, end = region("scratch", item)
+        size = end - base
+        if read:
+            add(reads, stage, "scratch", base, size)
+        if write:
+            add(writes, stage, "scratch", base, size)
+
+    if "B0" in observed:
+        add(reads, "B0", "gate", gate, 16)
+        for address in ist:
+            add(reads, "B0", "ist6", address, 8)
+        scratch("B0", read=True)
+    for part in classification["b1_parts"]:
+        item = plan["b1"][part]
+        base, size = number(item["base"]), number(item["size"])
+        add(reads, "B1", part, base, size, times=2)
+        add(writes, "B1", part, base, size)
+    if "R0" in observed:
+        add(reads, "R0", "gate", gate, 16)
+        add(reads, "R0", "ist6", ist[selected], 8)
+    if "B2" in observed:
+        add(reads, "B2", "gate", gate, 16)
+        for address in ist:
+            add(reads, "B2", "ist6", address, 8)
+            add(writes, "B2", "ist6", address, 8)
+        for address in context:
+            add(reads, "B2", "context", address, 8)
+            add(writes, "B2", "context", address, 8)
+        for address in frames:
+            add(reads, "B2", "frame", address, 0x28)
+        add(writes, "B2", "gate", gate, 8)
+        add(writes, "B2", "gate", gate + 8, 8)
+    if "R1" in observed:
+        add(reads, "R1", "gate", gate, 16)
+        add(reads, "R1", "ist6", ist[selected], 8)
+        for name, address in zip(("f1", "f2"), frames):
+            add(reads, "R1", name, address, 0x28)
+        for name, address in zip(("A1P", "A1R", "D1S", "D1O"), journal):
+            add(reads, "R1", name, address, 8)
+    if "A2" in observed:
+        for address in ist:
+            add(reads, "A2", "ist6", address, 8)
+        add(reads, "A2", "armed", journal[4], 8)
+        add(writes, "A2", "ist6", ist[selected], 8)
+        add(writes, "A2", "armed", journal[4], 8)
+    if "R2" in observed:
+        add(reads, "R2", "gate", gate, 16)
+        add(reads, "R2", "ist6", ist[selected], 8)
+        add(reads, "R2", "f2", frames[1], 0x28)
+        add(reads, "R2", "D1S", journal[2], 8)
+        add(reads, "R2", "D1O", journal[3], 8)
+    if "D2" in observed:
+        add(reads, "D2", "gate", gate, 16)
+        add(writes, "D2", "gate", gate, 8)
+        add(writes, "D2", "gate", gate + 8, 8)
+        for address in ist:
+            add(reads, "D2", "ist6", address, 8)
+            add(writes, "D2", "ist6", address, 8)
+        for part in ("image", "big", "journal"):
+            item = plan["b1"][part]
+            base, size = number(item["base"]), number(item["size"])
+            add(reads, "D2", part, base, size)
+            add(writes, "D2", part, base, size)
+        scratch("D2", read=True, write=True)
+    return reads, writes, unknown
+
+
 def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
     """Compare only classifier-accepted, unambiguous KH2 report fields."""
     geometry = check(plan) if geometry is None else geometry
@@ -300,6 +390,28 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
                 if stage in ("B0", "B2", "A2")}
     accepted.update({f"B1.{part}": seq for part, seq in
                      classification["b1_parts"].items()})
+    expected_reads, expected_writes, unknown_brackets = expected_brackets(
+        plan, classification)
+    def completed(attempts):
+        return Counter((attempt["stage"], attempt["region"],
+                        number(attempt["addr"]), attempt["bytes"])
+                       for attempt in attempts if attempt["result"] == "done")
+    def missing(expected, attempts):
+        return [{"stage": stage, "region": region, "addr": hex(address),
+                 "bytes": size, "count": count}
+                for (stage, region, address, size), count in
+                sorted((expected - completed(attempts)).items())]
+    missing_reads = missing(expected_reads, classification["read_attempts"])
+    missing_writes = missing(expected_writes, classification["write_attempts"])
+    bracket_coverage = {
+        "expected_reads": sum(expected_reads.values()),
+        "expected_writes": sum(expected_writes.values()),
+        "missing_reads": missing_reads,
+        "missing_writes": missing_writes,
+        "unplanned_regions": unknown_brackets,
+        "complete": bool(expected_reads or expected_writes) and not (
+            missing_reads or missing_writes or unknown_brackets),
+    }
     write_error_locations = [locate_write_error(plan, error)
                              for error in classification["capture_errors"]
                              if error["operation"] == "write"]
@@ -376,6 +488,8 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
         status = "no_comparable_records"
     elif any(stage not in accepted for stage in expected):
         status = "partial_observed_fields_match"
+    elif not bracket_coverage["complete"]:
+        status = "partial_address_evidence"
     else:
         status = "observed_fields_match"
     result = {
@@ -391,6 +505,7 @@ def compare_log(plan, raw, manifest=None, geometry=None, b2_target=None):
         "open_write_locations": [item for item in write_attempt_locations
                                  if item["result"] == "open"],
         "read_attempt_locations": read_attempt_locations,
+        "address_bracket_coverage": bracket_coverage,
         "open_read_locations": [item for item in read_attempt_locations
                                 if item["result"] == "open"],
         "causal_order_conflict": classification["causal_order_conflict"],
@@ -434,7 +549,7 @@ def main():
     if not result["geometry_valid"] or (args.log and
             result["log_comparison"]["comparison_status"] in
             ("comparison_error", "mismatch", "classifier_rejected_or_capture_error",
-             "no_comparable_records")):
+             "no_comparable_records", "partial_address_evidence")):
         raise SystemExit(1)
 
 
