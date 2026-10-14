@@ -1806,6 +1806,39 @@ must already be running before the live trigger; do not rely on loading
 a new audit ELF into an uncertain changed-gate state. This supersedes
 the post-stall audit part of the plan above.
 
+### Prearmed-v7 live run
+
+**Approved FW 12.02 attempt, 2026-10-14.** [verified-on-console] The
+owner approved a single run of `prearmed-v7` ELF SHA-256
+`1529aad99a0baebfa0570801d6d501b795399bb8f70c1ce76c1d1e9d06b61ddf`,
+with a hard power cycle and read-only native gate/IST4 audit after
+reboot. The expected first post-trigger evidence was a changed
+hardware-frame canary or copy marker in the independent PC log, then
+return and restored-state markers if the chain completed. The retained
+PC record instead ends at `FCM TRIGGER_BEGIN` after the observer verified
+the patched #DB gate, all 16 IST4 pointers, and the selected frame's five
+unchanged canaries. Elfldr printed `[KSTART]` and `[K1]` only. The PC
+manifest has 25 records, no gaps, and an unclean EOF; the full phase
+sequence and log hash are in `17` §“FW 12.02 prearmed-v7 run”.
+
+[inference] This attempt passed the patch/readback and pretrigger
+observer boundaries that PR #97's `[K1]` could not establish. It did
+not retain a changed frame, marker, observer read failure, or return,
+so #DB delivery and the Kstuff continuation remain unproved. A ping
+reply after the sender closed is evidence of network response only, not
+restoration of the shared gate. A same-attempt frame or fault trace
+would falsify the current delivery boundary. No new ELF was sent into
+the uncertain post-trigger state. **Recovery:** [verified-on-console]
+The owner confirmed a hard power cycle and elfldr restart. The approved
+read-only audit ELF SHA-256
+`0d8676972036143435662b1479cc9b6af049a631e33395f4b3b33defbbd5fefc`
+then reported native #DB target `+0x3188b0`, gate IST4, zero staged
+IST4 slots, zero nonzero scratch bytes, and no marker or changed frame
+on any CPU. The local audit transcript SHA-256 is
+`e43a80aa20e752fdeeea7e0586a0f37e9bc7ec95f8bc1f2e8dd9df5ee66d57e6`.
+This is the post-reboot baseline; it cannot reconstruct a frame or
+marker that may have existed before the power cycle.
+
 ### Frame staging isolation run
 
 - **FW:** 12.02 (`0x12020000`), reported by the payload.

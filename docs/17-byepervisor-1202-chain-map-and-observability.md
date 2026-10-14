@@ -960,7 +960,7 @@ and have an independent reporting path. A captured restored gate before
 the audit attempt would falsify the proposed changed-gate link; the
 available logs do not establish what caused the outage.
 
-**Isolated prearmed Kstuff variant, built offline and not run.**
+**Isolated prearmed Kstuff variant; v7 run recorded below.**
 [verified-in-tree] Our separate local source
 `engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:116-316,576-735`
 builds the current `byepervisor_probe_1202_fullchain_prearmed.elf`, SHA-256
@@ -989,7 +989,7 @@ Rebuilding it at the original source path reproduced its ELF SHA-256
 v3 corrected the copy-gadget offset (`11` #46); v4 adds a pretrigger
 observer/main handoff; v5 adds main-thread patch-phase records; v6 adds
 attempt-linked PC/stdout records; v7 qualifies returned observer read
-failures by site and error code. None was run.
+failures by site and error code. Versions v2–v6 were not run.
 The earlier PR #97 live, setup, and audit ELF hashes remain unchanged.
 The worker runs on a second permitted CPU and sends `FC1 READY` before the
 main thread stages IST4 or changes the gate. [verified-in-tree]
@@ -1135,8 +1135,50 @@ incidental CPU's original GPRs, and the observer itself runs during the
 shared-gate window. A byte-level all-register save/restore path in the
 current build would falsify this source reading; none is present in
 `fullchain_prearmed.c:508-540` or `fullchain_icebp.S:9-27`. The 12.02 gadget
-bytes remain unavailable. Building and classifying it offline do not approve
-a console run.
+bytes remain unavailable. The owner approved the exact v7 ELF and
+recovery plan for the 2026-10-14 run recorded next.
+
+**FW 12.02 prearmed-v7 run, 2026-10-14.** [verified-on-console] The
+approved ELF SHA-256 was
+`1529aad99a0baebfa0570801d6d501b795399bb8f70c1ce76c1d1e9d06b61ddf`.
+Expected: `READY`, all 16 `IST4_DONE` records, `GATE_DONE`,
+`GATE_VERIFIED`, selected-frame `PRETRIGGER`, and `TRIGGER_BEGIN` before
+one `ICEBP`; a changed `FRAME` and copy `MARKER` would locate delivery
+and the copy side effect, followed by return and restoration records if
+the chain completed. The elfldr transcript emitted `[KSTART]` and `[K1]`
+only (local transcript SHA-256
+`5718b004955b49b96f646fc975f82aab2e40495054e9848f1470e252b8d92aad`).
+The separate PC run had 25 records and matching attempt tokens:
+`FCM START`, `FC1 READY`, `FCM IST4_BEGIN`, `IST4_DONE` for slots 0–15,
+`FCM GATE_BEGIN/DONE`, `FC1 GATE_VERIFIED` with gate words matching the
+planned patch and `ist4_matched=16`, `FC1 PRETRIGGER` with five matching
+canaries and zero marker, then `FCM TRIGGER_BEGIN`. There was no later
+`FC1 FRAME`, `MARKER`, `READ_FAIL`, return, or restoration record. The PC
+manifest reports 25 records, no sequence gaps, `clean=false`,
+`close_reason=eof`; its log SHA-256 is
+`5d2e0a53a52aa026b23fbf0886ef6b76f42ec7e986334b1879524121279cc29f`.
+The classifier reports
+`trigger_call_reached_db_delivery_or_later_unproven` and incomplete PC
+transport. A ping replied after the sender socket closed, but the
+shared-gate state remained unknown; no further ELF was loaded before
+recovery. The owner hard power-cycled and restarted elfldr. The approved
+read-only audit then found the native gate, zero staged IST4 slots, and
+zero nonzero scratch bytes; its hash and full recovery record are in
+`16` §“Prearmed-v7 live run”.
+
+[inference] These retained records eliminate the missing-patch-readback
+ambiguity for **this attempt**: the observer read the patched gate and
+all 16 IST4 pointers before the trigger handoff. The pretrigger callback
+also completed a selected-slot `0x500` read, the same size and address
+as its first targeted post-trigger read
+(`fullchain_prearmed.c:230-233,271-274`). They do not show that
+`ICEBP` was fetched, that #DB entered, or that the worker's first
+post-trigger read completed under the changed execution schedule. The
+worker can start sampling after the
+`OBS_SAMPLE` release and before main executes `ICEBP`; no sample was
+retained. A same-attempt changed hardware frame, fault trace, or
+post-trigger observer record would falsify the present unobserved
+boundary. A post-reboot baseline cannot reconstruct this attempt's frame.
 
 **Source-layout cross-check.** [verified-in-tree]
 `tools/fullchain_layout_check.py` reads the isolated C source and public
