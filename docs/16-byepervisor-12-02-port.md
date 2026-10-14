@@ -81,7 +81,7 @@ anchors both per boot (we derive both bases).
 | `DATA_CAVE` | 0x2D39000 | candidate only — `kh_find_cave` zero-scans, but zero bytes do not establish ownership or cross-boot safety |
 | `HV_MP_STARTUP_CALL` | 0xC16EE0 | **not needed by our trigger** (below) |
 | `ACPI_SLEEP_MACHDEP_HOOK` | 0x3913B0 | not needed (our anchor approaches to it were debunked on 12.02) |
-| `MP_STARTUP_INIT_VECTOR` | 0x269FB8 | only needed for the benign-resume variant |
+| `MP_STARTUP_INIT_VECTOR` | 0x269FB8 | only needed for the benign-resume variant; the 13.60 address is a jump **entry**, not its AP startup body (`17` §“AP init vector entry contract”); no 12.02 entry is known |
 | `PRINTF` | 0x4ADD60 | test-only; drop or derive via sysent |
 | `HV_SYM_HEAP_BASE` / `HV_SYM_PCPUS` | HV-internal | **the real port work**: derive dynamically from root 0 (the writeup's own verdict: static artifacts do not port) |
 

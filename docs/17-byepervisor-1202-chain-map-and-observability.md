@@ -59,7 +59,7 @@ claim that equivalent code has the same bytes. Resolve both bases per boot.
 | IDT and common TSS | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:8,10`: `kdata+0x2e88300`, `kdata+0x2e8afe0`; `16` §“Derived 12.02 data and structure offsets” records TSS stride `0x68` from `r0gdb/prosper0gdb/minchain2-build/main.c:72,395`. | Addressed; selected CPU, native gate type/IST, and saved qwords must still be read live. |
 | Scratch | [verified-on-console] The earlier two-page setup at `kdata+0x2099000` was superseded by PR #97's setup-only run: `16` §“Full Kstuff-style continuation probe” records staging/readback/restoration of **16 × `0x500` = `0x5000` bytes** there. [public-consensus] `5299395/include/khook.h:30-37` reserves `0x4000` bytes and begins its big chain at `+0x3a00`. | The tested byte span is large enough for the **reference image by size alone**. The existing all-CPU slots already occupy the entire `0x5000` span, so overlaying that image would collide. A disjoint or redesigned joint layout and independent ownership evidence are still required. |
 | Test hook target | [verified-in-tree] `r0gdb/prosper0gdb/offsets/12_02.h:29` identifies `sysents`; [public-consensus] the 11.60 test uses `getuid + 0xe` (`5299395/main.c:63`). [verified-on-dump] The 12.02 table's `sysent[24].sy_call` is `ktext+0x3130a0`; the 13.60 donor's `sy_call` is a jump entry, distinct from its getuid body (`16` §“getuid table entry versus hook body”). | Only the 12.02 **table entry** is located. Its instruction bytes, body target, `+0xe` hook boundary, and safe resume address remain unknown. Do not transfer donor body offsets or use `sy_call+0xe` as the hook. |
-| Resume-window hook target and AP init vector | [public-consensus] 11.60 identifies both in its `include/offsets/11_60.h`. | No verified 12.02 addresses. Neither the debunked `acpi_sleep_machdep+0x18e` nor a global text delta supplies one (`11` #14, #18). |
+| Resume-window hook target and AP init vector | [public-consensus] 11.60 identifies both in its `include/offsets/11_60.h`; the public 13.60 vector is `ktext+0x269fb8` (`13_60.h:12`). | No verified 12.02 addresses. The 13.60 vector names a jump entry to a distinct body, and two donor entries pass the broad aligned-jump-to-`CLI` filter (below). Neither the debunked `acpi_sleep_machdep+0x18e`, a global text delta, nor proximity to `DBREG_RESUME` supplies the 12.02 entry (`11` #14, #18, #68). |
 | `resumectx` layout | [public-consensus] `5299395/include/khook.h:12-15` uses RBP `+0x20`, RSP `+0x28`, RIP `+0x38`, DR7 `+0xa0`. | Candidate FreeBSD lineage only (`16`, PCB table). Validate the 12.02 consumer before a DR7 arm. |
 | Hypervisor AP/VMCB location | [public-consensus] 11.60 discovers a live 16-entry set and validates it before writes. | No 12.02 runtime location or validated population; outside the first khook proof. |
 
@@ -79,6 +79,46 @@ not close that entry-address gap (`11` #63; `16` §“Exact donor gadget pointer
 The local 12.02 kdata dump was taken while Kstuff ran; its patched gate and
 IST values are **not** a native baseline (`11` #19). A fresh read-only live
 baseline is required for any later experiment.
+
+### AP init vector entry contract
+
+[public-consensus] The pinned
+[`13_60.h:12`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_60.h#L12)
+identifies `KERNEL_SYM_MP_STARTUP_INIT_VECTOR` as `ktext+0x269fb8`, and
+[`main.c:112`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/main.c#L112)
+stores that symbol as the AP startup vector. [verified-on-dump] In the held 13.60 text image
+(SHA-256 `20da45a0910c990153fbfb7c94e16356867e0bd84f7c9fbf754a45a5dd129673`),
+the entry is an aligned direct relative jump to `ktext+0x252a40`, where
+the body begins with `CLI`. A scan of all 8-byte-aligned direct relative
+jumps to `CLI` bodies finds **two** donor candidates: this public entry
+and `+0x26a298` → `+0x250420`. Therefore the scan shape alone does not
+identify the vector. Reproduce the derived offsets without retaining
+instruction bytes in this repo:
+
+```sh
+python3 tools/kh2_ap_vector_scan.py \
+  --text /path/outside/repo/13.60-kernel-text.bin \
+  --firmware 13.60 --known-vector-offset 0x269fb8
+```
+
+[verified-in-tree] `tools/kh2_ap_vector_scan.py:15-71` reports the text
+digest, all bounded candidate offsets, total count, and the resolved target
+of an optional independently known entry. Its firmware value is only a
+label; the broad filter checks neither the target's full AP startup
+contract nor runtime use. [public-consensus] The
+[`13_00.h`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_00.h)
+and [`13_20.h`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/ea04f7132b837087f552c57261cb800481a3a910/include/offsets/13_20.h)
+both put `DBREG_RESUME` at `+0x252998`, while their AP vector entries
+move from `+0x269238` to `+0x26a798`. [inference] A constant displacement
+from the debug-register resume tail cannot locate the vector across even
+those two versions; a 12.02 vector needs independent same-firmware text or
+symbol evidence. A proved 12.02 entry/target pair whose relative position
+matches a proposed projection would validate that pair independently, not
+the general displacement rule. No 12.02 text image is held here. If one
+becomes available outside this repo, run the scan with `--firmware 12.02`
+and no `--known-vector-offset`; treat every result as a candidate until an
+independent 12.02 symbol or control-flow trace selects the entry and its
+target body is checked.
 
 [verified-in-tree] In the current `fullchain_allcpu.c` layout, CPU `i` owns
 `[scratch+i×0x500, scratch+(i+1)×0x500)`. The 11.60 image **reserves**
