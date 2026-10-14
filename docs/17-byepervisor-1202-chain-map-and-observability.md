@@ -193,6 +193,42 @@ target are blocking dependencies for a faithful build. The data-derived
 the remaining dependencies **unresolved**, not zero or
 borrowed 11.60/13.60 addresses.
 
+### 12.70 standalone path versus this 11.60 chain map
+
+[public-consensus] PR #12 compiles a separate 12.70 target with
+`AP_1270_PRESTAGE`, `AP_1270_SECOND_MARKER`, and
+`AP_1270_STORE_HANDLER` ([`Makefile:46-51`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/Makefile#L46-L51)).
+[inference] Source reachability for that exact target reduces the
+load-bearing gadget set to 11 names, enumerated in `16` §“Which 12.70
+gadgets the reported path can exercise”. A different build flag or hook
+setter would falsify this count. This **does not** reduce the gadget
+set of the 11.60 chain described above: the 12.70 path preloads RDI
+before the first TF trap and omits the generic RSI/RDI/RDX save block
+([`khook.c:373-402`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L373-L402),
+[`465-489`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L465-L489),
+[`545-555`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L545-L555)).
+Its resumed kernel register liveness must be audited against a located
+12.02 hook site before treating the simplification as safe.
+
+[inference] The 12.70 target's `SECOND_MARKER` store is at the **start**
+of its second-chain big buffer, before its carrier stores and one-shot
+tail ([`khook.c:449-464`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L449-L464),
+[`491-495`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L491-L495),
+[`byepervisor_1270.c:245-265`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/byepervisor_1270.c#L245-L265)).
+If retained with a matching baseline, it supports second dispatch and
+one kernel store, not completed carrier writes or safe return. The
+current KH2 `D1S` milestone is **after** the 11.60 register-save
+sequence and has no equivalent location in PRESTAGE. Reusing `D1S` or
+interpreting a missing `D1S` as a PRESTAGE failure would be wrong.
+Likewise `hook,before-trigger` without `hook,after-trigger` cannot
+separate first #DB delivery from pivot or debug-register tail failure;
+`16` records the source's bracket and its limit. A future PRESTAGE log
+contract needs a prearmed first-frame observation and distinct durable
+markers at second-chain entry and after the carrier stores, with each
+write tied to a byte-verified 12.02 gadget. The existing KH2 format
+and classifier remain scoped to the faithful 11.60 two-transaction
+layout. No 12.02 PRESTAGE producer or console run is validated here.
+
 [verified-on-dump] The paired 12.02/13.60 syscall-pointer audit in `16`
 §“Data-pointer cross-check” finds no 13.60 public gadget within the
 bounded `0x4000` window of any donor `sy_call` entry. It therefore adds

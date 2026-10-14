@@ -596,6 +596,66 @@ separate 12.02 page-table survey or text image disagreeing with those
 assumptions would falsify direct reuse. No 12.02 console experiment is
 authorized by this offline map.
 
+[public-consensus] PR #12 places its `DATA_CAVE` at text-relative
+`0x2d29000` ([`12_70_candidate.h:23`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/include/offsets/12_70_candidate.h#L23)).
+[inference] Subtracting its `0xd50000` coordinate gap yields
+`kdata+0x1fd9000`, **not** our separately observed 12.02 zero-run
+candidate `kdata+0x2099000` (`17` §“Scratch”; `11` #61); they differ
+by `0xc0000`. The 11.60 cave similarly converts to `kdata+0x1fd2000`.
+Equal IDT/TSS/PMAP offsets across 12.02/12.70 therefore do not transfer
+scratch ownership. A 12.02 allocation or object map establishing safe
+ownership at either proposed span would change this assessment; zero
+bytes or coordinate proximity alone would not.
+
+#### Which 12.70 gadgets the reported path can exercise
+
+[public-consensus] The standalone target compiles with
+`AP_1270_PRESTAGE`, `AP_1270_SECOND_MARKER`, and
+`AP_1270_STORE_HANDLER` ([PR #12 `Makefile:46-51`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/Makefile#L46-L51)).
+The source initializes a zeroed hook, selects one-shot mode, sets only
+resume RSI and RDX, installs the chain, and calls `kh_trigger`
+([`khook.c:126-145`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L126-L145),
+[`byepervisor_1270.c:301-314,319-383`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/byepervisor_1270.c#L301-L383)).
+[inference] Following this specific build's active branches gives the
+following reachable gadget classes; a different macro set, setter call,
+or generated handler would falsify this set:
+
+| Phase in the 12.70 target | Reachable gadget names | Source |
+|---|---|---|
+| Shared #DB gate and first arm | `PIVOT_ADD_RSP28_RET`, `POP_RAX`, `DBREG_RESUME`, `RET_TRAMP`, `POP_RCX`, `ST_RCX_RAX`, `IRETQ` | [`khook.c:373-410`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L373-L410), [`505-523`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L505-L523), [`545-555`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L545-L555) |
+| Second entry, marker, and carrier stores | `PIVOT_ADD_RSP28_RET`, `POP_RSP`, `IRETQ`, `POP_RCX`, `POP_RAX`, `ST_RCX_RAX` | [`khook.c:420-464`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L420-L464), [`byepervisor_1270.c:50-56`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/byepervisor_1270.c#L50-L56), [`245-265`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/byepervisor_1270.c#L245-L265) |
+| One-shot resume tail | `POP_RAX`, `SET_DR7`, `POP_RSI`, `POP_RDX`, `POP_RSP`, `IRETQ` | [`khook.c:257-299`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L257-L299), [`491`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L491) |
+
+[inference] The union is **11 of the table's 21 gadget names**. The
+other ten—`POP_RDI`, `POP_R8`, `STORE_RCX_R8`, `STORE_RDI8_RCX`,
+`OR_RCX_EAX`, `ST_RCX_RDX`, `MOV_RAX_RSI`, `MOV_RAX_RDI`, `REP_MOVSB`,
+and `CLD`—are not on this target's selected path. In particular,
+`kh_trigger` preloads RDI from user mode before TF instead of executing
+the arm's `POP_RDI` ([`khook.c:545-555`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L545-L555));
+the prestaged path also omits the generic RSI/RDI/RDX save block
+([`khook.c:465-489`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L465-L489)).
+This narrows a faithful **12.70-style** 12.02 address audit to 11
+classes: the 12.xx anchor pass projects two, `IRETQ` and `RET_TRAMP`
+have different Kstuff table alternatives, and the other seven lack
+even table-backed 12.02 addresses. All 11 still lack matching 12.02
+instruction bytes. The table alternatives do
+not inherit the 12.70 return/stack contract. A 12.02 text image or
+same-firmware disassembly with incompatible entry sequences would
+falsify their substitution. The omitted saves also leave register
+liveness at an as-yet-unlocated 12.02 resume hook to be proved.
+
+[inference] The 12.70 USB path brackets `kh_trigger` with
+`hook,before-trigger`/`hook,after-trigger`, then uses a store marker at
+the start of the second chain and an AP marker after root-0 work
+([`byepervisor_1270.c:373-397,445-478`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/byepervisor_1270.c#L373-L397),
+[`khook.c:449-457`](https://github.com/PS5Dev/Byepervisor-Reborn/blob/bf4553882ef5e3116e483091e63f20f562748c5c/khook.c#L449-L457)).
+If a run ends after `before-trigger`, those records alone cannot
+distinguish first #DB delivery, pivot failure, or the debug-register
+tail. The prearmed frame and arm-continuation records in `17` are the
+needed finer boundaries; they are an offline design, not a validated
+12.02 chain. A retained first frame or later arm marker would falsify
+the narrower claim that this boundary remained unobserved.
+
 #### Bounded scan of the remaining public gadget entries
 
 [verified-in-tree] `tools/kh2_anchor_projection.py:16-20,37-66,69-134,137-162`
