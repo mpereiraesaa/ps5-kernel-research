@@ -1260,7 +1260,7 @@ v8 delivered #DB before the reboot; the five saved hardware-frame words
 and the copy marker were in volatile scratch. This corrects the earlier
 "current state unverified" note while retaining the v8 delivery boundary.
 
-**Prearmed-v9 capture candidate, built offline; no console run.**
+**Prearmed-v9 capture design, built offline before the console run below.**
 [verified-in-tree] The separate local
 `engineering/payloads/byepervisor_probe_1202/fullchain_prearmed.c:269-309,785-800`
 now requires the observer to complete a `0x500` selected-slot read, check
@@ -1282,7 +1282,7 @@ passed `tests/test_khook_trace_classify.py`. The source cross-compiled
 and the public-offset/geometry check passed; no 12.02 text bytes were
 checked.
 
-**Same-boot audit correction, built offline; no console run.**
+**Same-boot audit correction, built offline before the console runs below.**
 [verified-in-tree] The v1 `fullchain_audit.c` compared the staged frame
 to a bitwise-OR canary and skipped that frame whenever IST4 was no longer
 staged (`11` #75). The current off-tree
@@ -1305,7 +1305,7 @@ succeeded. A host shim running the actual audit source returned clean
 for zero scratch/native gate, reported 16 unchanged staged images under
 16 redirected IST4 pointers, and reported a changed CPU-15 frame when
 the image remained but IST4 had been restored. These are host-memory
-scenarios, not PS5 reads; v2 has not been read on-console.
+scenarios, not PS5 reads; the console results are recorded below.
 
 [inference] A retained `SAMPLE_READY` removes v8's **unscheduled-before-
 trigger** explanation: the worker completed a fresh read on the other
@@ -1317,7 +1317,7 @@ no-delivery reading; a repeated `SAMPLE_READY` endpoint remains
 inconclusive. No software-only PC logger can promise an observation after
 an instantaneous console stop.
 
-**Next-run gate and recovery plan (owner approval pending).** The risky
+**Approved v9 gate and recovery plan.** The risky
 action is the same shared #DB gate/all-CPU IST4 patch and one `ICEBP`; it
 can freeze or power off FW 12.02. Before any v9 run, verify the native
 gate, all unstaged IST4 slots, zero scratch, and PC logging on the same
@@ -1332,8 +1332,47 @@ redirected; include it in the exact-run approval and recovery plan. If
 that read is unavailable or the console powers off, hard power cycle and
 repeat the audit to establish recovery, explicitly marking prior trap delivery
 unknown. Do not reinterpret a responsive UI, ping, or a post-reboot
-baseline as a trap trace. No v9 ELF has been sent, and an exact-build
-owner approval is still required.
+baseline as a trap trace. The owner approved this exact run, with
+ps5debug-NG absent, before the v9 ELF was sent.
+
+**FW 12.02 prearmed-v9 run, 2026-10-14.** [verified-on-console] The
+same-boot preflight used audit v2 ELF SHA-256
+`d186234ab057dd2ded72ca6a5999bcb6188686db2a770b7a7450006fa4d4ab0b`.
+It reported the native #DB target `+0x3188b0`, gate IST4, zero staged
+IST4 slots, zero nonzero scratch bytes, and zero staged images or changed
+frames across all 16 CPUs. The preflight transcript SHA-256 is
+`b0a360ac92da364e5c47683c1eaf6bfee6bc29c81b2789f1263a88588057e56b`.
+The PC logger and elfldr were reachable. The approved v9 ELF SHA-256
+`f6a50525af1dd8f3c561e2114e7b22c2b9a00352ee6dc44b19a8208fe6ab321d`
+was sent once. Expected: linked `SAMPLE_READY`, then a targeted read,
+changed frame/marker or a clean return, followed by restored gate/IST4
+and scratch. Elfldr printed `[KSTART]` and `[K1]`, then closed without a
+return or restoration report; its transcript SHA-256 is
+`25538985039e80f566fdec3db11581c2b4cf15f5cb9bc95d6566ac8d5809ad55`.
+The PC log linked attempt `0x1180704853c` and retained 28 records through
+`FC1 SAMPLE_DONE`: all 16 `IST4_DONE`, `GATE_VERIFIED`, five matching
+`PRETRIGGER` canaries, `TRIGGER_BEGIN`, matching `SAMPLE_READY`, and a
+completed 1280-byte selected CPU-15 sample with all five canaries still
+present and marker zero. Its SHA-256 is
+`fc3b18a63553685662bba1c2b228a2f7b5ba0a093fc7ab3ced9c3244affe4518`;
+the manifest has no sequence gaps but `clean=false`, `close_reason=eof`.
+`tools/khook_trace_classify.py` reports
+`observer_first_targeted_read_completed_no_change_at_sample`. This is a
+later **observed worker boundary** than v8, not a trap-delivery or
+post-trap completion proof: the worker can finish that sample before
+main reaches `ICEBP` after its sample-ready ACK. A same-attempt changed
+hardware frame, marker, return, or independent instruction/fault trace
+would falsify the no-delivery reading. [inference]
+
+The console replied to ping and elfldr accepted a connection after v9.
+The approved same-boot audit v2 ELF was then sent once, but its socket
+timed out after 20 seconds with no `[KA]` marker; the audit transcript
+SHA-256 is
+`727cbc065f631782447435929cc7ee391040df98685acd5e7ffcfaddb63dcb52`.
+Three subsequent pings replied and elfldr's TCP port accepted connections.
+No gate, IST4, or scratch values were obtained from this audit, so the
+post-v9 kernel state and #DB delivery remain **unverified**. No further
+ELF was loaded into that boot. Owner UI/recovery observation is pending.
 
 **Independent-reader check.** [verified-on-console] After the reboot
 audit, elfldr answered on 9021 but the ps5debug-NG command port 744
