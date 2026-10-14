@@ -1196,13 +1196,15 @@ Compiling this audit ELF validates none of those contracts.
    nonzero exit. `partial_observed_fields_match` lists missing records as
    coverage gaps, not failed execution. `partial_address_evidence` means
    accepted control records exist but their deterministic `KH2R`/`KH2W`
-   bracket set is incomplete or the plan lacks scratch address/size; it
-   exits nonzero. The expected set covers B0, each accepted B1 part, R0,
-   B2, R1, A2, R2, and D2, counting repeated B1 prewrite/readback reads
-   and `0x500`-byte chunks. [inference] The current off-tree integrated
-   host run has 100 read and 49 write callbacks that match the expected
-   set under its mock plan. A changed producer schedule or a repeat host
-   run with different callback counts would falsify that calibration;
+   bracket set is incomplete, has extra completed callbacks, or the plan
+   lacks scratch address/size; it exits nonzero. Extra read/write brackets
+   are listed separately, including a bracket for a stage with no accepted
+   control record (`11` #53). The expected set covers B0, each accepted
+   B1 part, R0, B2, R1, A2, R2, and D2, counting B1 prewrite and readback
+   reads separately and using `0x500`-byte chunks. [inference] The current
+   off-tree integrated host run has 100 read and 49 write callbacks matching
+   set under its mock plan with no extras. A changed producer schedule or
+   a repeat host run with different callback counts would falsify that calibration;
    it does not establish console behavior (`11` #51).
    `no_comparable_records` also exits nonzero. The PR #97 `[K1]` console
    marker is from a different log format

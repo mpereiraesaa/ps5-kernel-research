@@ -254,6 +254,30 @@ class LayoutCheck(unittest.TestCase):
         self.assertEqual(wrong["comparison_status"], "mismatch")
         self.assertEqual(wrong["mismatches"][0]["field"], "KH2W.B2.gate.addr")
 
+    def test_extra_in_plan_brackets_and_orphan_stage_are_reported(self):
+        plan = candidate()
+        gate = plan["gate"]["base"]
+        def bracket(seq, kind, stage, size):
+            return (f"{seq}\t{seq * 1000}\tMARK\t{kind} stage={stage} cpu=0 "
+                    f"region=gate addr={gate} bytes={size} state=begin\n"
+                    f"{seq + 1}\t{(seq + 1) * 1000}\tMARK\t{kind} "
+                    f"stage={stage} cpu=0 region=gate addr={gate} "
+                    f"bytes={size} state=done\n").encode()
+        raw = planned_log(plan) + bracket(7, "KH2R", "B2", 16)
+        raw += bracket(9, "KH2R", "B2", 16)
+        raw += bracket(11, "KH2R", "R0", 16)
+        raw += bracket(13, "KH2W", "B2", 8)
+        raw += bracket(15, "KH2W", "B2", 8)
+        result = compare_log(plan, raw)
+        coverage = result["address_bracket_coverage"]
+        self.assertFalse(coverage["complete"])
+        self.assertEqual([(item["stage"], item["count"])
+                          for item in coverage["extra_reads"]],
+                         [("B2", 1), ("R0", 1)])
+        self.assertEqual([(item["stage"], item["count"])
+                          for item in coverage["extra_writes"]], [("B2", 1)])
+        self.assertEqual(result["comparison_status"], "partial_address_evidence")
+
     def test_ambiguous_sequence_cannot_be_joined_to_plan(self):
         plan = candidate()
         raw = planned_log(plan)
