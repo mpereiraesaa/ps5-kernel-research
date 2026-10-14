@@ -2187,4 +2187,5 @@ its elfldr socket produced no stdout for 25 seconds and timed out. ICMP
 and port 9021 still answered afterward. The audit has no `[KA1]` or
 `[KA2]` result; **the post-reboot native baseline remains unverified**.
 No further ELF was sent. Console UI and elfldr status after the timeout
-were requested from the owner.
+were requested from the owner; the owner reported that the console was
+fine. This reports UI health, not a completed native baseline audit.
