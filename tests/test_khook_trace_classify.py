@@ -938,6 +938,93 @@ class FullchainTests(unittest.TestCase):
         self.assertIn("out-of-phase prearmed-v7 READ_FAIL detail",
                       missing_trigger["signals"]["fc1"]["issues"])
 
+    def test_prearmed_v8_first_targeted_sample_brackets(self):
+        token = "0x1234abcd"
+
+        def line(number, level, message):
+            return (f"{number}\t{number * 1000}\t{level}\t{message}\n").encode()
+
+        stdout = (f"[KSTART] attempt={token} build=prearmed-v8\n"
+                  f"[K1] fw=12.02 cpu=3 frames=16 attempt={token}\n").encode()
+        start = line(1, "MARK", f"FCM phase=START fw=12.02 build=prearmed-v8 attempt={token}")
+        staged = line(2, "MARK", "staged frames=16 cpu=3 "
+                      f"chain=popall-copy-popall-doreti attempt={token}")
+        ready = line(3, "MARK", "FC1 seq=1 phase=READY fw=12.02 build=prearmed-v8 "
+                     f"attempt={token} trigger_cpu=3 observer_cpu=7")
+        phases = (["FCM phase=IST4_BEGIN"] +
+                  [f"FCM phase=IST4_DONE slot={slot}" for slot in range(16)] +
+                  ["FCM phase=GATE_BEGIN", "FCM phase=GATE_DONE"])
+        patch = b"".join(line(4 + index, "MARK", phase +
+                              f" fw=12.02 build=prearmed-v8 cpu=3 attempt={token}")
+                         for index, phase in enumerate(phases))
+        gate = line(23, "MARK", "FC1 seq=2 phase=GATE_VERIFIED cpu=3 "
+                    "gate_lo=0x111 gate_hi=0x222 expected_lo=0x111 "
+                    "expected_hi=0x222 ist4_matched=16 first_bad_cpu=-1 "
+                    f"first_bad_ist=0x0 attempt={token}")
+        baseline = line(24, "MARK", "FC1 seq=3 phase=PRETRIGGER cpu=3 "
+                        "frame_matched=5 marker_before=0x0 "
+                        "can0=0x4a524652414d4800 can1=0x4a524652414d4801 "
+                        "can2=0x4a524652414d4802 can3=0x4a524652414d4803 "
+                        f"can4=0x4a524652414d4804 attempt={token}")
+        trigger = line(25, "MARK", "FCM phase=TRIGGER_BEGIN fw=12.02 "
+                       f"build=prearmed-v8 cpu=3 pretrigger=1 attempt={token}")
+        begin = line(26, "MARK", "FC1 seq=4 phase=SAMPLE_BEGIN cpu=3 "
+                     f"bytes=1280 attempt={token}")
+        done = line(27, "MARK", "FC1 seq=5 phase=SAMPLE_DONE cpu=3 bytes=1280 "
+                    "rip=0x4a524652414d4800 cs=0x4a524652414d4801 "
+                    "flags=0x4a524652414d4802 rsp=0x4a524652414d4803 "
+                    f"ss=0x4a524652414d4804 marker=0x0 attempt={token}")
+        pc = start + staged + ready + patch + gate + baseline + trigger
+
+        begun = classify_kstuff_fullchain(stdout, pc=pc + begin)
+        self.assertEqual(begun["boundary"],
+                         "observer_first_targeted_read_begun_completion_unproven")
+        self.assertTrue(begun["signals"]["fc1"]["sample_begin"])
+        self.assertFalse(begun["signals"]["fc1"]["sample_done"])
+
+        unchanged = classify_kstuff_fullchain(stdout, pc=pc + begin + done)
+        self.assertEqual(unchanged["boundary"],
+                         "observer_first_targeted_read_completed_no_change_at_sample")
+        self.assertEqual(unchanged["signals"]["fc1"]["sample_marker"], 0)
+        self.assertFalse(unchanged["signals"]["fc1"]["issues"])
+
+        changed = done.replace(b"rip=0x4a524652414d4800",
+                               b"rip=0xffffffff81234567")
+        changed_result = classify_kstuff_fullchain(stdout, pc=pc + begin + changed)
+        self.assertEqual(changed_result["boundary"],
+                         "frame_changed_copy_marker_or_later_unproven")
+        self.assertTrue(changed_result["signals"]["fc1"]["sample_frame_changed"])
+        marked = changed.replace(b"marker=0x0", b"marker=0x4b53545546464348")
+        self.assertEqual(classify_kstuff_fullchain(
+            stdout, pc=pc + begin + marked)["boundary"],
+            "copy_marker_seen_return_or_transport_unproven")
+        marker_only = done.replace(b"marker=0x0", b"marker=0x4b53545546464348")
+        self.assertEqual(classify_kstuff_fullchain(
+            stdout, pc=pc + begin + marker_only)["boundary"],
+            "observer_sample_conflict_marker_without_changed_frame")
+
+        bad_size = classify_kstuff_fullchain(
+            stdout, pc=pc + begin + done.replace(b"bytes=1280", b"bytes=40"))
+        self.assertEqual(bad_size["boundary"],
+                         "observer_first_targeted_read_begun_completion_unproven")
+        self.assertIn("malformed or out-of-phase SAMPLE_DONE",
+                      bad_size["signals"]["fc1"]["issues"])
+        missing_begin = classify_kstuff_fullchain(stdout, pc=pc + done)
+        self.assertEqual(missing_begin["boundary"],
+                         "trigger_call_reached_db_delivery_or_later_unproven")
+        self.assertIn("malformed or out-of-phase SAMPLE_DONE",
+                      missing_begin["signals"]["fc1"]["issues"])
+        wrong_token = classify_kstuff_fullchain(
+            stdout, pc=pc + begin.replace(token.encode(), b"0x9999"))
+        self.assertEqual(wrong_token["boundary"], "conflicting_attempt_records")
+
+        read_fail = line(27, "ERR", "FC1 seq=5 phase=READ_FAIL stage=targeted "
+                         "index=3 addr=0xffffffff884c0010 bytes=1280 rc=-4 "
+                         f"attempt={token}")
+        failed = classify_kstuff_fullchain(stdout, pc=pc + begin + read_fail)
+        self.assertEqual(failed["boundary"],
+                         "observer_sampling_read_failed_db_delivery_unproven")
+
     def test_prearmed_v7_read_failure_site_contract(self):
         for stage, index, size in (
             ("gate", -1, 16), ("ist4", 15, 8),
