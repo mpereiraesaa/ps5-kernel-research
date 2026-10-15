@@ -234,6 +234,54 @@ ELFs completed and the full-span zero restoration was reported.
   after exception delivery, across all modified CPU rows, has not
   completed (`16` §remaining live-path validation boundary).
 
+### Prepared pivot-return diagnostic (not yet run)
+
+[inference] The narrow FW 12.02 pivot-return test retargets vector 1 to
+the projected `ktext+0x2a82de` `add rsp,0x28; ret`, places the Kstuff
+`doreti_iret` address `ktext+0x2b362d` at the resulting stack landing,
+and follows it with a complete five-word user IRET frame. The native
+gate (`+0x3188b0`, IST4), logical CPU-to-TSS-row mapping, and five-page
+zero cave have been measured on the console (`17` §complete live census;
+this document §completed cave-only diagnostic). The proposed pivot and
+IRET instruction bytes have **not** been measured on FW 12.02 (`16`
+§gadget mapping). A different instruction or stack effect at either
+address would falsify the planned path.
+
+The off-Git ELF has SHA-256
+`d3f7dac6a33252591b4e480afbe44250c1ed014607bb3768411d792b0e3f9f30`;
+its C and assembly source hashes are respectively
+`ee9e69d91c1434f57f6669942fbb42b800f8c689e2ede2ef8793e72d68edcebd`
+and
+`f8bf7bbfbe66b31a5d4cd986c4b11f32c3db1f590c4c04006472801a958723e3`.
+The build passed cross-compilation and an offline check of the 16 disjoint
+`0x500` slots, five-word hardware frame, pivot landing, user IRET frame,
+and single emitted `ICEBP`. These checks do not establish kernel execution.
+
+[inference] The ELF requires a native vector-1 gate, all 16 IST4 values,
+and a fully zero `0x5000` cave before writing. It stages and reads back
+all 16 images, redirects and reads back all 16 IST4 slots, then publishes
+the gate **last**. Its pinned thread executes one `ICEBP`. On return it
+records the user continuation, restores and verifies the native gate
+**first**, checks the hardware frames, then restores/verifies every IST4,
+the entire zero cave, affinity, and unchanged authid. It never writes
+authid or DR/CR/MSR state.
+
+Acceptance requires `[RETURN]`, a hardware frame in the selected CPU row
+matching the wrapper's saved RIP/CS/RSP/SS, and `[DONE]` reporting full
+restoration and unchanged authid. `[RETURN]` without the matching frame
+does not attribute execution to the candidate pivot. `[ARMED]`, a silent
+stop, or an unchanged frame does not reject the pivot because delivery,
+instruction bytes, and IRET remain unobserved. This direct user IRET is
+a **diagnostic hypothesis**, not a substitute for the working public
+continuation paths; see correction #22 in `11`.
+
+The live action can stall, panic, or power off the console. It requires
+the owner's approval of the exact build and confirmation that elfldr is
+ready. If `[DONE]` is absent, send no further ELF on that boot. Hard power
+cycle, restart elfldr, and run only a read-only native gate/IST4/zero-cave
+baseline audit after recovery. Record the FW, build hash, observed markers,
+console/elfldr state, and audit result here after the attempt.
+
 ## HV path
 
 The FW 12.02 root-0 `break_hv` port is still proposed, with dynamic
