@@ -94,6 +94,18 @@ Document numbers below refer to [05](05-toolchain-and-observability.md),
   not report the leaf mapping, its permissions, or the persistence
   behavior (`11` correction #23).
 
+For the historical 16-CPU scratch layout, the proposed 12.02 span is
+`kdata+0x2099000..+0x209dfff` (`16 × 0x500 = 0x5000` bytes, five pages)
+[inference] from the historical probe's `CPU_COUNT=16`,
+`SLOT_SIZE=0x500`, and `SCRATCH_OFF=0x2099000`; a larger active chain
+footprint would falsify this as the entire required span.
+[verified-on-dump] Both archived 12.02 kdata captures contain five zero
+pages there, then populated data in the sixth page. This is an offline
+selection only; no live mapping, ownership, or rest/wake result is
+established. The FW 12.20 four-page example does not set the 12.02
+required span. The donor 13.60 cave coordinate does not translate to
+this offset (`11` correction #24).
+
 The evidence record for this item should have this shape. Placeholders
 are deliberately unfilled; a cave result from another firmware does
 not validate 12.02.
