@@ -79,11 +79,21 @@ Document numbers below refer to [05](05-toolchain-and-observability.md),
 - [x] **PCPU array:** `kdata+0x2e9cf00`, 16 exact `0x980`-byte live
   reads; `pc_cpuid` and both TSS pointers were validated for every
   record [verified-on-console] (`17` §complete live census).
-- [ ] **Cave contents and page permissions:** the frame-setup run
-  checked and restored its scratch contents [verified-on-console]
-  (`16` §frame staging isolation). That does not establish ownership
-  or the carrier and kernel-text page permissions required by the full
-  port (`16` §derived 12.02 data and structure offsets).
+- [ ] **Cave contents and page permissions:** for the proposed cave,
+  live-read the **entire required span** and confirm it is zero and
+  readable. Resolve the actual leaf mapping and record its page size,
+  mapped physical page, and P/RW/US/NX permission bits. Write a
+  distinctive marker,
+  read back the exact bytes, then test whether that value persists
+  across the intended use interval and explain any change. Restore all
+  touched bytes, then re-read the entire required span to verify zero.
+  **Exit condition:**
+  exact marker readback, persistence behavior understood, and zero
+  restoration verified across the required span. The earlier
+  frame-setup run proved staging/readback/restoration for its scratch
+  bytes [verified-on-console] (`16` §frame staging isolation); it did
+  not report the leaf mapping, its permissions, or the persistence
+  behavior (`11` correction #23).
 
 ## Kernel hook path
 
