@@ -8,7 +8,7 @@ value does not satisfy a **live** value, and a setup-only restore does
 not satisfy a post-trigger restore. This is a research status record,
 not a claim that the port works.
 
-This audit has **12 checked requirements and 29 open requirements**.
+This audit has **13 checked requirements and 28 open requirements**.
 Document numbers below refer to [05](05-toolchain-and-observability.md),
 [07](07-evidence.md),
 [11](11-debunked-theories-and-corrections.md),
@@ -79,20 +79,15 @@ Document numbers below refer to [05](05-toolchain-and-observability.md),
 - [x] **PCPU array:** `kdata+0x2e9cf00`, 16 exact `0x980`-byte live
   reads; `pc_cpuid` and both TSS pointers were validated for every
   record [verified-on-console] (`17` §complete live census).
-- [ ] **Cave contents and page permissions:** for the proposed cave,
-  live-read the **entire required span** and confirm it is zero and
-  readable. Resolve every actual leaf covering that span and record
-  each page size, mapped physical page, and P/RW/US/NX permission bits. Write a
-  distinctive marker, read back the exact bytes, then test whether it persists
-  across the planned rest/wake interval and explain any change. Restore all
-  touched bytes, then re-read the entire required span to verify zero.
-  **Exit condition:**
-  exact marker readback, persistence behavior understood, and zero
-  restoration verified across the required span. The earlier
-  frame-setup run proved staging/readback/restoration for its scratch
-  bytes [verified-on-console] (`16` §frame staging isolation); it did
-  not report the leaf mapping, its permissions, or the persistence
-  behavior (`11` correction #23).
+- [x] **Cave contents and page permissions:** the 2026-10-15 live FW
+  12.02 check read all `0x5000` bytes at `kdata+0x2099000` as zero,
+  resolved every covered page through one present, writable,
+  supervisor-only, NX 2 MiB leaf, and read back one exact marker per
+  page. All five markers survived the owner-operated rest/wake cycle.
+  The cleanup ELF removed them and reread all 20,480 bytes as zero
+  [verified-on-console] §completed cave validation below. This closes
+  the requested one-boot exit condition. It does not establish permanent
+  ownership of the pages across future boots or payload sets.
 
 For the historical 16-CPU scratch layout, the proposed 12.02 span is
 `kdata+0x2099000..+0x209dfff` (`16 × 0x500 = 0x5000` bytes, five pages)
@@ -106,9 +101,9 @@ established. The FW 12.20 four-page example does not set the 12.02
 required span. The donor 13.60 cave coordinate does not translate to
 this offset (`11` correction #24).
 
-The evidence record for this item should have this shape. Placeholders
-are deliberately unfilled; a cave result from another firmware does
-not validate 12.02.
+The evidence record for a new firmware should have this shape. Its
+placeholders are separate from the completed 12.02 record below; a
+cave result from another firmware does not validate 12.02.
 
 ```text
 [cave]
@@ -134,29 +129,58 @@ the candidate. Keep the raw per-boot record outside Git and cite its
 hash when summarizing the result here (`AGENTS.md` §scope and material
 boundaries).
 
-### Proposed FW 12.02 cave-only diagnostic
+### Completed FW 12.02 cave-only diagnostic
 
-[inference] A two-stage check can close this item without arming an
-exception gate. The proposed off-Git stage ELF has SHA-256
+[verified-on-console] The owner approved two exact builds and confirmed
+console/elfldr readiness. The off-Git stage ELF has SHA-256
 `0b3999503095109b414d390465e3d224d8184eee76ca80cd2c98f3492c260dc2`;
 the verify/cleanup ELF has SHA-256
 `6393299e1def238bc2ece5e430c2af1a5666340b44c3bad167cfb7c318cae4c1`.
-The stage checks FW, kernel bases, a validated page-table root, the
+Expected observation: five zero pages with a present, writable leaf;
+exact marker readback before rest; five matching markers after wake;
+then zero restoration over all 20,480 bytes. A pre-write rejection or
+missing response would leave the cave item open.
+The stage checked FW, kernel bases, a validated page-table root, the
 live `0x5000`-byte zero span, and all five leaf mappings before writing
-one eight-byte marker in each page. It requires exact full-span marker
-readback. The owner then enters Rest Mode and wakes the console; the
-second ELF checks the markers, removes those still matching exactly,
-and rereads all `0x5000` bytes. A nonzero page, failed mapping,
-changed marker, failed cleanup, or absent response would falsify the
-candidate or leave the result inconclusive. This sequence is **not yet
-console evidence**.
+one eight-byte marker in each page. It reported exact full-span marker
+readback. The owner then entered Rest Mode and woke the console; the
+second ELF found all five exact markers, removed them, and reread all
+`0x5000` bytes as zero. The two off-Git responses have SHA-256
+`391dfcb136a11182799d744a05bf749dcbc4ad845f767d2bef4a875fa98c6af4`
+(stage) and
+`1772fc975d19c3d55e8f23d8a558a6e0ba63d8560fdb4a1af7a760b6c3ff91e8`
+(verify/cleanup). Both reported `fw=0x12020000`, the same boot's
+`kdata` base, and the same physical leaf; the process page-table root
+changed between ELFs, as expected. The owner confirmed the UI and
+elfldr were normal after cleanup; no recovery reboot was needed.
+
+```text
+[cave]
+fw=0x12020000
+stage_build_sha256=0b3999503095109b414d390465e3d224d8184eee76ca80cd2c98f3492c260dc2
+verify_build_sha256=6393299e1def238bc2ece5e430c2af1a5666340b44c3bad167cfb7c318cae4c1
+coordinate=kdata-relative
+offset=0x2099000
+size=0x5000
+leaf_coverage=0x5000/0x5000
+leaf_mappings=one 2MiB leaf: VA kdata+0x1ec0000..+0x20bffff, PA 0x22200000..0x223fffff, P=1 RW=1 US=0 NX=1 PWT=0 PCD=0
+leaf_entry=0x80000000222001e3
+mapped_physical_pages=0x223d9000,0x223da000,0x223db000,0x223dc000,0x223dd000
+initial_zero_pages=5/5
+initial_zero_bytes=20480/20480
+write_readback=passed; exact full-span marker image
+marker_survived_rest_wake=yes; 5/5 exact, no other changed bytes
+marker_cleanup=passed
+zero_restoration=passed; 20480/20480 bytes zero
+recovery=UI and elfldr normal; no reboot
+```
 
 This is a console-risky kernel write: the probe can stall or panic, and
-the stage intentionally leaves markers in the cave until after wake.
-If either ELF stops without confirmed cleanup, send no further ELF in
-that session; hard power cycle before a read-only cave baseline audit.
-Exact-run owner approval and console/elfldr readiness are required
-before upload (`AGENTS.md` §console-experiment policy).
+the stage intentionally left markers in the cave until after wake. The
+approved recovery plan was to send no further ELF if either stage
+stopped without confirmed cleanup, then hard power cycle before a
+read-only cave baseline audit. That contingency was not needed: both
+ELFs completed and the full-span zero restoration was reported.
 
 ## Kernel hook path
 
@@ -171,8 +195,16 @@ before upload (`AGENTS.md` §console-experiment policy).
 - [x] **Prepare-only write/readback/restore:** the changed IST4/#DB
   gate diagnostic read back staged values, then restored and verified
   originals without triggering #DB [verified-on-console] (`16`
-  §changed IST/#DB-gate setup isolation run). This checks that setup
-  path only.
+  §changed IST/#DB-gate setup isolation run). Its measured scope was
+  one selected IST4, the shared #DB gate, and its staged scratch bytes.
+  A separate observer calibration reported restoration of its original
+  affinity (`16` §separate kernel-read channel calibration). Neither
+  record reports authid before/after values or restoration of all 16
+  IST4 slots. Thus the stricter combined exit condition—gate, every
+  staged IST, scratch, affinity, and authid all restored in the **same**
+  prepare-only run—is still open [inference]; a complete same-run
+  readback or proof that authid was never modified would resolve the
+  corresponding gap.
 - [ ] **Pivot-only return:** no completed exception/pivot/return
   marker has been observed (`16` §remaining live-path validation
   boundary).
