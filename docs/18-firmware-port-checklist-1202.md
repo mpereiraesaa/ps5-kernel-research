@@ -420,8 +420,15 @@ a different live gate/IST map, would falsify that attribution. The
 audit did not capture addresses of the changed bytes, so it cannot
 identify a CPU, the pivot instruction, or a successful return.
 
-An explicitly confirmed hard power cycle and clean post-boot audit
-remain pending.
+[verified-on-console] The owner then explicitly confirmed a full power
+cycle and elfldr restart. The same read-only audit ELF (SHA-256
+`185623745a4cffa1ee74918139856302eaab47f6eb41d8e60d522477ca8a91f0`)
+returned FW `0x12020000`, native vector-1 gate `+0x3188b0`, zero
+staged IST4 pointers among 16 valid rows, and zero nonzero bytes in
+the `20480`-byte cave. The post-cycle response's off-Git SHA-256 is
+`8d6cc034ed170c1847314d7f2c77bd2041fcd854105081fc642ae714be8c924f`.
+Two ICMP replies followed. The agreed post-run recovery baseline is
+therefore verified; no further pivot ELF was sent.
 
 ## HV path
 

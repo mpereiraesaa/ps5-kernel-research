@@ -54,6 +54,9 @@ Ping still worked. No second payload should have been loaded before an
 explicitly confirmed hard power cycle. The audit does not show whether
 `ICEBP` fired; it shows that kernel hook state remained changed when
 the audit ran.
+After the owner explicitly confirmed a full power cycle, the same
+read-only audit reported the native gate, no staged IST4 pointers, and
+zero cave scratch (`18` §replacement pivot-return image and first run).
 
 ### #25 — Separate stacks did not isolate return contexts [inference]
 
