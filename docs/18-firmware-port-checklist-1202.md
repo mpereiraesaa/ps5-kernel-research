@@ -506,9 +506,10 @@ selected-CPU hardware frame, `[RETURN-EARLY]`, then `[DONE]` only after
 the selected frame is the sole changed frame and stock gate, all IST6
 values, native IST4, zero cave, affinity, and authid read back clean.
 If cleanup is not reported, send no further ELF on that boot.
-The recovery is a confirmed full power cycle, elfldr restart, then only
-the read-only audit above for native #DB gate/IST4, zero IST6, and zero
-scratch. The owner approved the monitored run described below.
+The approved fallback recovery was a confirmed full power cycle, elfldr
+restart, then only the read-only audit above for native #DB gate/IST4,
+zero IST6, and zero scratch. The owner approved the monitored run
+described below.
 
 [verified-on-console] The owner replied “Ready; run the monitored IST6
 comparison” to the exact procedure above, with ps5debug-NG and elfldr
@@ -535,9 +536,26 @@ executed; this run does **not** test the IRET target. A same-attempt
 post-gate/pre-`ICEBP` marker or a changed hardware frame would resolve
 that boundary. A watcher read that failed to reflect a real frame write
 would falsify the zero-frame observation, though the watcher did see
-the cave staging change in this attempt. Recovery is pending explicit
-owner confirmation of a full power cycle; **no further ELF has been
-sent** on this patched-gate boot.
+the cave staging change in this attempt.
+
+[verified-on-console] The owner asked why the still-responsive console
+could not be restored through the independent ps5debug-NG connection.
+A fresh read-only sample still matched this exact stopped image: the
+candidate `+0x2a82de/IST6` gate, all 16 staged IST6 pointers, unchanged
+native IST4, a staged cave, and zero changed hardware frames. An off-Git
+restoration script (SHA-256
+`32a0d78a3dbc215716f62760330f8df0b4d74df33d068fffd555aed61cf33ff3`)
+checked the FW/build identity and this state twice before writing. Its
+no-write dry run passed. It then restored the stock gate **first** and
+read back the full gate; zeroed and read back each of 16 IST6 entries;
+and zeroed and read back all five cave pages. The restore log SHA-256 is
+`05a97b7b58f8b565d629c5d6378d42aefbafdd3b0310cde68a91371216f730aa`.
+An independent two-second, 24-sample read-only audit confirmed native
+`+0x3188b0/IST4`, `0/16` staged IST6 entries, unchanged native IST4,
+zero cave bytes, and zero changed hardware frames (off-Git audit log
+SHA-256
+`8468cc54d3f93403b5890cd771edb7a58fe040215b815f597179f8909d1e7cfe`).
+No hard power cycle or further ELF was needed for this recovery.
 
 ## HV path
 
