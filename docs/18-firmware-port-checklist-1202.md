@@ -279,8 +279,13 @@ The live action can stall, panic, or power off the console. It requires
 the owner's approval of the exact build and confirmation that elfldr is
 ready. If `[DONE]` is absent, send no further ELF on that boot. Hard power
 cycle, restart elfldr, and run only a read-only native gate/IST4/zero-cave
-baseline audit after recovery. Record the FW, build hash, observed markers,
-console/elfldr state, and audit result here after the attempt.
+baseline audit after recovery. That off-Git read-only audit ELF is already
+built (SHA-256
+`185623745a4cffa1ee74918139856302eaab47f6eb41d8e60d522477ca8a91f0`);
+it checks the native vector-1 gate, all 16 IST4 rows against the staged
+addresses, and all `0x5000` cave bytes. Record the FW, build hash,
+observed markers, console/elfldr state, and audit result here after the
+attempt.
 
 ## HV path
 
