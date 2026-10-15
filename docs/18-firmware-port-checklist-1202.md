@@ -134,6 +134,30 @@ the candidate. Keep the raw per-boot record outside Git and cite its
 hash when summarizing the result here (`AGENTS.md` §scope and material
 boundaries).
 
+### Proposed FW 12.02 cave-only diagnostic
+
+[inference] A two-stage check can close this item without arming an
+exception gate. The proposed off-Git stage ELF has SHA-256
+`0b3999503095109b414d390465e3d224d8184eee76ca80cd2c98f3492c260dc2`;
+the verify/cleanup ELF has SHA-256
+`6393299e1def238bc2ece5e430c2af1a5666340b44c3bad167cfb7c318cae4c1`.
+The stage checks FW, kernel bases, a validated page-table root, the
+live `0x5000`-byte zero span, and all five leaf mappings before writing
+one eight-byte marker in each page. It requires exact full-span marker
+readback. The owner then enters Rest Mode and wakes the console; the
+second ELF checks the markers, removes those still matching exactly,
+and rereads all `0x5000` bytes. A nonzero page, failed mapping,
+changed marker, failed cleanup, or absent response would falsify the
+candidate or leave the result inconclusive. This sequence is **not yet
+console evidence**.
+
+This is a console-risky kernel write: the probe can stall or panic, and
+the stage intentionally leaves markers in the cave until after wake.
+If either ELF stops without confirmed cleanup, send no further ELF in
+that session; hard power cycle before a read-only cave baseline audit.
+Exact-run owner approval and console/elfldr readiness are required
+before upload (`AGENTS.md` §console-experiment policy).
+
 ## Kernel hook path
 
 - [x] **Complete IDT/TSS census:** the 2026-10-15 read covered all
