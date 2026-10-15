@@ -305,7 +305,7 @@ foreign-CPU path. The exact ELF above is retired and must not be retried;
 see correction #25 in `11`. No same-attempt frame was captured, so this
 defect is a plausible failure class, not an observed cause.
 
-### Pivot-return run (recovery audit pending)
+### First pivot-return run and recovery audit
 
 [verified-on-console] The owner approved one transfer of the exact FW
 12.02 ELF SHA-256
@@ -323,15 +323,19 @@ record does not establish that the instruction fired or that the gate
 was restored [inference]. A matching frame or post-return marker in a
 same-attempt capture would falsify that boundary.
 
-The owner has started the agreed hard power cycle. No additional ELF
-has been sent on the uncertain boot. Recovery state and read-only audit
-result remain pending. The missing `[RETURN]` also does not exclude an
+The owner hard power cycled and restarted elfldr. The agreed read-only
+audit ELF SHA-256
+`185623745a4cffa1ee74918139856302eaab47f6eb41d8e60d522477ca8a91f0`
+then reported FW `0x12020000`, native gate `+0x3188b0`, zero staged
+IST4 pointers among 16 valid rows, and zero nonzero bytes in the
+`20480`-byte scratch span [verified-on-console]. The missing
+`[RETURN]` does not exclude an
 IRET that reached user code and then stalled during the gate-restoration
 call: the first externally visible return marker is printed **after**
 that call [inference]. An observer record at the wrapper's first
 post-`ICEBP` instruction would falsify this ambiguity for a future run.
 
-### Replacement pivot-return image (prepared offline; not run)
+### Replacement pivot-return image and first run
 
 [inference] A replacement FW 12.02 ELF was built off-Git with SHA-256
 `235f83a238ed7b7dbde9f344c457dbaca61d1533c5200091eba21fe990b0d284`.
@@ -362,13 +366,28 @@ The existing `[RETURN]`, frame census, and `[DONE]` still require
 readback of the native gate, all 16 IST4 values, zero scratch, original
 affinity, and unchanged authid.
 
-No console transfer has been made for this image. It is a console-risky
-candidate because it redirects the global #DB gate to unverified FW
-12.02 instructions and uses a new CPL0 fallback. An exact-build owner
-approval is required before a run. The recovery plan is to send no
-second ELF if `[DONE]` is missing; hard power cycle, restart elfldr,
-then run only the previously built read-only native-gate/IST4/zero-cave
-audit. The previous run's recovery audit must be completed first.
+This is a console-risky candidate because it redirects the global #DB
+gate to unverified FW 12.02 instructions and uses a new CPL0 fallback.
+After the clean audit above, the owner explicitly approved the next
+pivot ELF; the exact build hash was stated back before transfer. The
+expected observation was `[RETURN-EARLY]` followed by gate/IST4/cave,
+affinity, and authid cleanup at `[DONE]`. The agreed recovery plan was
+to send no second ELF if `[DONE]` was missing, then hard power cycle,
+restart elfldr, and run only the read-only native-gate/IST4/zero-cave
+audit.
+
+[verified-on-console] The one transfer returned `[P0]` with FW
+`0x12020000`, native gate `+0x3188b0`, 16 readable IST4 rows, and zero
+`20480/20480` cave bytes. It then printed `[PREARM]` for CPU 9, pivot
+`+0x2a82de`, IRET `+0x2b362d`, and `native_fallback=15/15`. The
+elfldr response closed without `[RETURN-EARLY]`, `[RETURN]`, or `[DONE]`;
+the sender exited 3 because `[DONE]` was absent. The response log's
+off-Git SHA-256 is
+`0621627ff612147feb6bce4aead243f6d4e9e3e3ac6629f1aa08a93252011435`.
+Two ICMP replies followed. `[PREARM]` is printed **before** gate
+publication, so this record cannot prove that the gate was patched or
+that `ICEBP` fired [inference]. No further ELF was sent on that boot.
+The hard power cycle and post-boot audit are pending owner confirmation.
 
 ## HV path
 
