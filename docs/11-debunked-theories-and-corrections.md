@@ -39,8 +39,21 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 23 | A zero scan plus scratch frame readback/restore establishes a ready `DATA_CAVE` | **OVERCLAIM WITHDRAWN** — the frame-setup run proved its selected scratch bytes could be staged, read back, and restored, but it did not record the required span's actual leaf mapping and permissions, marker persistence, or full-span zero restoration. Those conditions were established later for one boot and the `0x5000`-byte 12.02 candidate by the separate 2026-10-15 cave-only run. | [verified-on-console] `16` §frame staging isolation; `18` §completed cave validation |
 | 24 | The 13.60 donor `DATA_CAVE=0x2d39000` projects to the 12.02 scratch candidate `kdata+0x2099000` after subtracting `0xcc0000` | **WRONG ARITHMETIC AND CROSS-FIRMWARE INFERENCE** — `0x2d39000−0xcc0000=0x2079000` in the 13.60 kdata coordinate. The 12.02 `+0x2099000` candidate was used by historical probes and has a five-page zero run in both archived 12.02 captures; it is not derived from the donor coordinate. | [verified-in-tree] `16` §derived 12.02 data and structure offsets; [verified-on-dump] `17` §capture identity and both archived kdata captures |
 | 25 | Sixteen separate IST4 stacks make a global #DB gate safe for a pivot-return probe | **WRONG SAFETY CLAIM** — the 2026-10-15 one-shot image used the *same user RIP and RSP* in all 16 return frames. A foreign CPU would enter on its own stack but could resume an unrelated thread into the selected thread's context. The run stopped after `[ARMED]` without return or cleanup; this does not prove a foreign CPU entered. | [inference] `18` §pivot-return run and the off-Git build's recorded source hashes; [public-consensus] [multicore hook invariants](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/multicore-debug-hook.md) |
+| 26 | A responsive UI and elfldr imply that a stopped #DB probe's gate/IST state is clean | **WRONG RECOVERY ASSUMPTION** — after the replacement probe stopped at `[PREARM]`, a read-only audit found the gate still targeting the candidate pivot, all 16 IST4 rows staged, and cave scratch nonzero while ping worked. The owner's “yes all good” did not explicitly confirm the hard power cycle; sending the audit before that confirmation violated the recovery plan. | [verified-on-console] `18` §replacement pivot-return image and first run |
 
 ## Detail on the load-bearing ones
+
+### #26 — Responsiveness did not establish a clean hook [verified-on-console]
+
+The replacement probe's elfldr response closed before a cleanup marker.
+The owner answered “yes all good” to a compound readiness question, and
+we incorrectly treated that as confirmation of a completed hard power
+cycle. The read-only audit found the candidate `+0x2a82de` #DB gate,
+all 16 staged IST4 pointers, and `1359/20480` nonzero scratch bytes.
+Ping still worked. No second payload should have been loaded before an
+explicitly confirmed hard power cycle. The audit does not show whether
+`ICEBP` fired; it shows that kernel hook state remained changed when
+the audit ran.
 
 ### #25 — Separate stacks did not isolate return contexts [inference]
 

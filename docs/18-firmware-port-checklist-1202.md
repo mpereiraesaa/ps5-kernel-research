@@ -385,9 +385,27 @@ the sender exited 3 because `[DONE]` was absent. The response log's
 off-Git SHA-256 is
 `0621627ff612147feb6bce4aead243f6d4e9e3e3ac6629f1aa08a93252011435`.
 Two ICMP replies followed. `[PREARM]` is printed **before** gate
-publication, so this record cannot prove that the gate was patched or
-that `ICEBP` fired [inference]. No further ELF was sent on that boot.
-The hard power cycle and post-boot audit are pending owner confirmation.
+publication, so that response alone could not prove that the gate was
+patched or that `ICEBP` fired [inference].
+
+[verified-on-console] A subsequent **read-only audit ELF was mistakenly
+sent before a confirmed hard power cycle**. The owner answered “yes all
+good” to a compound question about power cycling, elfldr, and UI state;
+we treated it as post-reboot readiness. The audit result proves the
+kernel was not at a clean baseline: FW `0x12020000`, vector-1 gate
+`+0x2a82de` (`native=no`), all `16/16` IST4 rows still pointing to
+staged cave frames, and `1359/20480` cave bytes nonzero. Its off-Git
+response SHA-256 is
+`fb055dd894ef2e6143388e5215273e4947a942d05d3fe782e5fb88490a1b3d1d`.
+The audit completed and two ICMP replies followed; this does not make
+the changed global gate safe. The readback establishes that gate and
+IST4 writes persisted after the probe response closed. It does **not**
+establish that `ICEBP` fired or that the pivot ran [inference]. Sending
+the audit before explicit hard-cycle confirmation violated the agreed
+recovery plan; see `11` correction #26. No further ELF was sent after
+the abnormal audit.
+An explicitly confirmed hard power cycle and clean post-boot audit
+remain pending.
 
 ## HV path
 
