@@ -192,7 +192,7 @@ ELFs completed and the full-span zero restoration was reported.
   pointers identify row `i` for CPU `i` [verified-on-console] (`17`
   §complete live census). Selecting row 0 for an arbitrary probe CPU
   is rejected in `11` correction #22.
-- [x] **Prepare-only write/readback/restore:** the changed IST4/#DB
+- [ ] **Prepare-only write/readback/restore:** the changed IST4/#DB
   gate diagnostic read back staged values, then restored and verified
   originals without triggering #DB [verified-on-console] (`16`
   §changed IST/#DB-gate setup isolation run). Its measured scope was
