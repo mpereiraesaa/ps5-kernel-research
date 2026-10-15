@@ -1,12 +1,13 @@
 # 17 — FW 12.02 kernel-data survey
 
-This is an address and structure survey, not an execution map. Every
-offset below is relative to the **per-boot `kdata` base** and names data.
-An address in this table is not an executable entry point. Kstuff was
+This is an address and structure survey, not an execution map. Data
+offsets below are relative to the **per-boot `kdata` base**; the one
+explicit `ktext` comparison is labeled separately. A data address in
+this survey is not an executable entry point. Kstuff was
 present for the previously discussed 12.02 dump, so the captured IDT
 handlers and IST contents cannot be assumed to represent pristine
-firmware (see `11` correction #19). A later live census attempt is
-recorded below; it did not produce a census response.
+firmware (see `11` correction #19). A later FW 12.02 live census is
+recorded below, separately from those historical captures.
 
 ## Capture identity and address convention
 
@@ -106,38 +107,83 @@ matched to its `pc_cpuid`; it was not selected by assuming row 0. The
 historical TSS arrays also supply `RSP0` and all seven IST pointers
 for each row; the CPU 0/1 examples above show their field positions.
 
-### Current-boot census still to capture
+### Complete live IDT/TSS/PCPU census (2026-10-15)
 
-[inference] The archived gate census cannot identify the current
-unpatched handler set because the earlier dump's gate state was
-affected by kstuff (`docs/11` #19). A separate FW 12.02 read-only
-diagnostic has been built outside Git at
-`engineering/payloads/idttss_census_1202/census.elf`, SHA-256
-`15c3be249823725294669522d935185edc9853c2da1ace653bb68bd6ac1db5a5`.
-It requests one exact `0x1000`-byte IDT read, one exact `0x680`-byte
-TSS read, and sixteen exact `0x980`-byte PCPU reads, then logs every
-IST user, handlers for 1/9/13/30/179, each CPU's TSS-row link, and
-every TSS row's `RSP0` and IST1–7. It does not arm a gate, change an
-IST slot, or trigger an exception. Its read primitive temporarily
-changes pipe metadata. The live run requires owner approval and a
-ready elfldr session. If it stalls or the console powers off, send no
-further ELF in that session; hard power cycle, restart elfldr, and
-confirm normal UI operation before any other work. The current boot's
-gate state is not yet known.
+[verified-on-console] The owner approved the FW 12.02 read-only
+diagnostic at `engineering/payloads/idttss_census_1202/census.elf`,
+SHA-256 `15c3be249823725294669522d935185edc9853c2da1ace653bb68bd6ac1db5a5`.
+It reads one `0x1000`-byte IDT, one `0x680`-byte TSS array, and sixteen
+`0x980`-byte PCPU records. Its read primitive temporarily changes pipe
+metadata; it does not arm a gate, change an IST slot, or trigger an
+exception. Expected: all exact-length reads, 256 decoded gates, every
+IST user and selected handler, and a validated PCPU-to-TSS mapping.
+Recovery plan: if it stalls or powers off, send no further ELF in that
+session; hard power cycle, restart elfldr, and confirm normal UI
+operation.
 
-[verified-on-console] On 2026-10-15, the owner approved this exact
-FW 12.02 build and the recovery plan above. The PC confirmed SHA-256
-`15c3be249823725294669522d935185edc9853c2da1ace653bb68bd6ac1db5a5`
-and received one ICMP reply before sending it to `192.168.0.69:9021`.
-The sender timed out in `sock.sendall(payload)` after its 10-second
-socket timeout. It never reached `shutdown(SHUT_WR)` or the response
-read, and the captured payload output file was empty. Thus no IDT,
-TSS, or PCPU bytes were returned and no payload execution or clean
-gate state can be claimed from this attempt. The number of ELF bytes
-accepted by the receiver is unknown. Two ICMP replies were received
-after the timeout; UI, elfldr, and hard-power-cycle recovery status
-were still pending at the time of this record. No further ELF was sent
-in the session.
+[verified-on-console] The first transfer timed out in the host's
+`sock.sendall(payload)` after ten seconds, before its response read.
+The payload output file was empty and the number of bytes accepted by
+elfldr was unknown. The console still answered ICMP and the owner
+confirmed the UI was responsive. No further ELF was sent in that
+session. The owner then hard power cycled, restarted elfldr, and
+confirmed readiness. This attempt supplied **no** gate or TSS result.
+
+[verified-on-console] After recovery, the **same ELF hash** was sent
+once with host-side upload progress and a 30-second send timeout. All
+497,552 bytes transferred, and the payload reported FW `0x12020000`,
+`kdata=0xffffffffe0340000`, 18 exact-length reads totaling 44,672
+bytes, and `[DONE]`. The full off-Git response is
+`engineering/payloads/idttss_census_1202/live-retry-2026-10-15.log`,
+SHA-256 `98c85eec70b41ea01f2b7492ca13ff706973fdd4ec2531f5f90b70dc36659cf7`.
+The host independently checked every reported `got==want`, the 16
+unique `pc_cpuid` values and TSS-row links, the four IST-user lines,
+and the five requested vector lines. Two ICMP replies followed the
+run; the owner confirmed that the UI and elfldr were normal. No
+recovery reboot was needed after this successful run.
+
+[verified-on-console] All 256 gates were present, and exactly four
+used an IST. The four IST gates and five selected gates all reported
+selector `0x20` and attributes `0x8e`. This is the complete live
+IST-user set; vectors 3, 9, 13, and 179 did **not** use IST in this
+boot, unlike the older kstuff-era captures.
+
+| Vector | IST | Handler in this boot |
+|---:|---:|---:|
+| 1 | 4 | `0xffffffffdf9088b0` |
+| 2 | 2 | `0xffffffffdf908b38` |
+| 8 | 1 | `0xffffffffdf908b60` |
+| 30 | 5 | `0xffffffffdf908bb8` |
+
+The five requested vector records are:
+
+| Vector | IST | Handler in this boot |
+|---:|---:|---:|
+| 1 | 4 | `0xffffffffdf9088b0` |
+| 9 | 0 | `0xffffffffdf908b68` |
+| 13 | 0 | `0xffffffffdf908b88` |
+| 30 | 5 | `0xffffffffdf908bb8` |
+| 179 | 0 | `0xffffffffdf9089e0` |
+
+[verified-on-console] Every PCPU record `i` reported `pc_cpuid=i`,
+and **both** TSS pointers at record `+0x790/+0x798` matched TSS row
+`i` for `i=0..15`; the logical CPU-to-row mapping is therefore the
+same as the offset table above. IDT, TSS, and PCPU strides were
+`0x10`, `0x68`, and `0x980`, respectively. All 16 live TSS rows
+returned a nonzero `RSP0`, IST1, IST2, IST4, and IST5; IST3, IST6,
+and IST7 were zero in every row. The complete per-row pointer values
+remain in the off-Git response named above.
+
+These are one boot's data values. [inference] Applying the independently
+derived 12.02 `kdata−ktext=0xd50000` gap from `docs/16` to this boot's
+`kdata` yields `ktext=0xffffffffdf5f0000`. The handlers for vectors
+1, 9, 13, and 179 then have exactly the `+0x3188b0`, `+0x318b68`,
+`+0x318b88`, and `+0x3189e0` offsets in the limited 2026-10-13
+read-only audit. An independent current-boot text-base measurement
+disagreeing with `0xffffffffdf5f0000` would falsify this conversion.
+The absolute gate values and CPU mapping do not depend on it. Neither
+audit proves that the handlers are pristine Sony code or establishes
+their instruction bytes.
 
 ## Paging-index data globals
 
@@ -162,7 +208,8 @@ it does not by itself validate the `PML4PML4I` field.
 ## Remaining boundary
 
 [inference] This survey establishes data locations, observed values,
-and the IDT/TSS/PCPU strides. It does not establish ownership or a
-complete field layout for `kernel_pmap_store` or `struct pcpu`, nor a
-current-boot snapshot. A new capture that breaks any cross-boot offset
-or TSS-pointer progression would falsify the claimed stable layout.
+and the IDT/TSS/PCPU strides across two archived captures and one live
+boot. It does not establish ownership or a complete field layout for
+`kernel_pmap_store` or `struct pcpu`, or the instruction bytes at the
+gate handlers. A new capture that breaks any cross-boot offset or
+TSS-pointer progression would falsify the claimed stable layout.
