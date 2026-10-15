@@ -331,6 +331,45 @@ call: the first externally visible return marker is printed **after**
 that call [inference]. An observer record at the wrapper's first
 post-`ICEBP` instruction would falsify this ambiguity for a future run.
 
+### Replacement pivot-return image (prepared offline; not run)
+
+[inference] A replacement FW 12.02 ELF was built off-Git with SHA-256
+`235f83a238ed7b7dbde9f344c457dbaca61d1533c5200091eba21fe990b0d284`.
+It retains the selected CPU's user return frame. Each of the other 15
+IST4 stacks instead stages a CPL0 `iretq` frame targeting the **saved
+native #DB gate handler**, with `RSP` set to that CPU's own hardware
+frame at `IST4_top-0x28`. This is a proposed foreign-CPU fallback, not
+the `pop rsp; ret` chain used by the working 11.60 design. The latter's
+FW 12.02 address is unknown; the FW 12.70 PR's entry is expressly an
+inherited candidate ([12.70 table](https://github.com/PS5Dev/Byepervisor-Reborn/pull/12/files)).
+[AMD's long-mode interrupt rules](https://docs.amd.com/api/khub/documents/sD1_QL~h4Afq2_tvzxqqSQ/content)
+support the frame geometry: long-mode interrupts push five qwords, and
+`iretq` pops `SS:RSP` even when returning to CPL0; a null `SS` is
+permitted for a 64-bit CPL0 target. They do **not** establish that the
+12.02 stock handler accepts this synthetic entry. A foreign-core frame
+followed by a handler fault, or a mismatched handler stack, would
+falsify this fallback. The selected CPU still has a race if another
+thread takes #DB during the short shared-gate window.
+
+[inference] The ELF emits `[PREARM]` before publishing the gate, then
+triggers one `ICEBP` after the gate write/readback. The first selected
+user instruction writes a volatile return flag; the next action is a
+direct `[RETURN-EARLY]` stdout write **before** the gate-restoration
+call. If this marker is absent, delivery/pivot/IRET and the marker
+write remain distinct possibilities. A positive marker establishes
+selected user continuation but says nothing by itself about cleanup.
+The existing `[RETURN]`, frame census, and `[DONE]` still require
+readback of the native gate, all 16 IST4 values, zero scratch, original
+affinity, and unchanged authid.
+
+No console transfer has been made for this image. It is a console-risky
+candidate because it redirects the global #DB gate to unverified FW
+12.02 instructions and uses a new CPL0 fallback. An exact-build owner
+approval is required before a run. The recovery plan is to send no
+second ELF if `[DONE]` is missing; hard power cycle, restart elfldr,
+then run only the previously built read-only native-gate/IST4/zero-cave
+audit. The previous run's recovery audit must be completed first.
+
 ## HV path
 
 The FW 12.02 root-0 `break_hv` port is still proposed, with dynamic
