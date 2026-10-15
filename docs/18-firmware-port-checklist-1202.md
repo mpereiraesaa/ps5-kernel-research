@@ -472,7 +472,7 @@ but only a 12.02 instruction or entry trace can establish their actual
 semantics. A changed instruction at either address would falsify the
 projection.
 
-### Isolated IST6 comparison prepared off-Git; no console run
+### Isolated IST6 comparison: build and first run
 
 [inference] The next bounded diagnostic keeps the replacement image's
 `+0x2a82de` pivot, `+0x2b362d` direct IRET target, selected user frame,
@@ -497,8 +497,8 @@ would support exception delivery to that CPU, but a silent or timed-out
 watcher would remain inconclusive. The post-hard-cycle read-only audit
 ELF SHA-256 is
 `b1618308780d33d945658a72a4523ae169316d79b72a4288018503a62473a414`.
-Compilation and an offline watcher parser check passed; the console has
-not run this build.
+Compilation and an offline watcher parser check passed before the
+one console run described below.
 
 This test can stall or panic while the shared #DB gate is patched to
 candidate kernel instructions. The desired observation is one changed
@@ -508,7 +508,36 @@ values, native IST4, zero cave, affinity, and authid read back clean.
 If cleanup is not reported, send no further ELF on that boot.
 The recovery is a confirmed full power cycle, elfldr restart, then only
 the read-only audit above for native #DB gate/IST4, zero IST6, and zero
-scratch. This new live procedure awaits exact-build owner approval.
+scratch. The owner approved the monitored run described below.
+
+[verified-on-console] The owner replied “Ready; run the monitored IST6
+comparison” to the exact procedure above, with ps5debug-NG and elfldr
+available. The read-only watcher first sampled the FW 12.02 native gate
+on IST4, 16 zero IST6 rows, and a zero `0x5000` cave for 25 polls in two
+seconds. During the one approved ELF transfer it obtained 375 samples
+in 25 seconds (off-Git watcher log SHA-256
+`8b2e9f1874557c3aad4c39b3350c873d3e2f99ef25e171540b6b73595edcf024`).
+At 4.248 seconds it saw `1030` nonzero staged cave bytes with the
+native gate and zero IST6 rows. At 4.315 seconds it saw the candidate
+gate `+0x2a82de/IST6`, all `16/16` IST6 rows staged, native IST4
+unchanged `16/16`, and **zero changed hardware frames**. Its final
+sample still had that gate and zero changed frames. The ELF response
+(off-Git SHA-256
+`3c9e8483dcfe4351d8b94502b36ff5296f779436f69aadf534a5cdd7cc3677eb`)
+reported `[P0]` and `[PREARM]` for selected CPU 9, then closed without
+`[RETURN-EARLY]`, `[FRAME]`, or `[DONE]`.
+
+[inference] The live watcher proves this image staged its frame and
+published the intended IST6 gate, but it does not show the selected
+hardware frame being pushed. The first remaining boundary is whether
+the gate write/readback call returned to the wrapper and its `ICEBP`
+executed; this run does **not** test the IRET target. A same-attempt
+post-gate/pre-`ICEBP` marker or a changed hardware frame would resolve
+that boundary. A watcher read that failed to reflect a real frame write
+would falsify the zero-frame observation, though the watcher did see
+the cave staging change in this attempt. Recovery is pending explicit
+owner confirmation of a full power cycle; **no further ELF has been
+sent** on this patched-gate boot.
 
 ## HV path
 
