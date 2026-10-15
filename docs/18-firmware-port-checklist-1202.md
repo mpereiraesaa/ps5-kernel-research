@@ -404,6 +404,22 @@ establish that `ICEBP` fired or that the pivot ran [inference]. Sending
 the audit before explicit hard-cycle confirmation violated the agreed
 recovery plan; see `11` correction #26. No further ELF was sent after
 the abnormal audit.
+
+[inference] The byte count adds a narrower observation. The image
+builder writes five canary qwords plus six return qwords per CPU and
+zeros everything else. Those values have at most `1043` nonzero bytes
+in all 16 slots: `619` canary bytes, at most `390` foreign-return
+bytes, and at most `34` selected-return bytes. Even replacing all 16
+five-qword canary areas with arbitrary hardware frames raises that
+maximum only to `1064`. The audit's `1359` means at least `295`
+nonzero bytes appeared **outside** the staged return and hardware-frame
+slots. The clean census found vector 1 was the only IST4 user (`17`
+§complete live census), making a #DB entry and subsequent stack
+activity a plausible explanation. A separate writer to this cave, or
+a different live gate/IST map, would falsify that attribution. The
+audit did not capture addresses of the changed bytes, so it cannot
+identify a CPU, the pivot instruction, or a successful return.
+
 An explicitly confirmed hard power cycle and clean post-boot audit
 remain pending.
 
