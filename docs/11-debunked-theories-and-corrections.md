@@ -38,8 +38,25 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 22 | The first TSS row necessarily belongs to the CPU running a probe | **WRONG ASSUMPTION** — both archived 12.02 captures and the 2026-10-15 live census contain 16 PCPU records with `pc_cpuid=0..15`; each record's two TSS pointers identify its own TSS row. A probe on CPU `i` must follow that mapping rather than select row 0. | [verified-on-dump] `17` §complete archived IDT/TSS census; [verified-on-console] `17` §complete live census |
 | 23 | A zero scan plus scratch frame readback/restore establishes a ready `DATA_CAVE` | **OVERCLAIM WITHDRAWN** — the frame-setup run proved its selected scratch bytes could be staged, read back, and restored, but it did not record the required span's actual leaf mapping and permissions, marker persistence, or full-span zero restoration. Those conditions were established later for one boot and the `0x5000`-byte 12.02 candidate by the separate 2026-10-15 cave-only run. | [verified-on-console] `16` §frame staging isolation; `18` §completed cave validation |
 | 24 | The 13.60 donor `DATA_CAVE=0x2d39000` projects to the 12.02 scratch candidate `kdata+0x2099000` after subtracting `0xcc0000` | **WRONG ARITHMETIC AND CROSS-FIRMWARE INFERENCE** — `0x2d39000−0xcc0000=0x2079000` in the 13.60 kdata coordinate. The 12.02 `+0x2099000` candidate was used by historical probes and has a five-page zero run in both archived 12.02 captures; it is not derived from the donor coordinate. | [verified-in-tree] `16` §derived 12.02 data and structure offsets; [verified-on-dump] `17` §capture identity and both archived kdata captures |
+| 25 | Sixteen separate IST4 stacks make a global #DB gate safe for a pivot-return probe | **WRONG SAFETY CLAIM** — the 2026-10-15 one-shot image used the *same user RIP and RSP* in all 16 return frames. A foreign CPU would enter on its own stack but could resume an unrelated thread into the selected thread's context. The run stopped after `[ARMED]` without return or cleanup; this does not prove a foreign CPU entered. | [inference] `18` §pivot-return run and the off-Git build's recorded source hashes; [public-consensus] [multicore hook invariants](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/multicore-debug-hook.md) |
 
 ## Detail on the load-bearing ones
+
+### #25 — Separate stacks did not isolate return contexts [inference]
+
+The pivot-return image staged one hardware-frame canary and return frame
+per TSS row, but every frame contained the selected wrapper's user RIP,
+RSP, CS, SS, and flags. The shared vector-1 gate can receive #DB on any
+CPU, even when the initiating thread is pinned. The public porting
+[multicore rules](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/multicore-debug-hook.md)
+require other CPUs to have register-neutral passthrough paths and private
+state. A foreign entry into this image would violate that requirement.
+The actual run reached `[ARMED]` and then stopped without a captured
+frame or return; it does **not** identify a foreign entry as the cause.
+A same-attempt trace proving only the selected CPU entered #DB would
+falsify that explanation for this stop. Do not rerun this exact image;
+any replacement must give each CPU a valid isolated return path and an
+observation before cleanup can hide a successful return.
 
 ### #20 — #GP and #DB entry frames differ [public-consensus]
 

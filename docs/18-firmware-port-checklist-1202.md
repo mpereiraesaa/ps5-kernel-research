@@ -234,7 +234,7 @@ ELFs completed and the full-span zero restoration was reported.
   after exception delivery, across all modified CPU rows, has not
   completed (`16` §remaining live-path validation boundary).
 
-### Prepared pivot-return diagnostic (not yet run)
+### Retired one-shot pivot-return diagnostic
 
 [inference] The narrow FW 12.02 pivot-return test retargets vector 1 to
 the projected `ktext+0x2a82de` `add rsp,0x28; ret`, places the Kstuff
@@ -247,6 +247,14 @@ IRET instruction bytes have **not** been measured on FW 12.02 (`16`
 §gadget mapping). A different instruction or stack effect at either
 address would falsify the planned path.
 
+[inference] The public FW 12.20 ledger labels pivot `+0x2a815e` and
+IRET `+0x2b34ad` as hardware-validated
+([12.20 manifest](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/firmwares/12.20.json)).
+Both lie exactly `0x180` below this probe's 12.02 candidates. The
+matching delta supports the *offset projection* but does not verify
+12.02 instruction bytes or return behavior. A 12.02 instruction trace
+or text image showing a different sequence would falsify the projection.
+
 The off-Git ELF has SHA-256
 `d3f7dac6a33252591b4e480afbe44250c1ed014607bb3768411d792b0e3f9f30`;
 its C and assembly source hashes are respectively
@@ -255,7 +263,8 @@ and
 `f8bf7bbfbe66b31a5d4cd986c4b11f32c3db1f590c4c04006472801a958723e3`.
 The build passed cross-compilation and an offline check of the 16 disjoint
 `0x500` slots, five-word hardware frame, pivot landing, user IRET frame,
-and single emitted `ICEBP`. These checks do not establish kernel execution.
+and single emitted `ICEBP`. These checks did **not** validate the
+per-core return contexts or establish kernel execution.
 
 [inference] The ELF requires a native vector-1 gate, all 16 IST4 values,
 and a fully zero `0x5000` cave before writing. It stages and reads back
@@ -273,11 +282,12 @@ does not attribute execution to the candidate pivot. `[ARMED]`, a silent
 stop, or an unchanged frame does not reject the pivot because delivery,
 instruction bytes, and IRET remain unobserved. This direct user IRET is
 a **diagnostic hypothesis**, not a substitute for the working public
-continuation paths; see correction #22 in `11`.
+continuation paths (the public
+[porting workflow](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/porting-workflow.md)
+§stage 5).
 
-The live action can stall, panic, or power off the console. It requires
-the owner's approval of the exact build and confirmation that elfldr is
-ready. If `[DONE]` is absent, send no further ELF on that boot. Hard power
+The live action could stall, panic, or power off the console. The owner
+approved one transfer. With `[DONE]` absent, send no further ELF on that boot. Hard power
 cycle, restart elfldr, and run only a read-only native gate/IST4/zero-cave
 baseline audit after recovery. That off-Git read-only audit ELF is already
 built (SHA-256
@@ -286,6 +296,40 @@ it checks the native vector-1 gate, all 16 IST4 rows against the staged
 addresses, and all `0x5000` cave bytes. Record the FW, build hash,
 observed markers, console/elfldr state, and audit result here after the
 attempt.
+
+[inference] Reviewing the image against the public
+[multicore hook rules](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/multicore-debug-hook.md)
+found a design defect: all 16 rows were given the **same selected-thread
+user RIP and RSP**. Separate IST4 stacks alone do not provide a safe
+foreign-CPU path. The exact ELF above is retired and must not be retried;
+see correction #25 in `11`. No same-attempt frame was captured, so this
+defect is a plausible failure class, not an observed cause.
+
+### Pivot-return run (recovery audit pending)
+
+[verified-on-console] The owner approved one transfer of the exact FW
+12.02 ELF SHA-256
+`d3f7dac6a33252591b4e480afbe44250c1ed014607bb3768411d792b0e3f9f30`.
+The attempt response (off-Git SHA-256
+`19645719f06fc5b6f619b1400192342b2bd4f084b414fbaa7529f253e4a1eb57`)
+reported native `+0x3188b0` vector-1 gate, 16 readable IST4 rows,
+and zero `20480/20480` cave bytes at `[P0]`. It then printed `[ARMED]`
+for CPU 9, `+0x2a82de` pivot, `+0x2b362d` IRET, and gate-last
+publication. The elfldr response reached EOF without `[RETURN]`,
+`[FRAME]`, or `[DONE]`; the sender exited 3 because the required
+`[DONE]` text was absent. Two ICMP replies followed. `[ARMED]` is
+printed immediately **before** the wrapper executes `ICEBP`, so this
+record does not establish that the instruction fired or that the gate
+was restored [inference]. A matching frame or post-return marker in a
+same-attempt capture would falsify that boundary.
+
+The owner has started the agreed hard power cycle. No additional ELF
+has been sent on the uncertain boot. Recovery state and read-only audit
+result remain pending. The missing `[RETURN]` also does not exclude an
+IRET that reached user code and then stalled during the gate-restoration
+call: the first externally visible return marker is printed **after**
+that call [inference]. An observer record at the wrapper's first
+post-`ICEBP` instruction would falsify this ambiguity for a future run.
 
 ## HV path
 
