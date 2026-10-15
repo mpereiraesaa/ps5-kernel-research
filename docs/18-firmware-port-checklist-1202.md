@@ -472,6 +472,44 @@ but only a 12.02 instruction or entry trace can establish their actual
 semantics. A changed instruction at either address would falsify the
 projection.
 
+### Isolated IST6 comparison prepared off-Git; no console run
+
+[inference] The next bounded diagnostic keeps the replacement image's
+`+0x2a82de` pivot, `+0x2b362d` direct IRET target, selected user frame,
+15 proposed native-handler fallbacks, and single `ICEBP`. It changes
+only the experimental gate's IST selector from 4 to 6 and stages the
+same 16 per-CPU stack tops in TSS IST6, after refusing any nonzero IST6
+row. It reads every native IST4 value before arming and verifies those
+values are unchanged during cleanup. This isolates whether occupying
+native IST4 contributes to the prior stop; it does **not** validate the
+synthetic foreign-core fallback or prove the 12.02 gadget instructions.
+A clean user return with this variant would support the IST4-interference
+hypothesis; another stop would falsify IST4 interference as a *sufficient*
+explanation, not prove a bad IRET offset.
+
+The off-Git diagnostic ELF SHA-256 is
+`d5c2f24cfc73af857e3fea26218544c753ad87483fff56dc38a8f44c0664edb5`.
+The read-only ps5debug-NG watcher SHA-256 is
+`ea6c39f40dc3ba99bd1c5840278bdb9eece1c56f93e8db113e5d9b963cb0b063`;
+it captures the gate, all 16 IST4/IST6 rows, and each staged hardware
+frame slot during the run. A changed frame with a plausible RIP/CS/RSP
+would support exception delivery to that CPU, but a silent or timed-out
+watcher would remain inconclusive. The post-hard-cycle read-only audit
+ELF SHA-256 is
+`b1618308780d33d945658a72a4523ae169316d79b72a4288018503a62473a414`.
+Compilation and an offline watcher parser check passed; the console has
+not run this build.
+
+This test can stall or panic while the shared #DB gate is patched to
+candidate kernel instructions. The desired observation is one changed
+selected-CPU hardware frame, `[RETURN-EARLY]`, then `[DONE]` only after
+the selected frame is the sole changed frame and stock gate, all IST6
+values, native IST4, zero cave, affinity, and authid read back clean.
+If cleanup is not reported, send no further ELF on that boot.
+The recovery is a confirmed full power cycle, elfldr restart, then only
+the read-only audit above for native #DB gate/IST4, zero IST6, and zero
+scratch. This new live procedure awaits exact-build owner approval.
+
 ## HV path
 
 The FW 12.02 root-0 `break_hv` port is still proposed, with dynamic
