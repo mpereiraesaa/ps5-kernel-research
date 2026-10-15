@@ -433,6 +433,45 @@ the `20480`-byte cave. The post-cycle response's off-Git SHA-256 is
 Two ICMP replies followed. The agreed post-run recovery baseline is
 therefore verified; no further pivot ELF was sent.
 
+### Published return-path comparison
+
+[public-consensus] The published 11.60
+[diagnostic](https://github.com/gzimbric/Byepervisor-Reborn/blob/340ed30a455e03e9bf29662f257136f9a45d702c/issue9_diag.c)
+retargets vector 1 to **IST6**, after checking that IST6 is free; it
+leaves the stock IST4 pointers available to the stock handler. Its
+per-CPU kernel chain restores the shared gate first, records a CPU
+marker, then uses `pop rsp; ret` to reach an IRET trampoline immediately
+before the *hardware* exception frame. It triggers TF on a user NOP and
+checks the marker, frame fields, stock gate, and all 16 IST6 values on
+return. The 12.70 [PR #12](https://github.com/PS5Dev/Byepervisor-Reborn/pull/12)
+describes the same isolated IST6 and gate-first hardening, while its
+console validation applies to the underlying standalone 12.70 path;
+the combined hardened build has host checks, not a reported console run.
+
+[verified-on-console] The 12.02 census found IST6 zero on all 16 CPUs
+(`17` §complete live census). [inference] Our replacement ELF instead
+repurposed all native IST4 values, skipped the hardware frame on the
+selected CPU in favor of a separately staged user frame, gave foreign
+CPUs synthetic CPL0 returns to the stock handler, and deferred gate
+restoration until **after** user continuation and a `write()` marker.
+These are concrete path differences; the stopped run does not identify
+which one caused the stop. A same-attempt record of the selected hardware
+frame, a kernel-side marker, or a verified user continuation would
+distinguish those boundaries. The earlier post-stop audit retained only
+the total nonzero cave count, not a per-slot frame image.
+
+[public-consensus] The published 11.60 gadget pair is pivot
+`+0x2a0ede`, IRET `+0x2ac22d`
+([11.60 offsets](https://github.com/gzimbric/Byepervisor-Reborn/blob/340ed30a455e03e9bf29662f257136f9a45d702c/include/offsets/11_60.h));
+the hardware-validated 12.20 pair is `+0x2a815e`, `+0x2b34ad`
+([12.20 manifest](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/firmwares/12.20.json)).
+Our 12.02 candidates `+0x2a82de`, `+0x2b362d` move **both** members
+by `+0x7400` relative to 11.60 and `+0x180` relative to 12.20.
+[inference] This paired agreement supports the coordinate projection,
+but only a 12.02 instruction or entry trace can establish their actual
+semantics. A changed instruction at either address would falsify the
+projection.
+
 ## HV path
 
 The FW 12.02 root-0 `break_hv` port is still proposed, with dynamic
