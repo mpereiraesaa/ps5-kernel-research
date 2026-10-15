@@ -33,6 +33,7 @@ and the FSGSBASE enable in one shot.
 |---|---|---|
 | [`10-hcall-resume-window-and-noops.md`](docs/10-hcall-resume-window-and-noops.md) | **★ ACTIVE** | The resume-window route + the NOOP catalog |
 | [`16-byepervisor-12-02-port.md`](docs/16-byepervisor-12-02-port.md) | **★ ACTIVE (implementation)** | The Byepervisor-Reborn port plan for 12.02: field/gadget mapping, our FACS #GP trigger, the phases |
+| [`17-kernel-data-survey-1202.md`](docs/17-kernel-data-survey-1202.md) | Active (reference) | Two-boot 12.02 data-anchor survey: allproc, pmap, paging-index fields, IDT, GDT, TSS, and PCPU records with observed values and strides |
 | [`11-debunked-theories-and-corrections.md`](docs/11-debunked-theories-and-corrections.md) | Active (register) | Every theory we got wrong, and why — so we don't repeat mistakes |
 | [`12-acpi-static-anchor-corrections.md`](docs/12-acpi-static-anchor-corrections.md) | Active (register) | Resume-route anchors we mis-derived (FACS address, `+0x18e` breakpoint, string-pointer scan; superseded mechanism in `15`) |
 | [`13-ring0-freeze-instrumentation.md`](docs/13-ring0-freeze-instrumentation.md) | Active (instrumentation) | The freeze capture set (F5 + klog), the 3 remaining hypotheses, and the falsifiable test |
