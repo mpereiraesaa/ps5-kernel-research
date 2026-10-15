@@ -74,7 +74,7 @@ anchors both per boot (we derive both bases).
 | `COMMON_TSS` | 0x3BB6FE0 | ✓ (`tss_array`, +0x2E8AFE0) |
 | `SYS_GETUID` | 0x2a8d60 | ✓ via our sysent anchors (746 sy_call entries) |
 | `DMPML4I/DMPDPI/PML4PML4I` | paging-index data fields | `DMPML4I` and `DMPDPI` located in both 12.02 data captures and checked against the per-boot dmap; `PML4PML4I` is a same-region field candidate, not yet checked against the recursive page-table entry. See `17` §paging-index data globals. The alias walker alone does not prove these field identities. |
-| `DATA_CAVE` | 0x2D39000 | **Candidate only.** `kh_find_cave` can zero-scan, and a setup probe staged/read back/restored scratch bytes. The required span's actual leaf mapping, permissions, marker persistence, and full-span zero restoration have not been established; see `18` §data-side survey and correction #23 in `11`. |
+| `DATA_CAVE` | 0x2D39000 | **Candidate only.** `kh_find_cave` can zero-scan, and a setup probe staged/read back/restored scratch bytes. The required span's actual leaf mapping, permissions, rest/wake marker persistence, and full-span zero restoration have not been established; see the evidence record in `18` §data-side survey and correction #23 in `11`. |
 | `HV_MP_STARTUP_CALL` | 0xC16EE0 | **not needed by our trigger** (below) |
 | `ACPI_SLEEP_MACHDEP_HOOK` | 0x3913B0 | not needed (our anchor approaches to it were debunked on 12.02) |
 | `MP_STARTUP_INIT_VECTOR` | 0x269FB8 | only needed for the benign-resume variant |

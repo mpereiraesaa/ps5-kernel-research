@@ -81,11 +81,10 @@ Document numbers below refer to [05](05-toolchain-and-observability.md),
   record [verified-on-console] (`17` §complete live census).
 - [ ] **Cave contents and page permissions:** for the proposed cave,
   live-read the **entire required span** and confirm it is zero and
-  readable. Resolve the actual leaf mapping and record its page size,
-  mapped physical page, and P/RW/US/NX permission bits. Write a
-  distinctive marker,
-  read back the exact bytes, then test whether that value persists
-  across the intended use interval and explain any change. Restore all
+  readable. Resolve every actual leaf covering that span and record
+  each page size, mapped physical page, and P/RW/US/NX permission bits. Write a
+  distinctive marker, read back the exact bytes, then test whether it persists
+  across the planned rest/wake interval and explain any change. Restore all
   touched bytes, then re-read the entire required span to verify zero.
   **Exit condition:**
   exact marker readback, persistence behavior understood, and zero
@@ -94,6 +93,34 @@ Document numbers below refer to [05](05-toolchain-and-observability.md),
   bytes [verified-on-console] (`16` §frame staging isolation); it did
   not report the leaf mapping, its permissions, or the persistence
   behavior (`11` correction #23).
+
+The evidence record for this item should have this shape. Placeholders
+are deliberately unfilled; a cave result from another firmware does
+not validate 12.02.
+
+```text
+[cave]
+fw=<exact reported firmware>
+build_sha256=<exact probe build>
+coordinate=<kdata-relative offset or absolute VA, explicitly named>
+offset=<proposed cave offset>
+size=<entire required span>
+leaf_coverage=<bytes covered by resolved leaves>/<size>
+leaf_mappings=<one record per leaf: VA range, PA base, page size, P/RW/US/NX>
+initial_zero_pages=<pages checked>/<pages required>
+initial_zero_bytes=<bytes checked>/<size>
+write_readback=<passed|failed; exact marker match>
+marker_survived_rest_wake=<yes|no|not tested>
+marker_cleanup=<passed|failed>
+zero_restoration=<passed|failed; entire required span re-read>
+recovery=<UI/loader state and any reboot>
+```
+
+For the planned rest/wake path, `marker_survived_rest_wake=yes` is
+required to accept this cave. A `no` is useful evidence that rejects
+the candidate. Keep the raw per-boot record outside Git and cite its
+hash when summarizing the result here (`AGENTS.md` §scope and material
+boundaries).
 
 ## Kernel hook path
 
