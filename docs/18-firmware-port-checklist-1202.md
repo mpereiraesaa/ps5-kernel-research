@@ -280,11 +280,14 @@ matching the wrapper's saved RIP/CS/RSP/SS, and `[DONE]` reporting full
 restoration and unchanged authid. `[RETURN]` without the matching frame
 does not attribute execution to the candidate pivot. `[ARMED]`, a silent
 stop, or an unchanged frame does not reject the pivot because delivery,
-instruction bytes, and IRET remain unobserved. This direct user IRET is
-a **diagnostic hypothesis**, not a substitute for the working public
-continuation paths (the public
+instruction bytes, and IRET remain unobserved. The public
 [porting workflow](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/porting-workflow.md)
-§stage 5).
+§stage 5 explicitly calls for **pivot plus complete IRET frame** as a
+bounded diagnostic. This image stages `RIP, CS, RFLAGS, RSP, SS` and
+places the IRET target before them, so the frame *shape* follows that
+stage. It has **not** met the stage's exit condition: observed RIP/RSP
+movement, clean return, and full cleanup. Direct IRET itself is not
+rejected by the workflow; see correction #27 in `11`.
 
 The live action could stall, panic, or power off the console. The owner
 approved one transfer. With `[DONE]` absent, send no further ELF on that boot. Hard power

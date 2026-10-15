@@ -40,8 +40,20 @@ Labels follow `README.md` (`[verified-in-tree]`, `[public-consensus]`,
 | 24 | The 13.60 donor `DATA_CAVE=0x2d39000` projects to the 12.02 scratch candidate `kdata+0x2099000` after subtracting `0xcc0000` | **WRONG ARITHMETIC AND CROSS-FIRMWARE INFERENCE** — `0x2d39000−0xcc0000=0x2079000` in the 13.60 kdata coordinate. The 12.02 `+0x2099000` candidate was used by historical probes and has a five-page zero run in both archived 12.02 captures; it is not derived from the donor coordinate. | [verified-in-tree] `16` §derived 12.02 data and structure offsets; [verified-on-dump] `17` §capture identity and both archived kdata captures |
 | 25 | Sixteen separate IST4 stacks make a global #DB gate safe for a pivot-return probe | **WRONG SAFETY CLAIM** — the 2026-10-15 one-shot image used the *same user RIP and RSP* in all 16 return frames. A foreign CPU would enter on its own stack but could resume an unrelated thread into the selected thread's context. The run stopped after `[ARMED]` without return or cleanup; this does not prove a foreign CPU entered. | [inference] `18` §pivot-return run and the off-Git build's recorded source hashes; [public-consensus] [multicore hook invariants](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/multicore-debug-hook.md) |
 | 26 | A responsive UI and elfldr imply that a stopped #DB probe's gate/IST state is clean | **WRONG RECOVERY ASSUMPTION** — after the replacement probe stopped at `[PREARM]`, a read-only audit found the gate still targeting the candidate pivot, all 16 IST4 rows staged, and cave scratch nonzero while ping worked. The owner's “yes all good” did not explicitly confirm the hard power cycle; sending the audit before that confirmation violated the recovery plan. | [verified-on-console] `18` §replacement pivot-return image and first run |
+| 27 | The public Stage 5 rules reject a direct pivot-to-IRET diagnostic unless a full kernel continuation precedes it | **WRONG READING** — Stage 5 explicitly isolates a pivot and complete `RIP, CS, RFLAGS, RSP, SS` IRET return, with any preceding return target shown in the layout. Its exit condition is observed RIP/RSP movement, clean return, and full cleanup. Our frame shape followed that instruction, but neither live run met its exit condition. | [public-consensus] [porting workflow §stage 5](https://github.com/gzimbric/ps5-hv-bypass-porting/blob/main/docs/porting-workflow.md); [verified-on-console] `18` §pivot-return runs |
 
 ## Detail on the load-bearing ones
+
+### #27 — Stage 5 permits the direct pivot/IRET diagnostic [public-consensus]
+
+The earlier `18` wording described direct user IRET as though it were
+excluded by the public porting workflow. The workflow actually uses a
+minimal pivot and complete IRET return as its Stage 5 diagnostic. Our
+selected-CPU stack included an IRET target followed by all five frame
+fields. A complete frame is a necessary layout condition, not proof
+that the 12.02 pivot and IRET targets have the expected instructions
+or that the return and cleanup occurred. The run's missing return
+markers and persisted hook state leave the Stage 5 exit condition open.
 
 ### #26 — Responsiveness did not establish a clean hook [verified-on-console]
 
