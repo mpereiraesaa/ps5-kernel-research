@@ -8,7 +8,7 @@ value does not satisfy a **live** value, and a setup-only restore does
 not satisfy a post-trigger restore. This is a research status record,
 not a claim that the port works.
 
-This audit has **13 checked requirements and 28 open requirements**.
+This audit has **12 checked requirements and 29 open requirements**.
 Document numbers below refer to [05](05-toolchain-and-observability.md),
 [07](07-evidence.md),
 [11](11-debunked-theories-and-corrections.md),
