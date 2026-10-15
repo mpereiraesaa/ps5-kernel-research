@@ -5,8 +5,8 @@ offset below is relative to the **per-boot `kdata` base** and names data.
 An address in this table is not an executable entry point. Kstuff was
 present for the previously discussed 12.02 dump, so the captured IDT
 handlers and IST contents cannot be assumed to represent pristine
-firmware (see `11` correction #19). No new console experiment was run
-for this survey.
+firmware (see `11` correction #19). A later live census attempt is
+recorded below; it did not produce a census response.
 
 ## Capture identity and address convention
 
@@ -106,7 +106,7 @@ matched to its `pc_cpuid`; it was not selected by assuming row 0. The
 historical TSS arrays also supply `RSP0` and all seven IST pointers
 for each row; the CPU 0/1 examples above show their field positions.
 
-### Clean-state census still to capture
+### Current-boot census still to capture
 
 [inference] The archived gate census cannot identify the current
 unpatched handler set because the earlier dump's gate state was
@@ -123,7 +123,21 @@ changes pipe metadata. The live run requires owner approval and a
 ready elfldr session. If it stalls or the console powers off, send no
 further ELF in that session; hard power cycle, restart elfldr, and
 confirm normal UI operation before any other work. The current boot's
-result and recovery state are not yet known.
+gate state is not yet known.
+
+[verified-on-console] On 2026-10-15, the owner approved this exact
+FW 12.02 build and the recovery plan above. The PC confirmed SHA-256
+`15c3be249823725294669522d935185edc9853c2da1ace653bb68bd6ac1db5a5`
+and received one ICMP reply before sending it to `192.168.0.69:9021`.
+The sender timed out in `sock.sendall(payload)` after its 10-second
+socket timeout. It never reached `shutdown(SHUT_WR)` or the response
+read, and the captured payload output file was empty. Thus no IDT,
+TSS, or PCPU bytes were returned and no payload execution or clean
+gate state can be claimed from this attempt. The number of ELF bytes
+accepted by the receiver is unknown. Two ICMP replies were received
+after the timeout; UI, elfldr, and hard-power-cycle recovery status
+were still pending at the time of this record. No further ELF was sent
+in the session.
 
 ## Paging-index data globals
 
