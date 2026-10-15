@@ -52,6 +52,79 @@ IDT vector 13 occupies `IDT+0xd0` and its captured gate points to
 `0xffffffff88773626`. This is a historical gate-state observation,
 not a native-firmware handler claim.
 
+## Complete archived IDT/TSS census
+
+[verified-on-dump] I re-read `0x1000` IDT bytes (all 256 gates),
+`0x680` TSS bytes (all 16 rows), and `0x9800` PCPU bytes (all 16
+records) from **each** of the two FW 12.02 captures above. Every gate
+had the present bit and selector `0x20`; exactly eight gates used an
+IST. The complete IST-user set and both boot-specific handler values
+are below. This is a census of the captured state, which included
+kstuff-era gate changes; it is not a clean-state gate map.
+
+| Vector | IST | PTE-gated boot handler | Alias-sweep boot handler |
+|---:|---:|---:|---:|
+| 1 | 4 | `0xffffffffd6593626` | `0xffffffff88773626` |
+| 2 | 2 | `0xffffffffd659362d` | `0xffffffff8877362d` |
+| 3 | 7 | `0xffffffffd6593626` | `0xffffffff88773626` |
+| 8 | 1 | `0xffffffffd65f8b60` | `0xffffffff887d8b60` |
+| 9 | 3 | `0xffffffffd6593626` | `0xffffffff88773626` |
+| 13 | 3 | `0xffffffffd6593626` | `0xffffffff88773626` |
+| 30 | 5 | `0xffffffffd65f8bb8` | `0xffffffff887d8bb8` |
+| 179 | 6 | `0xffffffffd6593626` | `0xffffffff88773626` |
+
+This table explicitly includes the requested vectors 1, 9, 13, 30,
+and 179. [verified-on-dump] In both captures, PCPU record `i` has
+`pc_cpuid=i` at record `+0x34`; the two pointers at `+0x790/+0x798`
+both equal the address of TSS row `i`. The FreeBSD 11 `struct pcpu`
+names `pc_cpuid` as the CPU number (`sys/sys/pcpu.h:158`) and
+`pc_tssp`/`pc_commontssp` as the active/common TSS pointers
+(`sys/amd64/include/pcpu.h:48-49`). The 16 matching triples establish
+the **logical CPU → TSS row mapping in these captures**:
+
+| Logical CPU (`pc_cpuid`) | PCPU record from `kdata` | TSS row from `kdata` |
+|---:|---:|---:|
+| 0 | `+0x2e9cf00` | `+0x2e8afe0` |
+| 1 | `+0x2e9d880` | `+0x2e8b048` |
+| 2 | `+0x2e9e200` | `+0x2e8b0b0` |
+| 3 | `+0x2e9eb80` | `+0x2e8b118` |
+| 4 | `+0x2e9f500` | `+0x2e8b180` |
+| 5 | `+0x2e9fe80` | `+0x2e8b1e8` |
+| 6 | `+0x2ea0800` | `+0x2e8b250` |
+| 7 | `+0x2ea1180` | `+0x2e8b2b8` |
+| 8 | `+0x2ea1b00` | `+0x2e8b320` |
+| 9 | `+0x2ea2480` | `+0x2e8b388` |
+| 10 | `+0x2ea2e00` | `+0x2e8b3f0` |
+| 11 | `+0x2ea3780` | `+0x2e8b458` |
+| 12 | `+0x2ea4100` | `+0x2e8b4c0` |
+| 13 | `+0x2ea4a80` | `+0x2e8b528` |
+| 14 | `+0x2ea5400` | `+0x2e8b590` |
+| 15 | `+0x2ea5d80` | `+0x2e8b5f8` |
+
+The row was determined from each PCPU record's TSS pointers, then
+matched to its `pc_cpuid`; it was not selected by assuming row 0. The
+historical TSS arrays also supply `RSP0` and all seven IST pointers
+for each row; the CPU 0/1 examples above show their field positions.
+
+### Clean-state census still to capture
+
+[inference] The archived gate census cannot identify the current
+unpatched handler set because the earlier dump's gate state was
+affected by kstuff (`docs/11` #19). A separate FW 12.02 read-only
+diagnostic has been built outside Git at
+`engineering/payloads/idttss_census_1202/census.elf`, SHA-256
+`15c3be249823725294669522d935185edc9853c2da1ace653bb68bd6ac1db5a5`.
+It requests one exact `0x1000`-byte IDT read, one exact `0x680`-byte
+TSS read, and sixteen exact `0x980`-byte PCPU reads, then logs every
+IST user, handlers for 1/9/13/30/179, each CPU's TSS-row link, and
+every TSS row's `RSP0` and IST1–7. It does not arm a gate, change an
+IST slot, or trigger an exception. Its read primitive temporarily
+changes pipe metadata. The live run requires owner approval and a
+ready elfldr session. If it stalls or the console powers off, send no
+further ELF in that session; hard power cycle, restart elfldr, and
+confirm normal UI operation before any other work. The current boot's
+result and recovery state are not yet known.
+
 ## Paging-index data globals
 
 [verified-on-dump] The following are **32-bit data fields**, not code
